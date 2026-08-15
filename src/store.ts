@@ -11,7 +11,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { extractSession } from './extract.js'
@@ -63,6 +63,50 @@ export function slugFor(project: Project): string {
 
 export function projectDir(dataDir: string, project: Project): string {
   return join(dataDir, 'projects', slugFor(project))
+}
+
+/**
+ * Where the analysis of a project's rounds is cached.
+ *
+ * A sibling of `rounds.jsonl`, and only ever a cache. `analyze` recomputes from the rounds every
+ * time it runs, so nothing it prints can be stale; this file exists so the next stage has something
+ * to read without re-deriving the taxonomy. Its first line is a header naming the analyzer and how
+ * many rounds it saw, which is what lets a reader notice the rounds have moved on since.
+ */
+export function analysisFile(dataDir: string, project: Project): string {
+  return join(projectDir(dataDir, project), 'analysis.jsonl')
+}
+
+/** Bumped when a change to `classify.ts` would give the same rounds different labels. */
+export const ANALYZER_VERSION = 1
+
+export interface AnalysisHeader {
+  schema_version: number
+  analyzer_version: number
+  analyzed_at: string
+  rounds: number
+  /** Rounds that carried no label, so a reader knows the file is complete rather than truncated. */
+  toolless: number
+}
+
+/** Replace the cached analysis wholesale. Recomputing is cheap, so there is no incremental path. */
+export async function writeAnalysis(
+  file: string,
+  header: Omit<AnalysisHeader, 'schema_version' | 'analyzer_version' | 'analyzed_at'>,
+  records: unknown[],
+): Promise<void> {
+  const lines = [
+    JSON.stringify({
+      schema_version: SCHEMA_VERSION,
+      analyzer_version: ANALYZER_VERSION,
+      analyzed_at: new Date().toISOString(),
+      ...header,
+    }),
+    ...records.map((record) => JSON.stringify(record)),
+  ]
+  await mkdir(dirname(file), { recursive: true, mode: DIR_MODE })
+  await writeFile(file, lines.join('\n') + '\n', { encoding: 'utf8', mode: FILE_MODE })
+  await tighten(file, FILE_MODE)
 }
 
 /** Owner-only, the mode the agent already uses for the session files probez reads. */

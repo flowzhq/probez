@@ -1,5 +1,7 @@
 import { commandOf, parseCommands, UNPARSED } from './bash.js'
 import type { Command } from './bash.js'
+import { advance, CATEGORIES, categoryInfo, classifyCall, newContext } from './classify.js'
+import type { Label } from './classify.js'
 import type { Round, ToolCall } from './types.js'
 
 /** One session as recorded in the store, not as it exists on disk under ~/.claude. */
@@ -46,8 +48,51 @@ export interface RoundFilter {
   tool?: string
   command?: string
   kind?: string
+  category?: string
+  target?: string
   agent?: 'main' | 'sub'
   errorsOnly?: boolean
+}
+
+/** One category, or one sub-kind under it. `rounds` is fractional: a round splits across its work. */
+export interface CategoryRow {
+  name: string
+  label: string
+  rounds: number
+  errors: number
+  ms: number
+  out_tokens: number
+  sub?: CategoryRow[]
+}
+
+/**
+ * What the distribution is a distribution *of*.
+ *
+ * Printed beside every table rather than kept for the curious. A share with no denominator behind
+ * it invites the reader to assume the denominator is everything, and here it is not: rounds that
+ * called no tool are outside it entirely, and a sixth of what is inside it is work no built-in
+ * table can name.
+ */
+export interface Coverage {
+  /** Every round read. */
+  rounds: number
+  /** Rounds that called at least one tool. The denominator for every share. */
+  classified: number
+  /** Rounds of pure prose, which carry no label. */
+  toolless: number
+  /** Total labelled weight, which equals `classified`. */
+  weight: number
+  /** Weight that landed in `unclassified`, whatever the sub-kind. */
+  unclassified: number
+  /** Weight whose target the path table could name. */
+  targeted: number
+}
+
+export interface Analysis {
+  rows: CategoryRow[]
+  coverage: Coverage
+  /** What could not be classified, most weight first, so the hole can be named. */
+  unknown: { name: string; weight: number }[]
 }
 
 /**
@@ -249,6 +294,172 @@ export function toolTally(rounds: Round[], sub?: 'command' | 'kind'): ToolRow[] 
   return rows
 }
 
+/**
+ * Every round, labelled, with the task context carried along.
+ *
+ * Context is per task, because a task is one user turn and everything it led to, and "has anything
+ * been edited yet" is only a meaningful question inside one. Rounds arrive in the order they were
+ * appended, which is the order they happened.
+ */
+/** A label, plus whether the call that produced it failed. */
+export interface RoundLabel extends Label {
+  errored: boolean
+}
+
+export function labelRounds(rounds: Round[]): Map<Round, RoundLabel[]> {
+  const out = new Map<Round, RoundLabel[]>()
+  const contexts = new Map<string, ReturnType<typeof newContext>>()
+  for (const round of rounds) {
+    const key = `${round.session} ${round.task}`
+    let ctx = contexts.get(key)
+    if (ctx === undefined) {
+      ctx = newContext()
+      contexts.set(key, ctx)
+    }
+    const tools = round.tools ?? []
+    const labels: RoundLabel[] = []
+    if (tools.length > 0) {
+      const perCall = 1 / tools.length
+      for (const tool of tools) {
+        for (const label of classifyCall(tool, ctx)) {
+          labels.push({ ...label, weight: label.weight * perCall, errored: tool.is_error === true })
+        }
+        advance(tool, ctx)
+      }
+    }
+    out.set(round, labels)
+  }
+  return out
+}
+
+/**
+ * The distribution of work, most of it first.
+ *
+ * `sub` chooses what the second level counts: the sub-kind of the act, or the target it acted on.
+ * Time and tokens are split by the same weights as the rounds, so a category that is cheap in
+ * rounds but expensive on the clock stays visible instead of averaging away.
+ */
+export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): Analysis {
+  const labelled = labelRounds(rounds)
+  const byCategory = new Map<string, CategoryRow>()
+  const subRows = new Map<string, Map<string, CategoryRow>>()
+  const unknown = new Map<string, number>()
+  const coverage: Coverage = {
+    rounds: 0,
+    classified: 0,
+    toolless: 0,
+    weight: 0,
+    unclassified: 0,
+    targeted: 0,
+  }
+
+  for (const round of rounds) {
+    coverage.rounds += 1
+    const labels = labelled.get(round) ?? []
+    if (labels.length === 0) {
+      coverage.toolless += 1
+      continue
+    }
+    coverage.classified += 1
+
+    for (const label of labels) {
+      coverage.weight += label.weight
+      if (label.category === 'unclassified') {
+        coverage.unclassified += label.weight
+        if (label.sub === 'unknown') {
+          unknown.set(label.source, (unknown.get(label.source) ?? 0) + label.weight)
+        }
+      }
+      if (label.target !== 'unknown') coverage.targeted += label.weight
+
+      const info = categoryInfo(label.category)
+      let row = byCategory.get(label.category)
+      if (row === undefined) {
+        row = { name: label.category, label: info.label, rounds: 0, errors: 0, ms: 0, out_tokens: 0 }
+        byCategory.set(label.category, row)
+      }
+      addWeighted(row, label, round)
+
+      const key = sub === 'target' ? label.target : label.sub
+      let group = subRows.get(label.category)
+      if (group === undefined) {
+        group = new Map()
+        subRows.set(label.category, group)
+      }
+      let entry = group.get(key)
+      if (entry === undefined) {
+        entry = { name: key, label: key, rounds: 0, errors: 0, ms: 0, out_tokens: 0 }
+        group.set(key, entry)
+      }
+      addWeighted(entry, label, round)
+    }
+  }
+
+  // Category order is the order work tends to happen, not the order it happened to be counted in.
+  const rows = [...byCategory.values()].sort(
+    (a, b) => categoryOrder(a.name) - categoryOrder(b.name),
+  )
+  for (const row of rows) {
+    const group = subRows.get(row.name)
+    if (group !== undefined) row.sub = [...group.values()].sort((a, b) => b.rounds - a.rounds)
+  }
+
+  return {
+    rows,
+    coverage,
+    unknown: [...unknown.entries()]
+      .map(([name, weight]) => ({ name, weight }))
+      .sort((a, b) => b.weight - a.weight),
+  }
+}
+
+/**
+ * The category a set of rounds mostly was, and how much of it that category actually is.
+ *
+ * The share travels with the label on purpose. A bare winner reads as a description of the whole
+ * span, and it often is not: reconstruction at 34% beating implementation at 31% is a different
+ * fact from reconstruction at 80%, and a column that shows only the name hides which one it is.
+ */
+export function dominant(labels: Label[]): { short: string; share: number } | null {
+  if (labels.length === 0) return null
+  const totals = new Map<string, number>()
+  let all = 0
+  for (const label of labels) {
+    totals.set(label.category, (totals.get(label.category) ?? 0) + label.weight)
+    all += label.weight
+  }
+  if (all === 0) return null
+  let best = ''
+  let most = -1
+  for (const [id, weight] of totals) {
+    // Ties break toward the earlier category, so the answer does not depend on iteration order.
+    if (weight > most || (weight === most && categoryOrder(id) < categoryOrder(best))) {
+      best = id
+      most = weight
+    }
+  }
+  return { short: categoryInfo(best as never).short, share: most / all }
+}
+
+/**
+ * A round has one duration and one output size, so each label takes its share of both. An error
+ * belongs to a call rather than to a share of one, and is counted whole against every label that
+ * call produced, the same way `toolTally` charges a multi-command call to each command in it.
+ */
+function addWeighted(row: CategoryRow, label: RoundLabel, round: Round): void {
+  row.rounds += label.weight
+  row.ms += (round.ms ?? 0) * label.weight
+  row.out_tokens += round.out_tokens * label.weight
+  if (label.errored) row.errors += 1
+}
+
+/** One source of truth for the order: the table in `classify.ts` that also defines the sub-kinds. */
+const CATEGORY_ORDER = new Map(CATEGORIES.map((info, at) => [info.id as string, at]))
+
+function categoryOrder(id: string): number {
+  return CATEGORY_ORDER.get(id) ?? CATEGORIES.length
+}
+
 /** `git` names `git commit` as well as itself, since that is how the sub-rows read. */
 function namesCommand(name: string, wanted: string): boolean {
   const found = name.toLowerCase()
@@ -256,7 +467,23 @@ function namesCommand(name: string, wanted: string): boolean {
 }
 
 export function filterRounds(rounds: Round[], filter: RoundFilter): Round[] {
+  // Labels depend on what came before in the task, so they are worked out over the whole set once,
+  // before anything is dropped. Filtering first would change what the survivors mean.
+  const labelled =
+    filter.category !== undefined || filter.target !== undefined ? labelRounds(rounds) : null
+
   return rounds.filter((round) => {
+    if (labelled !== null) {
+      const labels = labelled.get(round) ?? []
+      if (filter.category !== undefined) {
+        const wanted = filter.category.toLowerCase()
+        if (!labels.some((label) => label.category === wanted)) return false
+      }
+      if (filter.target !== undefined) {
+        const wanted = filter.target.toLowerCase()
+        if (!labels.some((label) => label.target === wanted)) return false
+      }
+    }
     if (filter.session !== undefined && round.session !== filter.session) return false
     if (filter.task !== undefined && round.task !== filter.task) return false
     if (filter.agent !== undefined && round.agent !== filter.agent) return false

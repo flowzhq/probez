@@ -190,3 +190,81 @@ test('--session narrows `tasks` rather than being validated and dropped', () => 
   // An id that matches nothing is still an error rather than a silent full listing.
   assert.equal(read(env, ['tasks', '--session', 'ffffffff']).status, 2)
 })
+
+test('`analyze` reports a distribution and says what it is a distribution of', () => {
+  const env = makeSource(2)
+  assert.equal(collect(env).status, 0)
+
+  const out = read(env, ['analyze'])
+  assert.equal(out.status, 0)
+  assert.match(out.stdout, /WORK\s+ROUNDS\s+SHARE\s+ERRORS\s+TIME\s+OUT/)
+  // The coverage line is part of the answer, not a footnote: a share with no denominator behind it
+  // reads as a share of everything, and rounds that called no tool are outside it.
+  assert.match(out.stdout, /rounds did something a tool can see, out of \d+\. Shares are of those/)
+  assert.match(out.stdout, /of work has a known target/)
+})
+
+test('`analyze` writes its cache owner-only, and writing it again changes nothing', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+  assert.equal(read(env, ['analyze']).status, 0)
+
+  const file = walk(env.dataDir).find((path) => path.endsWith('analysis.jsonl'))
+  assert.ok(file !== undefined, 'analyze must leave an analysis.jsonl for the next stage')
+  assert.equal(statSync(file).mode & 0o777, 0o600)
+
+  const header = JSON.parse(readFileSync(file, 'utf8').split('\n')[0]!) as Record<string, unknown>
+  assert.equal(typeof header.analyzer_version, 'number')
+  assert.equal(typeof header.rounds, 'number')
+
+  // Only `analyzed_at` may move: the labels are a pure function of the rounds.
+  const first = readFileSync(file, 'utf8').split('\n').slice(1).join('\n')
+  assert.equal(read(env, ['analyze']).status, 0)
+  assert.equal(readFileSync(file, 'utf8').split('\n').slice(1).join('\n'), first)
+})
+
+test('`analyze --json` carries the coverage numbers as fields', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+
+  const out = read(env, ['analyze', '--json'])
+  assert.equal(out.status, 0)
+  const parsed = JSON.parse(out.stdout) as {
+    name: string
+    categories: { name: string; rounds: number }[]
+    coverage: { rounds: number; classified: number; toolless: number }
+  }[]
+  assert.ok(Array.isArray(parsed) && parsed.length === 1)
+  assert.ok(parsed[0]!.categories.length > 0, 'a collected project must classify to something')
+  assert.equal(
+    parsed[0]!.coverage.classified + parsed[0]!.coverage.toolless,
+    parsed[0]!.coverage.rounds,
+    'every round is either classified or reported as having called no tool',
+  )
+})
+
+test('a category names the rounds behind it, and a value that is not one is refused', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+
+  const all = read(env, ['rounds', '--limit', '0'])
+  const some = read(env, ['rounds', '--category', 'reconstruction', '--limit', '0'])
+  assert.equal(some.status, 0)
+  const count = (out: string): number => (out.match(/^\s{2}\d+\.\d+\s/gm) ?? []).length
+  assert.ok(count(some.stdout) > 0, 'reconstruction must match some rounds')
+  assert.ok(count(some.stdout) <= count(all.stdout))
+
+  const bad = read(env, ['rounds', '--category', 'nonsense'])
+  assert.equal(bad.status, 2)
+  assert.match(bad.stderr, /--category takes one of/)
+})
+
+test('a flag belonging to analyze is refused elsewhere, and says where it belongs', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+
+  const wrong = read(env, ['sessions', '--split', 'target'])
+  assert.equal(wrong.status, 2)
+  assert.match(wrong.stderr, /--split/)
+  assert.match(wrong.stderr, /analyze/)
+})

@@ -8,6 +8,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-15
+
+The analyzer. `collect` said how much; this says what of.
+
+### Added
+
+- **`probez analyze` says what the work was.** Eight categories, each decomposed: Planning,
+  Reconstruction, Implementation, Verification, Review, Documentation, Delivery and Environment,
+  plus an Unclassified bucket that names what it could not place. A second axis, the target
+  (`code`, `tests`, `docs`, `config`, `infra`, `agent`, `external`), separates reading the README
+  from reading the router. `--by session` and `--by task` break the project down, `--split target`
+  swaps the second level onto the target axis, and `--unclassified` lists what did not classify.
+  Everything is derived from what 0.1 already collected, so an existing store analyses immediately
+  with no re-collection.
+- **Every share says what it is a share of.** A round splits across the work it did, so `ROUNDS` is
+  fractional, and the denominator is rounds that called at least one tool. The coverage line under
+  every table names what sits outside that: rounds of pure prose, work no table could classify, and
+  how much of the work has a known target. Measured against a store of 13,098 rounds, that is 9.0%
+  of rounds with no tool call and 16.0% of weight unclassified, nearly all of it MCP servers whose
+  inputs are per-server and unknowable to a built-in table.
+- **`probez rounds --category` and `--target`** read any share back down to the rounds behind it,
+  beside the existing `--kind`.
+
+### Changed
+
+- **`sessions`, `tasks` and `rounds` gained a `WORK` column**, and `round <id>` labels each tool
+  call it prints. This changes the output of commands that existed in 0.1, so anything parsing
+  those tables needs updating. The column carries the share as well as the name, because a
+  category that won at 34% describes its rounds very differently from one that won at 80%.
+
+### Known limits
+
+- **An operation is classified by what it is, not by what it was for.** A `grep` is `locate`
+  whether it opened an hour of reconstructing an unfamiliar subsystem or checked in one second
+  where a constant lives, which overstates Reconstruction. Telling those apart means reading a call
+  in the light of the ones around it, a pass over a sequence rather than a lookup on a call. The
+  round stream already carries what that needs; it is the next version's work, not new collection.
+- **Repair, `trace`, `lint` and `ci` were designed and then cut**, each for a reason recorded in
+  `docs/PRD.md`. Three of them were not detectable from what the store keeps, and two were under
+  0.6% of a real store.
+
 ## [0.1.1] - 2026-08-15
 
 Correctness and privacy fixes on top of the first release. No new commands.
@@ -107,6 +148,7 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/flowzhq/probez/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/flowzhq/probez/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/flowzhq/probez/commits/v0.1.0

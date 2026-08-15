@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import { COMMAND_KINDS } from './bash.js'
+import { advance, CATEGORIES, classifyCall, isCategory, isTarget, newContext, TARGETS } from './classify.js'
 import {
   defaultClaudeDir,
   discoverProjects,
@@ -14,9 +15,12 @@ import {
 } from './discover.js'
 import { ago, clip, duration, pad, padStart, shorten, span, tokens, wrap } from './format.js'
 import {
+  categoryTally,
+  dominant,
   filterRounds,
   findRound,
   findTask,
+  labelRounds,
   looksLikeSelector,
   matchSession,
   SelectorError,
@@ -25,8 +29,16 @@ import {
   toolSummary,
   toolTally,
 } from './inspect.js'
-import type { RoundFilter, SessionRow, TaskRow, ToolRow } from './inspect.js'
-import { collectProject, defaultDataDir, readRounds } from './store.js'
+import type {
+  Analysis,
+  CategoryRow,
+  RoundFilter,
+  RoundLabel,
+  SessionRow,
+  TaskRow,
+  ToolRow,
+} from './inspect.js'
+import { analysisFile, collectProject, defaultDataDir, readRounds, writeAnalysis } from './store.js'
 import type { CollectResult, Summary } from './store.js'
 import type { Project, Round } from './types.js'
 
@@ -40,6 +52,7 @@ const COMMANDS = new Set([
   'rounds',
   'round',
   'tools',
+  'analyze',
   'help',
 ])
 
@@ -73,9 +86,10 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   session: ['limit'],
   tasks: ['limit', 'session'],
   task: ['limit', 'session'],
-  rounds: ['limit', 'session', 'task', 'tool', 'command', 'kind', 'agent', 'errors'],
+  rounds: ['limit', 'session', 'task', 'tool', 'command', 'kind', 'category', 'target', 'agent', 'errors'],
   round: ['session'],
   tools: ['limit', 'kinds'],
+  analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified'],
   help: [],
 }
 
@@ -129,6 +143,10 @@ Rounds
   --kind <kind>                Only rounds that ran a command of this kind:
                                ${COMMAND_KINDS.slice(0, 7).join(' · ')}
                                ${COMMAND_KINDS.slice(7).join(' · ')}
+  --category <name>            Only rounds that did this kind of work:
+                               ${CATEGORIES.slice(0, 5).map((c) => c.id).join(' · ')}
+                               ${CATEGORIES.slice(5).map((c) => c.id).join(' · ')}
+  --target <name>              Only rounds that worked on this: ${TARGETS.join(' · ')}
   --agent <main|sub>           Only main-agent or only subagent rounds
   --errors                     Only rounds where a tool failed
   --limit <n>                  How many rounds to list (default ${DEFAULT_LIMIT}, 0 for all)
@@ -140,6 +158,19 @@ Tools
   --kinds                      Group Bash by kind of work instead of by command
   --limit <n>                  How many commands to list under each tool
                                (default ${DEFAULT_SUB_LIMIT}, 0 for all)
+
+Analysis
+  probez analyze [project]     Where the work went
+  --by <level>                 One table per project (default), session or task
+  --split <axis>               What the second level counts: sub (default) or target
+  --unclassified               List what did not classify, most of it first
+  --session <id>               Only this session
+  --task <n>                   Only this task number
+  --limit <n>                  How many sub-rows to list under each category
+
+  Shares are of rounds that called at least one tool, weighted so that a round splits across
+  the work it did. Rounds of pure prose carry no label and are reported instead of guessed at,
+  and so is every tool with no entry in the table. Both are on the coverage line.
 
 Collection
   probez collect [project]     Collect one project, or every project under a folder
@@ -305,18 +336,57 @@ function more(count: number, total: number): string {
   return count < total ? ', --limit 0 for all' : ''
 }
 
-function printSessions(all: ReturnType<typeof sessionRows>, limit: number): void {
+/**
+ * What a span of rounds mostly was, as `Recon 48%`.
+ *
+ * The share travels with the name because the name alone overstates it. Reconstruction winning at
+ * 34% over implementation at 31% is a different fact from reconstruction at 80%, and a column that
+ * printed only the winner would render both as the same word.
+ */
+interface Work {
+  session(id: string): string
+  task(session: string, task: number): string
+  round(round: Round): string
+}
+
+function workIndex(rounds: Round[]): Work {
+  const labelled = labelRounds(rounds)
+  const bySession = new Map<string, RoundLabel[]>()
+  const byTask = new Map<string, RoundLabel[]>()
+  for (const round of rounds) {
+    const labels = labelled.get(round) ?? []
+    if (labels.length === 0) continue
+    const taskKey = `${round.session} ${round.task}`
+    for (const map of [bySession, byTask]) {
+      const key = map === bySession ? round.session : taskKey
+      const found = map.get(key)
+      if (found === undefined) map.set(key, [...labels])
+      else found.push(...labels)
+    }
+  }
+  const render = (labels: RoundLabel[] | undefined): string => {
+    const top = dominant(labels ?? [])
+    return top === null ? '—' : `${top.short} ${(top.share * 100).toFixed(0)}%`
+  }
+  return {
+    session: (id) => render(bySession.get(id)),
+    task: (session, task) => render(byTask.get(`${session} ${task}`)),
+    round: (round) => render(labelled.get(round)),
+  }
+}
+
+function printSessions(all: ReturnType<typeof sessionRows>, limit: number, work: Work): void {
   // Totals describe the project, not the page, so they are counted before the limit is applied.
   const totals = all.reduce((sum, row) => sum + row.rounds, 0)
   const rows = shown(all, limit)
   console.log(
-    `  ${pad('SESSION', 11)}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('OUT', 7)}  LAST`,
+    `  ${pad('SESSION', 11)}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('OUT', 7)}  ${pad('WORK', 11)}LAST`,
   )
   for (const row of rows) {
     const calls = `${row.tool_calls}${row.errors > 0 ? ` ✗${row.errors}` : ''}`
     const last = row.last_ts === null ? '—' : ago(Date.parse(row.last_ts))
     console.log(
-      `  ${pad(row.session.slice(0, 8), 11)}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(tokens(row.out_tokens), 7)}  ${last}`,
+      `  ${pad(row.session.slice(0, 8), 11)}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}  ${pad(work.session(row.session), 11)}${last}`,
     )
   }
   console.log('')
@@ -332,25 +402,25 @@ function taskId(row: TaskRow, showSession: boolean): string {
   return showSession ? `${row.session.slice(0, 8)}#${row.task}` : String(row.task)
 }
 
-function printTaskRows(tasks: TaskRow[], width: number, showSession: boolean): void {
+function printTaskRows(tasks: TaskRow[], width: number, showSession: boolean, work: Work): void {
   // The id column is named after what it identifies. Calling it `#` in a table that also counts
   // rounds reads as "round number", which is the one thing it is not.
   const idWidth = showSession ? 13 : 6
-  const asked = Math.max(20, width - idWidth - 34)
+  const asked = Math.max(20, width - idWidth - 45)
   console.log(
-    `  ${pad('TASK', idWidth)}${padStart('ROUNDS', 6)}  ${padStart('IN', 7)}  ${padStart('OUT', 6)}  ${padStart('TIME', 7)}  ASKED`,
+    `  ${pad('TASK', idWidth)}${padStart('ROUNDS', 6)}  ${padStart('IN', 7)}  ${padStart('OUT', 6)}  ${padStart('TIME', 7)}  ${pad('WORK', 11)}ASKED`,
   )
   for (const task of tasks) {
     console.log(
-      `  ${pad(taskId(task, showSession), idWidth)}${padStart(String(task.rounds), 6)}  ${padStart(tokens(task.in_tokens), 7)}  ${padStart(tokens(task.out_tokens), 6)}  ${padStart(duration(task.ms), 7)}  ${clip(task.asked === '' ? '—' : task.asked, asked)}`,
+      `  ${pad(taskId(task, showSession), idWidth)}${padStart(String(task.rounds), 6)}  ${padStart(tokens(task.in_tokens), 7)}  ${padStart(tokens(task.out_tokens), 6)}  ${padStart(duration(task.ms), 7)}  ${pad(work.task(task.session, task.task), 11)}${clip(task.asked === '' ? '—' : task.asked, asked)}`,
     )
   }
 }
 
 /** Every task in the project, which is the work seen in the units it was asked for. */
-function printTasks(all: TaskRow[], width: number, showSession: boolean, limit: number): void {
+function printTasks(all: TaskRow[], width: number, showSession: boolean, limit: number, work: Work): void {
   const tasks = shown(all, limit)
-  printTaskRows(tasks, width, showSession)
+  printTaskRows(tasks, width, showSession, work)
   console.log('')
   console.log(
     `  ${counted(tasks.length, all.length, 'task')}${more(tasks.length, all.length)}. \`probez task <id>\` shows one in full`,
@@ -365,6 +435,7 @@ function printTask(
   total: number,
   width: number,
   limit: number,
+  work: Work,
 ): void {
   const tools = toolTally(rounds)
   const errors = tools.reduce((sum, tool) => sum + tool.errors, 0)
@@ -385,7 +456,7 @@ function printTask(
 
   console.log('')
   const page = shown(rounds, limit)
-  printRoundRows(page, true)
+  printRoundRows(page, true, work)
   console.log('')
   console.log(
     `  ${counted(page.length, rounds.length, 'round')} · task ${row.task} of ${total}${more(page.length, rounds.length)}`,
@@ -403,6 +474,7 @@ function printSession(
   width: number,
   showSession: boolean,
   limit: number,
+  work: Work,
 ): void {
   const errors = row.errors > 0 ? ` · ${row.errors} tool error${row.errors === 1 ? '' : 's'}` : ''
   console.log(
@@ -410,7 +482,7 @@ function printSession(
   )
   console.log('')
   const tasks = shown(all, limit)
-  printTaskRows(tasks, width, showSession)
+  printTaskRows(tasks, width, showSession, work)
   console.log('')
   console.log(
     `  ${counted(tasks.length, all.length, 'task')} · ${row.rounds} rounds${more(tasks.length, all.length)}. \`probez task ${taskId(tasks[0] ?? ({ session: row.session, task: 1 } as TaskRow), showSession)}\` shows one in full`,
@@ -429,22 +501,22 @@ function roundId(round: Round, showSession: boolean): string {
   return showSession ? `${round.session.slice(0, 8)}#${local}` : local
 }
 
-function printRoundRows(rounds: Round[], showSession: boolean): void {
+function printRoundRows(rounds: Round[], showSession: boolean, work: Work): void {
   const idWidth = showSession ? 16 : 9
   // No TASK column: a round's id carries its task, so a second one would print the same number
   // twice. `probez task 504799b8#3` opens the task any row belongs to.
   console.log(
-    `  ${pad('ROUND', idWidth)}${pad('AGENT', 6)}${pad('MODEL', 16)}${padStart('IN', 8)}  ${padStart('OUT', 6)}  ${padStart('TIME', 7)}  TOOLS`,
+    `  ${pad('ROUND', idWidth)}${pad('AGENT', 6)}${pad('MODEL', 16)}${padStart('IN', 8)}  ${padStart('OUT', 6)}  ${padStart('TIME', 7)}  ${pad('WORK', 11)}TOOLS`,
   )
   for (const round of rounds) {
     console.log(
-      `  ${pad(roundId(round, showSession), idWidth)}${pad(round.agent, 6)}${pad(shortModel(round.model), 16)}${padStart(tokens(round.in_tokens), 8)}  ${padStart(tokens(round.out_tokens), 6)}  ${padStart(duration(round.ms), 7)}  ${clip(toolSummary(round), 44)}`,
+      `  ${pad(roundId(round, showSession), idWidth)}${pad(round.agent, 6)}${pad(shortModel(round.model), 16)}${padStart(tokens(round.in_tokens), 8)}  ${padStart(tokens(round.out_tokens), 6)}  ${padStart(duration(round.ms), 7)}  ${pad(work.round(round), 11)}${clip(toolSummary(round), 33)}`,
     )
   }
 }
 
-function printRounds(rounds: Round[], total: number, limit: number, showSession: boolean): void {
-  printRoundRows(rounds, showSession)
+function printRounds(rounds: Round[], total: number, limit: number, showSession: boolean, work: Work): void {
+  printRoundRows(rounds, showSession, work)
   console.log('')
   if (limit > 0 && total > rounds.length) {
     console.log(`  showing ${rounds.length} of ${total} rounds, --limit 0 for all`)
@@ -496,11 +568,20 @@ function printRound(round: Round, width: number): void {
     return
   }
   console.log(`  tools (${tools.length})`)
+  // The round is replayed through a fresh context, so a call is labelled by what came before it
+  // here. This is a detail view of one round: what a whole task had already edited is not in view.
+  const ctx = newContext()
   tools.forEach((tool, index) => {
     const chars = tool.result_chars === null ? '—' : `${tokens(tool.result_chars)} chars`
+    const labels = classifyCall(tool, ctx)
+    advance(tool, ctx)
+    const work = labels
+      .map((label) => `${label.category}/${label.sub}${label.target === 'unknown' ? '' : ` × ${label.target}`}`)
+      .join(' · ')
     console.log(
       `    ${padStart(String(index + 1), 2)}  ${tool.is_error === true ? '✗' : ' '} ${pad(tool.name ?? '?', 14)}${padStart(duration(tool.ms), 7)}  ${chars}`,
     )
+    console.log(`       ${clip(work, width - 8)}`)
     printToolInput(tool.input, width - 8)
   })
   console.log('')
@@ -548,6 +629,87 @@ function printTools(rows: ToolRow[], subLimit: number, noun: string): void {
   console.log('')
 }
 
+function percent(part: number, whole: number): string {
+  if (whole === 0) return '—'
+  return `${((part / whole) * 100).toFixed(1)}%`
+}
+
+/** Fractional rounds, since a round splits across the work it did. */
+function amount(value: number): string {
+  return value >= 100 ? value.toFixed(0) : value.toFixed(1)
+}
+
+function categoryLine(name: string, indent: number, row: CategoryRow, whole: number): string {
+  const width = 22 - indent
+  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(amount(row.rounds), 8)}  ${padStart(percent(row.rounds, whole), 7)}  ${padStart(row.errors >= 0.5 ? amount(row.errors) : '·', 6)}  ${padStart(duration(row.ms), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}`
+}
+
+/**
+ * The distribution, with each category's second level indented under it.
+ *
+ * The coverage line is not a footnote. A share here is a share of rounds that called a tool, and
+ * two things sit outside that: rounds of pure prose, and calls no table can name. Printing the
+ * percentages without them would invite the reader to assume they are not there.
+ */
+function printAnalysis(analysis: Analysis, subLimit: number, axis: string): void {
+  const { coverage } = analysis
+  const whole = coverage.weight
+  console.log(
+    `  ${pad('WORK', 20)}${padStart('ROUNDS', 8)}  ${padStart('SHARE', 7)}  ${padStart('ERRORS', 6)}  ${padStart('TIME', 8)}  ${padStart('OUT', 7)}`,
+  )
+  for (const row of analysis.rows) {
+    console.log(categoryLine(row.label, 2, row, whole))
+    const sub = row.sub ?? []
+    const shown = subLimit > 0 ? sub.slice(0, subLimit) : sub
+    for (const entry of shown) console.log(categoryLine(entry.name, 4, entry, whole))
+    if (shown.length < sub.length) {
+      console.log(`      … ${sub.length - shown.length} more, --limit 0 for all`)
+    }
+  }
+  console.log('')
+  console.log(
+    `  ${coverage.classified} round${coverage.classified === 1 ? '' : 's'} did something a tool can see, out of ${coverage.rounds}. Shares are of those`,
+  )
+  const holes: string[] = []
+  if (coverage.toolless > 0) {
+    holes.push(
+      `${coverage.toolless} round${coverage.toolless === 1 ? '' : 's'} of prose only (${percent(coverage.toolless, coverage.rounds)})`,
+    )
+  }
+  if (coverage.unclassified > 0) {
+    holes.push(`${percent(coverage.unclassified, whole)} unclassified`)
+  }
+  holes.push(`${percent(coverage.targeted, whole)} of work has a known target`)
+  console.log(`  ${holes.join(' · ')}`)
+  if (axis === 'sub' && analysis.unknown.length > 0) {
+    const top = analysis.unknown.slice(0, 3).map((row) => row.name).join(', ')
+    console.log(`  Unclassified is mostly ${top}. --unclassified lists it`)
+  }
+  console.log('')
+}
+
+/** What did not classify, so the hole has names in it rather than only a size. */
+function printUnclassified(analysis: Analysis, limit: number): void {
+  const rows = limit > 0 ? analysis.unknown.slice(0, limit) : analysis.unknown
+  if (rows.length === 0) {
+    console.log('  Everything classified.')
+    console.log('')
+    return
+  }
+  console.log(`  ${pad('WHAT RAN', 44)}${padStart('ROUNDS', 8)}  ${padStart('SHARE', 7)}`)
+  for (const row of rows) {
+    console.log(
+      `  ${pad(clip(row.name, 43), 44)}${padStart(amount(row.weight), 8)}  ${padStart(percent(row.weight, analysis.coverage.weight), 7)}`,
+    )
+  }
+  if (rows.length < analysis.unknown.length) {
+    console.log(`  … ${analysis.unknown.length - rows.length} more, --limit 0 for all`)
+  }
+  console.log('')
+  console.log('  A tool with no entry in the table is named rather than guessed at.')
+  console.log('')
+}
+
 function fail(message: string): never {
   console.error(`probez: ${message}`)
   process.exit(2)
@@ -585,6 +747,11 @@ async function main(): Promise<void> {
         tool: { type: 'string' },
         command: { type: 'string' },
         kind: { type: 'string' },
+        category: { type: 'string' },
+        target: { type: 'string' },
+        by: { type: 'string' },
+        split: { type: 'string' },
+        unclassified: { type: 'boolean', default: false },
         agent: { type: 'string' },
         errors: { type: 'boolean', default: false },
         limit: { type: 'string' },
@@ -693,7 +860,7 @@ async function main(): Promise<void> {
 
   const targeting = { all: values.all, includeTemp: values['include-temp'] }
 
-  const READ_COMMANDS = ['sessions', 'session', 'tasks', 'task', 'rounds', 'round', 'tools']
+  const READ_COMMANDS = ['sessions', 'session', 'tasks', 'task', 'rounds', 'round', 'tools', 'analyze']
   if (READ_COMMANDS.includes(command)) {
     const { projects: matched } = await resolveTargets(projects, target, targeting)
     if (matched.length === 0) noMatch(projects, target)
@@ -712,6 +879,21 @@ async function main(): Promise<void> {
     }
     if (values.kind !== undefined && !COMMAND_KINDS.includes(values.kind as never)) {
       fail(`--kind takes one of ${COMMAND_KINDS.join(', ')}, got "${values.kind}"`)
+    }
+    if (values.category !== undefined && !isCategory(values.category.toLowerCase())) {
+      fail(
+        `--category takes one of ${CATEGORIES.map((c) => c.id).join(', ')}, got "${values.category}"`,
+      )
+    }
+    if (values.target !== undefined && !isTarget(values.target.toLowerCase())) {
+      fail(`--target takes one of ${TARGETS.join(', ')}, got "${values.target}"`)
+    }
+    const BY = ['project', 'session', 'task']
+    if (values.by !== undefined && !BY.includes(values.by)) {
+      fail(`--by takes one of ${BY.join(', ')}, got "${values.by}"`)
+    }
+    if (values.split !== undefined && values.split !== 'sub' && values.split !== 'target') {
+      fail(`--split takes sub or target, got "${values.split}"`)
     }
 
     // Naming one thing inside a project only means something once the project is settled.
@@ -740,6 +922,9 @@ async function main(): Promise<void> {
         nothingCollected(project)
         continue
       }
+      // Labels depend on what came before in a task, so they are worked out over the whole project
+      // once and looked up by every table, rather than recomputed per page.
+      const work = workIndex(rounds)
 
       if (command === 'sessions') {
         const rows = sessionRows(rounds)
@@ -748,7 +933,80 @@ async function main(): Promise<void> {
           continue
         }
         projectHeader(project)
-        printSessions(rows, limit)
+        printSessions(rows, limit, work)
+        continue
+      }
+
+      if (command === 'analyze') {
+        const axis = values.split === 'target' ? 'target' : 'sub'
+        // Every share is recomputed from the rounds on the spot, so nothing printed can be stale.
+        // The file written below is a cache for the next stage, never the source of these numbers.
+        const scope = values.session === undefined && values.task === undefined
+          ? rounds
+          : filterRounds(rounds, {
+              session: values.session === undefined ? undefined : matchSession([...new Set(rounds.map((r) => r.session))], values.session),
+              task: asCount(values.task, 'task'),
+            })
+
+        const groups: { name: string; rounds: Round[] }[] =
+          values.by === 'session'
+            ? [...new Set(scope.map((r) => r.session))].map((id) => ({
+                name: id.slice(0, 8),
+                rounds: scope.filter((r) => r.session === id),
+              }))
+            : values.by === 'task'
+              ? [...new Set(scope.map((r) => `${r.session}#${r.task}`))].map((id) => ({
+                  name: `${id.slice(0, 8)}#${id.split('#')[1]}`,
+                  rounds: scope.filter((r) => `${r.session}#${r.task}` === id),
+                }))
+              : [{ name: projectName(project), rounds: scope }]
+
+        const analyses = groups.map((group) => ({
+          name: group.name,
+          analysis: categoryTally(group.rounds, axis),
+        }))
+
+        // The cache always describes the whole project, whatever slice was asked to be printed.
+        const whole = values.by === undefined && scope === rounds ? analyses[0]!.analysis : categoryTally(rounds, axis)
+        const labelled = labelRounds(rounds)
+        await writeAnalysis(
+          analysisFile(dataDir, project),
+          { rounds: rounds.length, toolless: whole.coverage.toolless },
+          rounds.map((round) => ({
+            session: round.session,
+            round: round.round,
+            task: round.task,
+            labels: (labelled.get(round) ?? []).map((label) => ({
+              category: label.category,
+              sub: label.sub,
+              target: label.target,
+              weight: Number(label.weight.toFixed(6)),
+              source: label.source,
+            })),
+          })),
+        )
+
+        if (values.json) {
+          const shaped = analyses.map((entry) => ({
+            name: entry.name,
+            categories: entry.analysis.rows,
+            coverage: entry.analysis.coverage,
+            unclassified: entry.analysis.unknown,
+          }))
+          output.push(
+            matched.length > 1
+              ? { project: projectName(project), path: project.path, analysis: shaped }
+              : shaped,
+          )
+          continue
+        }
+
+        projectHeader(project)
+        for (const entry of analyses) {
+          if (groups.length > 1) console.log(`  ${entry.name}`)
+          if (values.unclassified) printUnclassified(entry.analysis, limit)
+          else printAnalysis(entry.analysis, subLimit, axis)
+        }
         continue
       }
 
@@ -781,7 +1039,7 @@ async function main(): Promise<void> {
           continue
         }
         projectHeader(project)
-        printTasks(rows, width, sessions.length > 1, limit)
+        printTasks(rows, width, sessions.length > 1, limit, work)
         continue
       }
 
@@ -803,7 +1061,7 @@ async function main(): Promise<void> {
           continue
         }
         projectHeader(project)
-        printSession(row, tasks, width, sessions.length > 1, detailLimit)
+        printSession(row, tasks, width, sessions.length > 1, detailLimit, work)
         continue
       }
 
@@ -826,7 +1084,7 @@ async function main(): Promise<void> {
           rounds.filter((r) => r.session === row.session).map((r) => r.task),
         ).size
         projectHeader(project)
-        printTask(row, mine, total, width, detailLimit)
+        printTask(row, mine, total, width, detailLimit, work)
         continue
       }
 
@@ -851,6 +1109,8 @@ async function main(): Promise<void> {
         tool: values.tool,
         command: values.command,
         kind: values.kind,
+        category: values.category,
+        target: values.target,
         agent: values.agent as 'main' | 'sub' | undefined,
         errorsOnly: values.errors,
       }
@@ -866,7 +1126,7 @@ async function main(): Promise<void> {
         console.log('')
         continue
       }
-      printRounds(shown, selected.length, limit, sessions.length > 1)
+      printRounds(shown, selected.length, limit, sessions.length > 1, work)
     }
 
     if (values.json) {

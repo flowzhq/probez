@@ -73,9 +73,10 @@ for tasks and rounds.
 | `probez session [project] <id>` | One session as its tasks: what each asked, and what it cost | `--limit` |
 | `probez tasks [project]` | One row per task, across every session | `--session` `--limit` |
 | `probez task [project] <id>` | One task: what it asked, what it cost, and every round it took | `--session` `--limit` |
-| `probez rounds [project]` | One row per round | `--session` `--task` `--tool` `--command` `--kind` `--agent` `--errors` `--limit` |
+| `probez rounds [project]` | One row per round | `--session` `--task` `--tool` `--command` `--kind` `--category` `--target` `--agent` `--errors` `--limit` |
 | `probez round [project] <id>` | One round in full, including every tool call | `--session` |
 | `probez tools [project]` | Every tool the project called, with errors, time spent, and what `Bash` actually ran | `--kinds` `--limit` |
+| `probez analyze [project]` | Where the work went: one row per kind of work, per project, session or task | `--by` `--split` `--unclassified` `--session` `--task` `--limit` |
 | `probez collect [project]` | Collect one project, or **every project under a parent folder** | `--full` |
 
 **These work on every command:** `--json` for machine-readable output, `--all` for every project on
@@ -130,12 +131,12 @@ $ probez sessions flowz-mcp
 
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
-  SESSION    ROUNDS  TASKS  TOOLS           IN      OUT  LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  4 days ago
-  0b2cc149       87      4  84 ✗2        10.1M    97.6K  3 days ago
-  51cced08      134      4  131          24.3M   138.1K  3 days ago
-  be254122       21      2  19 ✗1         1.0M     8.2K  3 days ago
-  bfd594d9       73      2  72 ✗1        10.4M    74.6K  3 days ago
+  SESSION    ROUNDS  TASKS  TOOLS           IN      OUT  WORK       LAST
+  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 40%   4 days ago
+  0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   4 days ago
+  51cced08      134      4  131          24.3M   138.1K  Impl 41%   3 days ago
+  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 68%  3 days ago
+  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 41%  3 days ago
 
   5 sessions · 442 rounds
   `probez session <id>` shows one of them, task by task.
@@ -150,11 +151,11 @@ $ probez session flowz-mcp 0b2cc149
 
   session 0b2cc149  ·  4 tasks · 87 rounds · 10.1M in · 97.6K out · 2 tool errors · Aug 11, 2026
 
-  TASK         ROUNDS       IN     OUT     TIME  ASKED
-  0b2cc149#1        6   227.8K    1.2K     3.0s  did we implemented T001?
-  0b2cc149#2        2    81.4K     233    863ms  start with T-003 first
-  0b2cc149#3       46     4.4M   73.2K     4.9m  Execute task spec `$1`. 1. Read `docs/tasks/…
-  0b2cc149#4       33     5.4M   23.0K     1.2m  continue
+  TASK         ROUNDS       IN     OUT     TIME  WORK       ASKED
+  0b2cc149#1        6   227.8K    1.2K     3.0s  Recon 100% did we implemented T001?
+  0b2cc149#2        2    81.4K     233    863ms  Recon 50%  start with T-003 first
+  0b2cc149#3       46     4.4M   73.2K     4.9m  Impl 35%   Execute task spec `$1`. 1. Read `…
+  0b2cc149#4       33     5.4M   23.0K     1.2m  Impl 49%   continue
 
   4 tasks · 87 rounds. `probez task 0b2cc149#1` shows one in full
 ```
@@ -174,9 +175,9 @@ $ probez task flowz-mcp 0b2cc149#2
 
   tools  Read 1 · Skill 1
 
-  ROUND           AGENT MODEL                 IN     OUT     TIME  TOOLS
-  0b2cc149#2.6    main  opus-5             39.9K     139    840ms  Read 1
-  0b2cc149#2.7    main  opus-5             41.5K      94     23ms  Skill 1
+  ROUND           AGENT MODEL                 IN     OUT     TIME  WORK       TOOLS
+  0b2cc149#2.6    main  opus-5             39.9K     139    840ms  Recon 100% Read 1
+  0b2cc149#2.7    main  opus-5             41.5K      94     23ms  Uncl 100%  Skill 1
 
   2 rounds · task 2 of 4
 ```
@@ -195,6 +196,7 @@ $ probez round flowz-mcp 0bfa7fe3#1.36
 
   tools (1)
      1    Bash             9.4s  848 chars
+       verification/test
        command: go test ./... 2>&1 | tail -40
        description: Run the full test suite
 ```
@@ -269,6 +271,125 @@ substitutions are skipped, and a line that cannot be read confidently produces `
 than a guess. An unrecognized program is `other`, which means "not in the table", not
 "unclassifiable".
 
+### Where the work went
+
+`probez analyze` turns those calls into the kind of work they were:
+
+```console
+$ probez analyze flowz-mcp
+
+  flowz-mcp  ~/Dev/workspace/flowz-mcp
+
+  WORK                  ROUNDS    SHARE  ERRORS      TIME      OUT
+  Planning                10.0     2.3%       ·     21.3s     5.7K
+    design                 8.0     1.9%       ·       0ms      248
+    clarify                2.0     0.5%       ·     21.3s     5.4K
+  Reconstruction           115    26.8%     3.0      1.3m    60.0K
+    read                  73.3    17.1%     1.0     37.5s    30.7K
+    locate                41.2     9.6%     2.0     39.9s    29.2K
+    inspect                0.1     0.0%       ·     659ms      101
+  Implementation           161    37.5%     4.0     24.7m   292.3K
+    modify                 102    23.9%     2.0      6.2m   102.5K
+    create                44.0    10.3%       ·     17.5m   175.0K
+    refactor              14.4     3.4%     2.0     55.9s    14.9K
+  Verification            62.3    14.5%     1.0      2.2m    25.5K
+    build                 28.2     6.6%     1.0     16.1s     7.6K
+    test                  26.4     6.2%       ·     10.4s     4.8K
+    run                    7.6     1.8%       ·      1.7m    13.1K
+  Review                   4.1     1.0%       ·      1.1s      685
+    read-back              4.0     0.9%       ·     355ms      593
+    diff                   0.1     0.0%       ·     709ms       92
+  Documentation           55.0    12.9%       ·      8.7m    81.7K
+    system                44.0    10.3%       ·      5.1m    57.3K
+    agent                 11.0     2.6%       ·      3.6m    24.3K
+  Delivery                 4.9     1.2%       ·     18.7s     6.9K
+    branch                 4.5     1.0%       ·     16.0s     6.5K
+    commit                 0.5     0.1%       ·      2.7s      385
+  Environment              4.7     1.1%       ·     11.1s     3.2K
+    env                    2.7     0.6%       ·      7.4s     1.8K
+    deps                   2.0     0.5%       ·      3.7s     1.4K
+  Unclassified            12.0     2.8%       ·     26.3s    11.8K
+    unknown               11.0     2.6%       ·     25.2s    11.5K
+    incidental             1.0     0.2%       ·      1.1s      378
+
+  428 rounds did something a tool can see, out of 442. Shares are of those
+  14 rounds of prose only (3.2%) · 2.8% unclassified · 76.9% of work has a known target
+  Unclassified is mostly ToolSearch, codebase-memory-mcp, Skill. --unclassified lists it
+```
+
+`ROUNDS` is fractional because a round splits across the work it did: a round that reads three files
+and edits one is three quarters reconstruction. A `Bash` call splits the same way across the
+commands it ran, except that `cd`, `echo` and anything downstream of a pipe are dropped rather than
+counted, so `cd repo && npm test` is one test run and not half a change of directory.
+
+**The last three lines are the point of the table, not a footnote.** A share is a share of rounds
+that called at least one tool. Rounds of pure prose are outside it: that is where planning and
+explaining live, and the store keeps no reasoning to tell them apart, so they are reported rather
+than guessed at. So is every tool with no entry in the table, which on this machine is mostly MCP
+servers. An honest hole that names itself is worth more than a confident guess.
+
+Categories describe the *act*; a second axis describes what it was done to. Reading the README and
+reading the router are the same act on different things, and `--split target` shows that half. Here
+it separates a task that wrote as much test code as product code:
+
+```console
+$ probez analyze flowz-mcp --split target --session 51cced08 --task 2
+
+  flowz-mcp  ~/Dev/workspace/flowz-mcp
+
+  WORK                  ROUNDS    SHARE  ERRORS      TIME      OUT
+  Planning                 2.0     2.4%       ·       0ms       62
+    unknown                2.0     2.4%       ·       0ms       62
+  Reconstruction          26.3    31.7%       ·     13.6s    13.0K
+    code                  12.0    14.5%       ·      4.7s     9.9K
+    docs                   7.0     8.4%       ·      5.9s     1.6K
+    tests                  4.0     4.8%       ·      1.6s      699
+    unknown                3.3     4.0%       ·      1.4s      791
+  Implementation          36.0    43.4%       ·      4.6m    54.0K
+    code                  17.0    20.5%       ·      2.1m    27.1K
+    tests                 17.0    20.5%       ·      2.4m    25.8K
+    docs                   2.0     2.4%       ·      5.6s     1.1K
+  Verification            10.7    12.9%       ·      2.3s     1.9K
+    unknown                9.7    11.6%       ·      2.3s     1.7K
+    code                   1.0     1.2%       ·       0ms      109
+  Review                   2.0     2.4%       ·     355ms      339
+    code                   2.0     2.4%       ·     355ms      339
+  Documentation            5.0     6.0%       ·      1.1m     8.8K
+    docs                   4.0     4.8%       ·     34.7s     5.3K
+    agent                  1.0     1.2%       ·     33.4s     3.5K
+  Unclassified             1.0     1.2%       ·     201ms      572
+    unknown                1.0     1.2%       ·     201ms      572
+
+  83 rounds did something a tool can see, out of 84. Shares are of those
+  1 round of prose only (1.2%) · 1.2% unclassified · 80.7% of work has a known target
+```
+
+Any share reads back down to the rounds behind it, the way `--kind` already did for commands:
+
+```console
+$ probez rounds flowz-mcp --category documentation --limit 5
+
+  flowz-mcp  ~/Dev/workspace/flowz-mcp
+
+  ROUND           AGENT MODEL                 IN     OUT     TIME  WORK       TOOLS
+  0bfa7fe3#1.42   main  opus-5            142.8K    2.7K    31.1s  Docs 100%  Write 1
+  0bfa7fe3#1.43   main  opus-5            145.6K    1.2K    14.8s  Docs 100%  Write 1
+  0bfa7fe3#1.44   main  opus-5            147.0K    1.2K      0ms  Docs 100%  Write 1
+  0bfa7fe3#1.45   main  opus-5            148.2K    1.0K      0ms  Docs 100%  Write 1
+  0bfa7fe3#1.46   main  opus-5            149.3K    1.2K     9.5s  Docs 100%  Write 1
+
+  showing 5 of 55 rounds, --limit 0 for all
+```
+
+`--by session` and `--by task` give one table each instead of one for the whole project.
+
+**What these categories do not yet say.** An operation is classified by what it is, not by what it
+was for. A `grep` counts as `locate` whether it opened an hour of working out how an unfamiliar
+subsystem fits together or checked in one second where a constant lives. Reading an operation in
+the light of the ones around it is a second pass over a sequence rather than a lookup on a call,
+and it is the next version's job. Read the categories as what the agent did, not as what it was
+achieving.
+
 ## What you get
 
 One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.jsonl`:
@@ -315,8 +436,8 @@ repositories it describes, and read [SECURITY.md](SECURITY.md) before sharing an
 
 | | |
 | --- | --- |
-| **v0.1 · `collect`** | Record and normalize, locally, then read it back down to a single tool call ← you are here |
-| **v0.2 · `analyze`** | Where the work went: reconstruction vs implementation vs testing, per project and per task |
+| **v0.1 · `collect`** | Record and normalize, locally, then read it back down to a single tool call |
+| **v0.2 · `analyze`** | Where the work went: reconstruction vs implementation vs documentation, per project and per task ← you are here |
 | **v0.3 · `view`** | A self-contained local HTML profile per project |
 | **v0.4 · `sync`** | collect → analyze → refresh, one command |
 | **v0.5 · trend** | How the distribution moves over time |
