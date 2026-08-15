@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  constraints:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+
+      - name: No runtime dependencies
+        run: |
+          if node -e "const p=require('./package.json');process.exit(Object.keys(p.dependencies||{}).length?1:0)"; then
+            echo "ok: no dependencies"
+          else
+            echo "probez must have zero runtime dependencies"; exit 1
+          fi
+
+      - name: No network access
+        run: |
+          if grep -rnE "\b(fetch|XMLHttpRequest|node:https?|node:net|node:dgram|node:tls)\b" src/; then
+            echo "probez must not make network calls"; exit 1
+          fi
+          echo "ok: no network usage"

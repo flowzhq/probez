@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest something probez should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Three things probez will not do, so you can skip proposals built on them: add runtime
+        dependencies, make network calls, or write outside its own data directory.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to find out?
+      description: Describe the question about your sessions that you cannot answer today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would probez do
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead

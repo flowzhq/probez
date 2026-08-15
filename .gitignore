@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tgz
+*.log
+
+.DS_Store
+.idea/
+.vscode/
+
+# never commit collected session data
+.probez/
+probez-data/

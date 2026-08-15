@@ -1,0 +1,41 @@
+{
+  "name": "probez-cli",
+  "version": "0.1.0",
+  "description": "Records what your coding agent actually did — locally — so you can measure it instead of guessing.",
+  "keywords": [
+    "claude-code",
+    "coding-agent",
+    "llm",
+    "telemetry",
+    "analytics",
+    "developer-productivity",
+    "cli"
+  ],
+  "homepage": "https://github.com/flowzhq/probez#readme",
+  "bugs": "https://github.com/flowzhq/probez/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flowzhq/probez.git"
+  },
+  "license": "MIT",
+  "author": "flowzhq",
+  "type": "module",
+  "bin": {
+    "probez": "dist/src/cli.js"
+  },
+  "files": [
+    "dist/src"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "prepare": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,44 @@
+name: Bug report
+description: Something probez did wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste raw session content — it contains your real prompts and commands.
+        A minimal fixture with anything private stripped is the most useful attachment.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you run, and what did probez do?
+      placeholder: |
+        $ probez collect ~/work/api
+        ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: probez version
+      description: The output of `probez --version`
+      placeholder: 0.1.1
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version and OS
+      placeholder: Node 20.19.0, macOS 15
+    validations:
+      required: true
