@@ -1,7 +1,7 @@
 import { commandOf, parseCommands, UNPARSED } from './bash.js'
 import type { Command } from './bash.js'
 import { advance, CATEGORIES, categoryInfo, classifyCall, newContext } from './classify.js'
-import type { Label } from './classify.js'
+import type { Category, Label } from './classify.js'
 import type { Round, ToolCall } from './types.js'
 
 /** One session as recorded in the store, not as it exists on disk under ~/.claude. */
@@ -413,6 +413,46 @@ export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): A
   }
 }
 
+/** One round as the analysis cache records it: what it was, with none of what it said. */
+export interface AnalysisRecord {
+  session: string
+  round: number
+  task: number
+  labels: Array<{
+    category: Category
+    sub: string
+    target: string
+    weight: number
+    source: string
+  }>
+}
+
+/**
+ * Every round, labelled, in the shape `analysis.jsonl` stores.
+ *
+ * Two commands write that file now — `analyze` on its way through, and `view`'s sync — and a cache
+ * that means one thing depending on which of them last touched it would be worse than no cache. So
+ * the record is built here, once, and both callers hand the result to `writeAnalysis`.
+ *
+ * Weights are rounded to six places because they are the result of dividing by tool-call counts and
+ * the full binary expansion is noise in a file meant to be read.
+ */
+export function analysisRecords(rounds: Round[]): AnalysisRecord[] {
+  const labelled = labelRounds(rounds)
+  return rounds.map((round) => ({
+    session: round.session,
+    round: round.round,
+    task: round.task,
+    labels: (labelled.get(round) ?? []).map((label) => ({
+      category: label.category,
+      sub: label.sub,
+      target: label.target,
+      weight: Number(label.weight.toFixed(6)),
+      source: label.source,
+    })),
+  }))
+}
+
 /**
  * The category a set of rounds mostly was, and how much of it that category actually is.
  *
@@ -420,7 +460,13 @@ export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): A
  * span, and it often is not: reconstruction at 34% beating implementation at 31% is a different
  * fact from reconstruction at 80%, and a column that shows only the name hides which one it is.
  */
-export function dominant(labels: Label[]): { short: string; share: number } | null {
+export interface Dominant {
+  category: Category
+  short: string
+  share: number
+}
+
+export function dominant(labels: Label[]): Dominant | null {
   if (labels.length === 0) return null
   const totals = new Map<string, number>()
   let all = 0
@@ -438,7 +484,215 @@ export function dominant(labels: Label[]): { short: string; share: number } | nu
       most = weight
     }
   }
-  return { short: categoryInfo(best as never).short, share: most / all }
+  const category = best as Category
+  return { category, short: categoryInfo(category).short, share: most / all }
+}
+
+/**
+ * The dominant category of every span worth naming, looked up rather than recomputed.
+ *
+ * A table prints one of these per row, and each row would otherwise re-label the whole project to
+ * answer a question about one session. Labelling happens once here; the callers ask.
+ */
+export interface WorkIndex {
+  session(id: string): Dominant | null
+  task(session: string, task: number): Dominant | null
+  round(round: Round): Dominant | null
+}
+
+export function workIndex(rounds: Round[]): WorkIndex {
+  const labelled = labelRounds(rounds)
+  const bySession = new Map<string, RoundLabel[]>()
+  const byTask = new Map<string, RoundLabel[]>()
+  for (const round of rounds) {
+    const labels = labelled.get(round) ?? []
+    if (labels.length === 0) continue
+    for (const [map, key] of [
+      [bySession, round.session],
+      [byTask, `${round.session} ${round.task}`],
+    ] as const) {
+      const found = map.get(key)
+      if (found === undefined) map.set(key, [...labels])
+      else found.push(...labels)
+    }
+  }
+  return {
+    session: (id) => dominant(bySession.get(id) ?? []),
+    task: (session, task) => dominant(byTask.get(`${session} ${task}`) ?? []),
+    round: (round) => dominant(labelled.get(round) ?? []),
+  }
+}
+
+/**
+ * How many rounds decide a phase. Wide enough that a single read between two edits does not become
+ * its own band, narrow enough that a short phase still shows: on a real store, 5 turns a 122-round
+ * task from 80 bands into a dozen.
+ */
+const DEFAULT_WINDOW = 5
+
+/** One round on a timeline: what it cost and what it was, with none of what it said. */
+export interface TraceRound {
+  session: string
+  /** Index within the session, which is what a round is named by. */
+  round: number
+  task: number
+  agent: 'main' | 'sub'
+  /** How to ask for this round: `<task>.<round>`, the selector `probez round` takes. */
+  ref: string
+  ts: string | null
+  ms: number | null
+  in_tokens: number
+  out_tokens: number
+  thinking_chars: number
+  tools: number
+  errors: number
+  /** What this one round mostly was. The truth about the round, however jumpy it reads. */
+  dominant: Dominant | null
+  /** What the rounds around it were, which is what a phase is. See `Trace.window`. */
+  phase: Dominant | null
+  /**
+   * This round's weight split across the categories it earned, summing to 1. Empty for a round of
+   * pure prose, which is a different thing from a round that did nothing.
+   */
+  weights: Array<{ category: Category; weight: number }>
+}
+
+/** A stretch of consecutive rounds that were mostly the same kind of work. */
+export interface TraceRun {
+  /** null for a run of prose-only rounds, which have no category to be. */
+  category: Category | null
+  short: string
+  /** Indices into `Trace.rounds`, both inclusive. */
+  from: number
+  to: number
+  rounds: number
+}
+
+export interface Trace {
+  rounds: TraceRound[]
+  runs: TraceRun[]
+  /**
+   * How many rounds a phase is decided over. Reported because it is a choice, not a measurement:
+   * at 1 the ribbon is the raw per-round dominant, and every alternation between reading a file and
+   * writing one becomes its own band.
+   */
+  window: number
+  span: {
+    first: string | null
+    last: string | null
+    /** Wall clock from the first round starting to the last one finishing, gaps included. */
+    elapsed_ms: number
+    /** Time the rounds themselves took. Always the smaller number, often by a lot. */
+    active_ms: number
+  }
+}
+
+/**
+ * A span of rounds as a timeline: every round in order, and the phases they fall into.
+ *
+ * The two numbers in `span` are deliberately both kept. `active_ms` is what `TaskRow.ms` reports,
+ * the time the agent was working; `elapsed_ms` is how long you waited, which includes every gap
+ * where it was your turn. Reporting one as the other is the easiest lie this data tells.
+ *
+ * Runs are the phase ribbon: consecutive rounds sharing a category, collapsed. What they collapse
+ * is not the per-round dominant but a `window`-wide one, and the difference matters. Real work
+ * alternates on a scale of one round — read a file, write a file, read it back — so run-length
+ * encoding the raw series gives a band per round or two and says nothing. A phase is a claim about
+ * a stretch of rounds, so it is decided over a stretch of rounds.
+ *
+ * The smoothing is a choice rather than a measurement, which is why the width travels with the
+ * result and why every round keeps its own unsmoothed `dominant` alongside. Pass `window: 1` for
+ * the raw series.
+ */
+export function traceOf(rounds: Round[], options: { window?: number } = {}): Trace {
+  const window = Math.max(1, Math.round(options.window ?? DEFAULT_WINDOW))
+  const ordered = [...rounds].sort(
+    (a, b) => a.session.localeCompare(b.session) || a.round - b.round,
+  )
+  const labelled = labelRounds(ordered)
+
+  const perRound = ordered.map((round) => labelled.get(round) ?? [])
+
+  const traced: TraceRound[] = ordered.map((round, at) => {
+    const labels = perRound[at]!
+    const byCategory = new Map<Category, number>()
+    for (const label of labels) {
+      byCategory.set(label.category, (byCategory.get(label.category) ?? 0) + label.weight)
+    }
+    // The phase is the dominant of a neighbourhood, centred on this round and clipped at the ends.
+    const half = Math.floor(window / 2)
+    const near: RoundLabel[] = []
+    for (let i = Math.max(0, at - half); i <= Math.min(perRound.length - 1, at + half); i += 1) {
+      near.push(...perRound[i]!)
+    }
+    const tools = round.tools ?? []
+    return {
+      session: round.session,
+      round: round.round,
+      task: round.task,
+      agent: round.agent,
+      ref: `${round.task}.${round.round}`,
+      ts: round.ts,
+      ms: round.ms,
+      in_tokens: round.in_tokens || 0,
+      out_tokens: round.out_tokens || 0,
+      thinking_chars: round.thinking_chars || 0,
+      tools: tools.length,
+      errors: tools.filter((tool) => tool.is_error === true).length,
+      dominant: dominant(labels),
+      // A round of pure prose stays prose: a neighbourhood cannot lend it work no tool saw.
+      phase: labels.length === 0 ? null : dominant(near),
+      weights: [...byCategory.entries()]
+        .map(([category, weight]) => ({ category, weight }))
+        .sort((a, b) => categoryOrder(a.category) - categoryOrder(b.category)),
+    }
+  })
+
+  const runs: TraceRun[] = []
+  for (const [at, round] of traced.entries()) {
+    const category = round.phase?.category ?? null
+    const open = runs[runs.length - 1]
+    if (open !== undefined && open.category === category) {
+      open.to = at
+      open.rounds += 1
+      continue
+    }
+    runs.push({
+      category,
+      short: category === null ? 'Prose' : categoryInfo(category).short,
+      from: at,
+      to: at,
+      rounds: 1,
+    })
+  }
+
+  let first: string | null = null
+  let last: string | null = null
+  let start = Infinity
+  let end = -Infinity
+  let active = 0
+  for (const round of traced) {
+    active += round.ms ?? 0
+    if (round.ts === null) continue
+    if (first === null || round.ts < first) first = round.ts
+    if (last === null || round.ts > last) last = round.ts
+    const began = Date.parse(round.ts)
+    if (Number.isNaN(began)) continue
+    if (began < start) start = began
+    if (began + (round.ms ?? 0) > end) end = began + (round.ms ?? 0)
+  }
+
+  return {
+    rounds: traced,
+    runs,
+    window,
+    span: {
+      first,
+      last,
+      elapsed_ms: start === Infinity ? 0 : Math.max(0, end - start),
+      active_ms: active,
+    },
+  }
 }
 
 /**

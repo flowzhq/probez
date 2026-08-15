@@ -10,18 +10,37 @@ Requires Node 20 or newer. There is nothing else to install beyond the dev depen
 git clone https://github.com/flowzhq/probez.git
 cd probez
 npm install
-npm run build     # tsc
-npm test          # build, then node --test
+npm run build         # tsc, then vite build
+npm test              # build, then node --test
 ```
+
+`npm run logos` regenerates the view's logos and favicon from the source art in `web/assets` into
+`web/public`. It is not part of the build — the outputs are committed — so run it only when the
+source art changes. It has a note at the top about why the dark logo is derived rather than used.
+
+The build has two halves and either can be run alone. `npm run build:cli` is `tsc`, emitting the
+CLI to `dist/src`. `npm run build:web` is `vite build`, emitting the frontend `probez view` serves
+to `dist/view`. `npm test` needs both, because one test asserts the served page loads nothing from
+off-origin.
 
 Run the local build against your own sessions:
 
 ```bash
 node dist/src/cli.js projects
 node dist/src/cli.js collect ~/some/project --data-dir /tmp/probez-dev
+node dist/src/cli.js view --data-dir /tmp/probez-dev
 ```
 
 Use `--data-dir` while developing so you never touch your real `~/.probez` store.
+
+For the frontend, `npm run dev` starts Vite with hot reload on its own port and proxies `/api` to a
+`probez view` running alongside it on the default port. Start that first, then open the dev server
+with the token it printed:
+
+```bash
+node dist/src/cli.js view --no-open       # prints http://127.0.0.1:7373/?t=<token>
+npm run dev                               # then open http://localhost:5173/?t=<token>
+```
 
 ## The rules that shape this codebase
 
@@ -30,10 +49,22 @@ Three constraints are not up for negotiation in a PR, because they are the produ
 1. **Zero runtime dependencies.** `package.json` has no `dependencies` block and will not grow one.
    Node's standard library covers everything probez does. `typescript` and `@types/node` are
    development-only.
-2. **No network access.** probez makes no outbound calls of any kind. A PR that adds an HTTP client,
-   telemetry, or an upload path will be declined regardless of how it is gated. CI checks for this.
+2. **No outbound network.** probez never opens a connection to anything. A PR that adds an HTTP
+   client, telemetry, or an upload path will be declined regardless of how it is gated.
+
+   `probez view` *listens*, which is the one thing on this side of the line, and it is fenced in:
+   it binds `127.0.0.1` and nothing else, every request must carry a token that is new on every run
+   and must arrive with a matching `Host` header, and the served page may load only from its own
+   origin. CI checks each of those separately, so relaxing one is a visible change to this file
+   rather than a quiet one to a grep.
 3. **Only ever read the agent's session files.** probez writes exclusively under its own data
    directory.
+
+   The view has exactly one route that writes, `POST .../sync`, and it writes what `collect` and
+   `analyze` write and nothing else. Every other route is `GET`, and sync refuses `GET` so that
+   visiting a URL can never start a collection. Export is not an exception to this rule: the server
+   hands bytes to the browser and the browser writes them where the person said, which is the only
+   way a page can put a file on disk.
 
 ## Code style
 
@@ -51,8 +82,18 @@ output in `dist/test/`, which is why `npm test` builds first.
 - `test/extract.test.ts` covers the extractor with a golden test over a fixture session in
   `test/fixtures/`. If you change how a round is assembled, add a fixture case that fails without
   your change.
-- `test/inspect.test.ts` covers the read side (session and tool aggregation, round filters, and
-  selector parsing) against rounds built in the test file itself, so it needs no fixture.
+- `test/inspect.test.ts` covers the read side — session, task and tool aggregation, the work
+  taxonomy's fractional split, the trace and its phase smoothing, round filters, and selector
+  parsing — against rounds built in the test file itself, so it needs no fixture.
+- `test/classify.test.ts` covers the taxonomy, including the invariants that every category is
+  decomposed and that a round's labels always account for exactly one round.
+- `test/bash.test.ts` covers reading a shell command into the commands it ran.
+- `test/cli.test.ts` runs the built CLI end to end in a temporary store, so it touches neither
+  `~/.claude` nor `~/.probez`.
+- `test/view.test.ts` runs the local server in-process against a temporary store. Three of its
+  cases are the reason it exists: the refusals (no token, wrong `Host`, and the method rules,
+  including that sync refuses `GET`), the assertion that the store is byte-identical after a
+  session of browsing, and the one that a sync without the token writes nothing at all.
 
 If you hit a real session that probez parses incorrectly, the most useful contribution is a minimal
 fixture reproducing it. Please strip anything private before attaching it.
@@ -69,8 +110,9 @@ code drift apart. Each item below has been wrong at least once.
      probez on this repo.
    - `src/cli.ts`: the `HELP` string is a third copy of the command list, after the README table
      and the changelog. It drifts silently because nothing compiles against it.
-   - `docs/PRD.md`: the roadmap row and anything describing what the current version delivers.
+   - `docs/PRD.md`: anything describing what the current version delivers.
    - `CONTRIBUTING.md`: the dev commands and test layout, if either changed.
+   - `SECURITY.md`: if what probez exposes changed.
 2. **Move the changelog entries** out of `[Unreleased]` into a dated `## [x.y.z]` section, and add
    its compare link at the bottom.
 3. **Bump the version** in `package.json`, then run `npm install --package-lock-only`.
@@ -81,8 +123,9 @@ code drift apart. Each item below has been wrong at least once.
 5. **Tag the release commit**: `git tag -a vX.Y.Z -m "probez vX.Y.Z"`. An untagged version cannot be
    checked out later, and the changelog's compare links have nothing to point at.
 6. **Publish to npm**: `npm publish`, then `git push && git push --tags`. Check the tarball first
-   with `npm publish --dry-run`. `files` ships `dist/src` only, and a build left stale by a failed
-   `tsc` would go out unnoticed. npm releases cannot be replaced, only deprecated and superseded, so
+   with `npm publish --dry-run`. `files` ships `dist/src` and `dist/view`, and a build left stale by
+   a failed `tsc` or a skipped `vite build` would go out unnoticed — a published CLI whose `view`
+   has no frontend is the failure this check is for. npm releases cannot be replaced, only deprecated and superseded, so
    the version number is spent either way.
 
 ## Pull requests

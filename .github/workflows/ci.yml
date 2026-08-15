@@ -39,9 +39,47 @@ jobs:
             echo "probez must have zero runtime dependencies"; exit 1
           fi
 
-      - name: No network access
+      - name: No outbound network
         run: |
-          if grep -arnE "\b(fetch|XMLHttpRequest|node:https?|node:net|node:dgram|node:tls|node:dns|child_process|execSync|spawnSync)\b" src/; then
-            echo "probez must not make network calls"; exit 1
+          # probez never opens a connection to anything. `view` listens, on loopback only, which is
+          # why node:http is not on this list and node:https still is.
+          #
+          # `fetch` is matched as a call rather than as a word: `git fetch` is in the command table
+          # in classify.ts, and a bare \bfetch\b fails this job on a string that is nothing but the
+          # name of a git subcommand.
+          if grep -arnE "(^|[^'\"[:alnum:]_])fetch[[:space:]]*\(" src/; then
+            echo "probez must not make outbound network calls"; exit 1
           fi
-          echo "ok: no network usage"
+          if grep -arnE "\b(XMLHttpRequest|node:https|node:net|node:dgram|node:tls|node:dns|execSync|spawnSync)\b" src/; then
+            echo "probez must not make outbound network calls"; exit 1
+          fi
+          echo "ok: no outbound client"
+
+      - name: The server listens on loopback only
+        run: |
+          if ! grep -q "^const HOST = '127\.0\.0\.1'$" src/serve.ts; then
+            echo "src/serve.ts must bind the loopback address"; exit 1
+          fi
+          if grep -rn "\.listen(" src/ | grep -vE "\.listen\([^,]+, HOST\)"; then
+            echo "every listener must pass HOST, which is 127.0.0.1"; exit 1
+          fi
+          echo "ok: loopback only"
+
+      - name: Only the opener touches child_process
+        run: |
+          # Opening a browser is one spawn of one platform command, with the URL as an argv element.
+          # Anywhere else, or through a shell, it is a way to run something the user did not ask for.
+          if grep -rln "child_process" src/ | grep -v "^src/open\.ts$"; then
+            echo "child_process belongs in src/open.ts and nowhere else"; exit 1
+          fi
+          if grep -nE "exec\(|execFile|shell:\s*true" src/open.ts; then
+            echo "src/open.ts must spawn argv directly, never through a shell"; exit 1
+          fi
+          echo "ok: opener is argv-only"
+
+      - name: The view loads nothing from off-origin
+        run: |
+          if grep -rnE "(fetch|src|href)\s*[=(]\s*['\"\`]https?://" web/src web/index.html; then
+            echo "the view must load only from its own origin: no CDN, no remote fonts"; exit 1
+          fi
+          echo "ok: same-origin only"

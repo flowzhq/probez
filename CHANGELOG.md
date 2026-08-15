@@ -10,7 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [0.2.0] - 2026-08-15
 
-The analyzer. `collect` said how much; this says what of.
+The analyzer, and the view. `collect` said how much; this says what of, and shows it.
 
 ### Added
 
@@ -30,6 +30,26 @@ The analyzer. `collect` said how much; this says what of.
   inputs are per-server and unknowable to a built-in table.
 - **`probez rounds --category` and `--target`** read any share back down to the rounds behind it,
   beside the existing `--kind`.
+- **`probez view` — a local profiler for agent work.** Starts a server on `127.0.0.1` and opens a
+  browser at projects → project → session → task, with a round inspector under the task trace.
+  `--port` picks the port, `--no-open` prints the URL instead. Naming a project opens it directly.
+- **The trace.** A task's rounds laid out left to right in two registered rows: a ribbon of the
+  phases the agent moved through, and a strip of the rounds themselves. Each round cell is a stack
+  rather than a block, because a round's weight splits across the work it did. Click a round to open
+  it in full; the arrow keys walk from one to the next. Past sixty rounds an overview lane appears
+  with a brush on it, and the main rows draw the brushed range.
+- **Two axes.** Round index by default, so every round stays clickable; wall-clock time behind a
+  toggle, where the gaps are visible and a four-minute round is four minutes wide. `working` and
+  `elapsed` are reported separately everywhere, because they are different numbers.
+- **Sync and Export, per project**, on the project page and on each row of the list. Sync is
+  `collect` then `analyze` on that one project, reporting what it did in the words the CLI would
+  use, because "found nothing new" is the common outcome and worth saying. Export hands the data to
+  the browser to save: `.jsonl` is the store's own file byte for byte, `.json` is a bundle carrying
+  the manifest and the analysis around the same rounds. Where the browser has a folder picker you
+  get one.
+- `inspect.ts` gains `traceOf` and a pure `workIndex`; `store.ts` gains `listStored` and
+  `findStored`, the first way to read a project back out of the store rather than discovering it
+  from the agent's directory. A store stays browsable after the sessions it came from are gone.
 
 ### Changed
 
@@ -37,6 +57,32 @@ The analyzer. `collect` said how much; this says what of.
   call it prints. This changes the output of commands that existed in 0.1, so anything parsing
   those tables needs updating. The column carries the share as well as the name, because a
   category that won at 34% describes its rounds very differently from one that won at 80%.
+- **Constraint 2 is now "no outbound network" rather than "no network access".** probez still never
+  opens a connection to anything. `view` listens, on loopback only, and CI checks five things
+  separately: no outbound client, every listener binds `127.0.0.1`, `child_process` appears only in
+  `src/open.ts` and only as an argv spawn, and the served page loads nothing off-origin.
+- `dominant()` also returns the category id, which is what the view colours by.
+- The published package now ships `dist/view` alongside `dist/src`.
+
+### Fixed
+
+- The CI constraints job could not pass. Its network grep matched `\bfetch\b`, and `git fetch` is in
+  the command table in `classify.ts` — so the check failed on a string that is nothing but the name
+  of a git subcommand. It now matches `fetch(` as a call.
+
+### Security
+
+- The view is access-controlled: every `/api` request must carry a token generated fresh on each
+  run, and every request's `Host` header must be the address the server bound, which is the defence
+  against DNS rebinding. Reading leaves the store byte-identical — unlike `analyze`, no `GET` here
+  writes, and a test asserts it.
+- `POST .../sync` is the only route that writes, and it refuses `GET`: a URL that collects when it
+  is merely visited is a URL that can be put in an `<img>` tag. That one button changes what the
+  token protects, and the docs say so — before it, the token stood between a page you did not open
+  and reading your prompts; now it also stands between one and starting a collection.
+- An export is a copy of the store outside the store's owner-only directory. probez does no
+  redaction, so an export carries prompts, file paths and shell commands exactly as typed. The
+  browser writes it, never probez, which is what keeps constraint 3 intact.
 
 ### Known limits
 

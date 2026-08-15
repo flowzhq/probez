@@ -11,8 +11,9 @@ version ("cut 0.2.0", "make this v0.1.2", "ship it", "release this"). Treat a ve
 start of the checklist, never as the whole job.
 
 **Do:** every step of **CONTRIBUTING.md § Releasing**, in order. Sync the docs (README examples
-regenerated from real output, the `HELP` string in `src/cli.ts`, `docs/PRD.md` roadmap), move the
-changelog entries into a dated section, bump `package.json` *and* the lockfile, verify,
+regenerated from real output, the `HELP` string in `src/cli.ts`, whatever in `docs/PRD.md` describes
+what this version delivers), move the changelog entries into a dated section, bump `package.json`
+*and* the lockfile, verify,
 `git tag -a vX.Y.Z`, then `npm publish` and push the commit and the tag.
 
 **The two that get missed:** the git tag, and `npm install --package-lock-only` after the bump.
@@ -32,7 +33,7 @@ compiles against prose:
 - `src/cli.ts`: the command itself and the `HELP` string
 - `README.md`: the "Use" table, and the worked examples under "Digging in"
 - `CHANGELOG.md`: under `[Unreleased]`
-- `docs/PRD.md`: only if it changes what a milestone delivers
+- `docs/PRD.md`: only if it changes what the current version delivers
 
 ## Examples in docs are output, not prose
 

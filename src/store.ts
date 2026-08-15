@@ -41,6 +41,111 @@ export interface CollectResult extends Summary {
   skipped_sessions: number
 }
 
+/**
+ * A project as the store knows it, read back from its own manifest.
+ *
+ * Every command until now has started from the agent's directory and worked forwards, because
+ * collecting is the only thing you can do with a project that has never been collected. Reading is
+ * the other direction: what is already recorded is recorded whether or not `~/.claude` still holds
+ * the sessions it came from. `slugFor` is one-way, so this is the only way back.
+ */
+export interface StoredProject {
+  slug: string
+  dir: string
+  project: string
+  path: string | null
+  key: string
+  source_dir: string | null
+  sessions: number
+  rounds: number
+  tasks: number
+  in_tokens: number
+  out_tokens: number
+  first_ts: string | null
+  last_ts: string | null
+  collected_at: string | null
+}
+
+interface Manifest {
+  schema_version?: number
+  project?: string
+  path?: string | null
+  key?: string
+  source_dir?: string | null
+  collected_at?: string | null
+  sessions?: number
+  rounds?: number
+  tasks?: number
+  in_tokens?: number
+  out_tokens?: number
+  first_ts?: string | null
+  last_ts?: string | null
+}
+
+/**
+ * A slug names a directory, and it arrives from a URL, so it is checked rather than trusted. Only
+ * the shape `slugFor` produces is accepted: no separators, no dots, nothing that could climb out of
+ * the store.
+ */
+export function isSlug(value: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(value) && !value.startsWith('.') && !value.includes('..')
+}
+
+export function storedDir(dataDir: string, slug: string): string {
+  return join(dataDir, 'projects', slug)
+}
+
+function asStored(slug: string, dir: string, manifest: Manifest): StoredProject | null {
+  if (manifest.schema_version !== SCHEMA_VERSION) return null
+  return {
+    slug,
+    dir,
+    project: manifest.project ?? slug,
+    path: manifest.path ?? null,
+    key: manifest.key ?? slug,
+    source_dir: manifest.source_dir ?? null,
+    sessions: manifest.sessions ?? 0,
+    rounds: manifest.rounds ?? 0,
+    tasks: manifest.tasks ?? 0,
+    in_tokens: manifest.in_tokens ?? 0,
+    out_tokens: manifest.out_tokens ?? 0,
+    first_ts: manifest.first_ts ?? null,
+    last_ts: manifest.last_ts ?? null,
+    collected_at: manifest.collected_at ?? null,
+  }
+}
+
+/**
+ * Every project in the store, most recently active first.
+ *
+ * A directory whose manifest is missing, unreadable or of another schema is skipped rather than
+ * thrown on. A store is written by a long-running command that can be interrupted, so a half-written
+ * project is a state the reader should survive, not a reason to show nothing.
+ */
+export async function listStored(dataDir: string): Promise<StoredProject[]> {
+  const root = join(dataDir, 'projects')
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  const found: StoredProject[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !isSlug(entry.name)) continue
+    const dir = join(root, entry.name)
+    const manifest = await readJson<Manifest>(join(dir, 'manifest.json'))
+    if (manifest === null) continue
+    const stored = asStored(entry.name, dir, manifest)
+    if (stored !== null) found.push(stored)
+  }
+  found.sort((a, b) => (b.last_ts ?? '').localeCompare(a.last_ts ?? ''))
+  return found
+}
+
+/** One stored project by slug, or null when nothing of that name has been collected. */
+export async function findStored(dataDir: string, slug: string): Promise<StoredProject | null> {
+  if (!isSlug(slug)) return null
+  const dir = storedDir(dataDir, slug)
+  const manifest = await readJson<Manifest>(join(dir, 'manifest.json'))
+  return manifest === null ? null : asStored(slug, dir, manifest)
+}
+
 interface State {
   schema_version: number
   sessions: Record<string, { size: number; mtimeMs: number }>
@@ -169,8 +274,13 @@ export async function eachRound(file: string, visit: (round: Round) => void): Pr
  * megabytes even after months of sessions.
  */
 export async function readRounds(project: Project, dataDir: string): Promise<Round[]> {
+  return readRoundsIn(projectDir(dataDir, project))
+}
+
+/** The same read, addressed by the store directory itself, which is all a slug resolves to. */
+export async function readRoundsIn(dir: string): Promise<Round[]> {
   const rounds: Round[] = []
-  await eachRound(join(projectDir(dataDir, project), 'rounds.jsonl'), (round) => {
+  await eachRound(join(dir, 'rounds.jsonl'), (round) => {
     rounds.push(round)
   })
   return rounds

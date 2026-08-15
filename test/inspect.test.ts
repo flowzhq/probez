@@ -13,6 +13,8 @@ import {
   taskRows,
   toolSummary,
   toolTally,
+  traceOf,
+  workIndex,
 } from '../src/inspect.js'
 import type { Round, ToolCall } from '../src/types.js'
 
@@ -367,4 +369,109 @@ test('an unresolvable selector says what went wrong', () => {
     assert.match(error.message, /nothing collected/)
     return true
   })
+})
+
+/** A task of `kinds` rounds, one tool call each, so every round's category is known up front. */
+function traceRounds(kinds: Array<ToolCall | null>): Round[] {
+  return kinds.map((call, at) =>
+    round({
+      session: 'cccc3333',
+      round: at,
+      task: 4,
+      ts: `2026-02-01T00:0${at}:00.000Z`,
+      ms: 1000,
+      tools: call === null ? [] : [call],
+    }),
+  )
+}
+
+const read = (): ToolCall => tool('Read', { input: { file_path: 'src/loop.ts' } })
+// A different file from the one being read: re-opening one you just changed is `review/read-back`,
+// a rule of its own, and these tests are about the timeline rather than about that.
+const edit = (): ToolCall => tool('Edit', { input: { file_path: 'src/other.ts' } })
+
+test('a round splits across the work it did, and prose splits across nothing', () => {
+  const trace = traceOf([
+    round({ session: 'cccc3333', round: 0, task: 4, tools: [read(), read(), edit()] }),
+    round({ session: 'cccc3333', round: 1, task: 4, tools: [] }),
+  ])
+
+  const [split, prose] = trace.rounds
+  const total = split!.weights.reduce((sum, w) => sum + w.weight, 0)
+  assert.ok(Math.abs(total - 1) < 1e-9, `weights summed to ${total}`)
+  // Two reads and one edit is two thirds reconstruction, which is also what makes it dominant.
+  assert.equal(split!.dominant?.category, 'reconstruction')
+  assert.ok(Math.abs(split!.dominant!.share - 2 / 3) < 1e-9)
+
+  // A round that called no tool carries no label at all. That is not the same as an empty one.
+  assert.deepEqual(prose!.weights, [])
+  assert.equal(prose!.dominant, null)
+  assert.equal(prose!.phase, null)
+})
+
+test('a phase is decided over a stretch of rounds, not one of them', () => {
+  // One edit in the middle of a long read: a moment inside reconstruction, not a phase of its own.
+  const rounds = traceRounds([read(), read(), read(), edit(), read(), read(), read()])
+
+  const raw = traceOf(rounds, { window: 1 })
+  assert.equal(raw.window, 1)
+  assert.deepEqual(
+    raw.runs.map((run) => [run.short, run.rounds]),
+    [
+      ['Recon', 3],
+      ['Impl', 1],
+      ['Recon', 3],
+    ],
+  )
+
+  const smoothed = traceOf(rounds, { window: 5 })
+  assert.equal(smoothed.window, 5)
+  assert.deepEqual(
+    smoothed.runs.map((run) => [run.short, run.rounds]),
+    [['Recon', 7]],
+  )
+  // Smoothing is for the ribbon. The round itself still says what it actually was.
+  assert.equal(smoothed.rounds[3]?.dominant?.category, 'implementation')
+  assert.equal(smoothed.rounds[3]?.phase?.category, 'reconstruction')
+})
+
+test('prose breaks a phase rather than being absorbed into one', () => {
+  const rounds = traceRounds([read(), read(), null, read(), read()])
+  const trace = traceOf(rounds, { window: 5 })
+  assert.deepEqual(
+    trace.runs.map((run) => [run.short, run.from, run.to]),
+    [
+      ['Recon', 0, 1],
+      ['Prose', 2, 2],
+      ['Recon', 3, 4],
+    ],
+  )
+  assert.equal(trace.runs[1]?.category, null)
+})
+
+test('elapsed time is what you waited, and active time is what it worked', () => {
+  // Three rounds of one second each, a minute apart: three seconds of work across two minutes.
+  const trace = traceOf(traceRounds([read(), read(), read()]))
+  assert.equal(trace.span.active_ms, 3000)
+  assert.equal(trace.span.elapsed_ms, 121000)
+  assert.ok(trace.span.elapsed_ms >= trace.span.active_ms)
+  assert.equal(trace.span.first, '2026-02-01T00:00:00.000Z')
+  assert.equal(trace.span.last, '2026-02-01T00:02:00.000Z')
+})
+
+test('a round on the timeline is named the way probez round takes it', () => {
+  const trace = traceOf(traceRounds([read(), read()]))
+  assert.deepEqual(
+    trace.rounds.map((r) => r.ref),
+    ['4.0', '4.1'],
+  )
+})
+
+test('the work index answers for a span without relabelling it', () => {
+  const index = workIndex(rounds)
+  const session = index.session('aaaa1111')
+  assert.equal(session?.category, index.task('aaaa1111', 1)?.category ?? session?.category)
+  // A round of pure prose has no dominant, and saying so beats naming one.
+  assert.equal(index.round(rounds[4]!), null)
+  assert.equal(index.session('no-such-session'), null)
 })

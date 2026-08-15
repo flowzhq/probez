@@ -188,16 +188,76 @@ One assumption in that list was wrong, and the correction is worth keeping: an e
 `Grep` calls and four `Glob` calls in total; effectively all searching goes through `Bash` as
 `grep -rn`. The `locate` sub-kind comes from the command table, not from a tool name.
 
-## Roadmap
+## How the stages fit together
 
-| | |
-| --- | --- |
-| **v0.1 · `collect`** | Record and normalize, locally, then read it back at every level: `sessions`, `session`, `tasks`, `task`, `rounds`, `round`, `tools`, including what `Bash` ran |
-| **v0.2 · `analyze`** | The distribution above, per project, session and task, with the coverage it is a share of |
-| **v0.3 · `view`** | `probez view <project>` writes a self-contained HTML profile and opens it: inline CSS and JS, no server, no CDN, no network |
-| **v0.4 · `sync`** | collect → analyze → refresh the view, one command. The day-to-day entry point |
-| **v0.5 · trend** | A snapshot is an observation; the decision comes from watching reconstruction move. Rounds are timestamped and the store is append-only, so this needs no new collection |
+Each stage reads the previous stage's output file, so **`rounds.jsonl` is the contract between
+them**: `collect` writes it, `analyze` derives the distribution from it, and the view reads both
+without re-deriving either.
 
-Each stage reads the previous stage's output file, so `rounds.jsonl` is the contract between them.
-`sync` is a thin composition rather than a fourth pipeline, which works because `collect` is
-idempotent and incremental.
+That is what keeps anything built on top a thin composition rather than another pipeline, and it
+works because `collect` is idempotent and incremental — re-running it appends what is new and
+writes nothing the second time. The view already composes the two, per project, from a button.
+
+What ships next is deliberately not written down here: a roadmap that turns out to be wrong is worse
+than no roadmap, and this one was renumbered twice before the version it described had shipped.
+[CHANGELOG.md](../CHANGELOG.md) is the record of what exists.
+
+## v0.2 · the view
+
+**A performance profiler for agent work.** The data has been hierarchical since v0.1 — project,
+session, task, round — and reading it back has meant one table per command and joining them in your
+head. The view is that hierarchy made navigable, arranged the way Chrome DevTools' Performance panel
+is arranged, because the question is the same shape: where did the time go, and what was happening
+there.
+
+Four levels, and a round is a selection rather than a page:
+
+```
+/                            every project in the store
+/p/<slug>                    summary · where work goes · sessions
+/p/<slug>/s/<session>        work profile · the session strip · tasks
+/p/<slug>/s/<session>/t/<n>  the trace, with the round inspector under it
+```
+
+**The trace is the centrepiece.** Two rows over one axis. The *ribbon* is phases: consecutive rounds
+that were mostly the same kind of work, collapsed and named. The *strip* is the rounds themselves,
+one cell each, and each cell is a stack rather than a block, because a round's weight splits across
+the work it did.
+
+Three decisions in it are worth recording, because each was a choice with an alternative:
+
+- **The default axis is round index, not time.** Time is the truthful axis for cost and the useless
+  one for reading — a session's slowest round can be four minutes and its fastest four
+  milliseconds, so forty rounds become a sliver you cannot point at. Both are offered, the toggle
+  says which you are looking at, and the header carries working time and elapsed time either way.
+- **Phases are smoothed over five rounds, and the view says so.** Run-length encoding the raw
+  per-round dominant gives a band every round or two — a real 122-round task produced 80 of them —
+  because real work alternates on the scale of a single round. A phase is a claim about a stretch,
+  so it is decided over a stretch. That is a choice rather than a measurement, so the window
+  travels with the data and every round keeps its own unsmoothed label alongside.
+- **Prose-only rounds are drawn, hatched, rather than dropped.** They carry no label and sit outside
+  every share, which is exactly why the strip has to show them: a timeline that quietly omitted 5%
+  of the rounds would be lying about how many there were.
+
+**Every share carries its denominator**, the same coverage line the CLI prints, in the chart rather
+than under it.
+
+**Why a server and not a file.** An earlier plan promised a self-contained HTML profile. A store on this
+machine holds 3,667 rounds in one project and 6.5 MB of prose; inlining that produces a document
+that is slow to open and stale the moment it is written. A loopback server lazy-loads instead, and
+writes nothing at all. The cost is a socket, which is why `CONTRIBUTING.md` constraint 2 is now
+"no *outbound* network" and why five separate CI checks fence in what the listener may do.
+
+**Two actions, and the line they sit on.** A project can be **synced** — `collect` then `analyze`,
+on that project — and **exported**. Sync is the only write the view can make, and it makes exactly
+the writes those two commands make, through the same `analysisRecords` that builds the cache for
+`analyze`, so the file cannot come to mean two things depending on which wrote it last. It is the
+one route that takes a `POST`, and it refuses `GET`, because a URL that collects when it is merely
+visited is a URL that can be put in an `<img>` tag. Export does not bend constraint 3: the server
+hands bytes to the browser and the browser writes them where the person said, which is also the
+only way a page can put a file on disk.
+
+**What it deliberately does not do.** Reading never writes, not even the analysis cache that
+`analyze` leaves behind as a side effect of being run. And it invents no categories: the sketch this
+was designed from showed `SPEC` and `DEBUG` bands, and neither is a thing the analyzer can produce,
+so neither is drawn.

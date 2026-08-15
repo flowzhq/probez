@@ -15,6 +15,7 @@ import {
 } from './discover.js'
 import { ago, clip, duration, pad, padStart, shorten, span, tokens, wrap } from './format.js'
 import {
+  analysisRecords,
   categoryTally,
   dominant,
   filterRounds,
@@ -28,18 +29,29 @@ import {
   taskRows,
   toolSummary,
   toolTally,
+  workIndex,
 } from './inspect.js'
 import type {
   Analysis,
   CategoryRow,
+  Dominant,
   RoundFilter,
   RoundLabel,
   SessionRow,
   TaskRow,
   ToolRow,
 } from './inspect.js'
-import { analysisFile, collectProject, defaultDataDir, readRounds, writeAnalysis } from './store.js'
-import type { CollectResult, Summary } from './store.js'
+import { openInBrowser } from './open.js'
+import { DEFAULT_PORT, startServer } from './serve.js'
+import {
+  analysisFile,
+  collectProject,
+  defaultDataDir,
+  listStored,
+  readRounds,
+  writeAnalysis,
+} from './store.js'
+import type { CollectResult, StoredProject, Summary } from './store.js'
 import type { Project, Round } from './types.js'
 
 const COMMANDS = new Set([
@@ -53,6 +65,7 @@ const COMMANDS = new Set([
   'round',
   'tools',
   'analyze',
+  'view',
   'help',
 ])
 
@@ -90,6 +103,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   round: ['session'],
   tools: ['limit', 'kinds'],
   analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified'],
+  view: ['port', 'no-open'],
   help: [],
 }
 
@@ -171,6 +185,18 @@ Analysis
   Shares are of rounds that called at least one tool, weighted so that a round splits across
   the work it did. Rounds of pure prose carry no label and are reported instead of guessed at,
   and so is every tool with no entry in the table. Both are on the coverage line.
+
+The view
+  probez view                  Open the local profiler in your browser: every project,
+                               then a session, then a task as a timeline of its rounds
+  --port <n>                   Which port to listen on (default ${DEFAULT_PORT})
+  --no-open                    Print the URL instead of opening a browser
+
+  From there you can Sync a project, which is collect then analyze on that one, and Export
+  its rounds for your browser to save wherever you point it.
+
+  It listens on 127.0.0.1 and nothing leaves the machine. The URL carries a token that is new
+  on every run, without which the data neither answers nor syncs. Reading writes nothing.
 
 Collection
   probez collect [project]     Collect one project, or every project under a folder
@@ -349,29 +375,16 @@ interface Work {
   round(round: Round): string
 }
 
-function workIndex(rounds: Round[]): Work {
-  const labelled = labelRounds(rounds)
-  const bySession = new Map<string, RoundLabel[]>()
-  const byTask = new Map<string, RoundLabel[]>()
-  for (const round of rounds) {
-    const labels = labelled.get(round) ?? []
-    if (labels.length === 0) continue
-    const taskKey = `${round.session} ${round.task}`
-    for (const map of [bySession, byTask]) {
-      const key = map === bySession ? round.session : taskKey
-      const found = map.get(key)
-      if (found === undefined) map.set(key, [...labels])
-      else found.push(...labels)
-    }
-  }
-  const render = (labels: RoundLabel[] | undefined): string => {
-    const top = dominant(labels ?? [])
-    return top === null ? '—' : `${top.short} ${(top.share * 100).toFixed(0)}%`
-  }
+function render(top: Dominant | null): string {
+  return top === null ? '—' : `${top.short} ${(top.share * 100).toFixed(0)}%`
+}
+
+function printableWork(rounds: Round[]): Work {
+  const index = workIndex(rounds)
   return {
-    session: (id) => render(bySession.get(id)),
-    task: (session, task) => render(byTask.get(`${session} ${task}`)),
-    round: (round) => render(labelled.get(round)),
+    session: (id) => render(index.session(id)),
+    task: (session, task) => render(index.task(session, task)),
+    round: (round) => render(index.round(round)),
   }
 }
 
@@ -722,6 +735,89 @@ function asCount(value: string | undefined, flag: string): number | undefined {
   return n
 }
 
+/**
+ * A project named on the command line, matched against the store rather than against the agent's
+ * directory. By the name the tables print, or by any path that contains it.
+ */
+function matchStored(stored: StoredProject[], target: string): StoredProject[] {
+  const wanted = target.toLowerCase()
+  const byName = stored.filter((project) => project.project.toLowerCase() === wanted)
+  if (byName.length > 0) return byName
+  const path = resolve(target)
+  return stored.filter(
+    (project) =>
+      project.path !== null && (project.path === path || project.path.startsWith(`${path}/`)),
+  )
+}
+
+/**
+ * Serve the local profiler until interrupted.
+ *
+ * The URL carries a token because the store is unredacted: prompts, file paths and shell commands,
+ * exactly as they were typed. A port on this machine is a small door, but it is a door, and the
+ * page that opens it should be the one you asked for.
+ */
+async function runView(
+  dataDir: string,
+  claudeDir: string,
+  target: string | undefined,
+  options: { port?: string; open: boolean; json: boolean },
+): Promise<void> {
+  const port = options.port === undefined ? undefined : asCount(options.port, 'port')
+  if (port !== undefined && port > 65535) fail(`--port takes a number under 65536, got ${port}`)
+
+  const stored = await listStored(dataDir)
+  if (stored.length === 0) {
+    console.error(
+      `probez: nothing collected yet in ${shorten(dataDir)}. Run \`probez collect\` first`,
+    )
+    process.exit(1)
+  }
+
+  let at = ''
+  if (target !== undefined) {
+    const matched = matchStored(stored, target)
+    if (matched.length === 0) {
+      const names = stored
+        .slice(0, 6)
+        .map((project) => project.project)
+        .join(', ')
+      fail(`nothing collected for "${target}". This store has: ${names}`)
+    }
+    // A path holding several projects names all of them, and the list is where you choose.
+    if (matched.length === 1) at = `p/${matched[0]!.slug}`
+  }
+
+  const serving = await startServer({
+    dataDir,
+    claudeDir,
+    port,
+    pinned: options.port !== undefined,
+  })
+  const url = `http://127.0.0.1:${serving.port}/${at}?t=${serving.token}`
+
+  if (options.json) {
+    console.log(JSON.stringify({ url, port: serving.port, token: serving.token }, null, 2))
+  } else {
+    const count = stored.length
+    console.log('')
+    console.log(`  probez view  ${url}`)
+    console.log(`  serving ${count} project${count === 1 ? '' : 's'} from ${shorten(dataDir)}`)
+    console.log('  ctrl-c to stop')
+    console.log('')
+  }
+
+  if (options.open && !openInBrowser(url)) {
+    console.log('  could not open a browser. Open the URL above yourself.')
+  }
+
+  await new Promise<void>((done) => {
+    process.on('SIGINT', () => {
+      void serving.close().then(() => done())
+    })
+  })
+}
+
 async function main(): Promise<void> {
   const nodeMajor = Number(process.versions.node.split('.')[0])
   if (nodeMajor < 20) {
@@ -755,6 +851,8 @@ async function main(): Promise<void> {
         agent: { type: 'string' },
         errors: { type: 'boolean', default: false },
         limit: { type: 'string' },
+        port: { type: 'string' },
+        'no-open': { type: 'boolean', default: false },
         version: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
@@ -812,7 +910,21 @@ async function main(): Promise<void> {
   }
 
   const dataDir = values['data-dir'] ? resolve(values['data-dir']) : defaultDataDir()
+
   const claudeDir = values['claude-dir'] ? resolve(values['claude-dir']) : defaultClaudeDir()
+
+  // `view` reads the store, so it runs before the agent's directory is required to exist. What has
+  // been collected stays browsable whether or not the sessions it came from still do; the agent's
+  // directory is consulted only when you press Sync, and only then can it be missing.
+  if (command === 'view') {
+    await runView(dataDir, claudeDir, target, {
+      port: values.port,
+      open: values['no-open'] !== true,
+      json: values.json,
+    })
+    return
+  }
+
   const projects = await discoverProjects(claudeDir)
 
   if (projects.length === 0) {
@@ -924,7 +1036,7 @@ async function main(): Promise<void> {
       }
       // Labels depend on what came before in a task, so they are worked out over the whole project
       // once and looked up by every table, rather than recomputed per page.
-      const work = workIndex(rounds)
+      const work = printableWork(rounds)
 
       if (command === 'sessions') {
         const rows = sessionRows(rounds)
@@ -968,22 +1080,10 @@ async function main(): Promise<void> {
 
         // The cache always describes the whole project, whatever slice was asked to be printed.
         const whole = values.by === undefined && scope === rounds ? analyses[0]!.analysis : categoryTally(rounds, axis)
-        const labelled = labelRounds(rounds)
         await writeAnalysis(
           analysisFile(dataDir, project),
           { rounds: rounds.length, toolless: whole.coverage.toolless },
-          rounds.map((round) => ({
-            session: round.session,
-            round: round.round,
-            task: round.task,
-            labels: (labelled.get(round) ?? []).map((label) => ({
-              category: label.category,
-              sub: label.sub,
-              target: label.target,
-              weight: Number(label.weight.toFixed(6)),
-              source: label.source,
-            })),
-          })),
+          analysisRecords(rounds),
         )
 
         if (values.json) {

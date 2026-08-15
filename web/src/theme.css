@@ -1,0 +1,688 @@
+/*
+ * Tokens first, then a small set of layout primitives. Every colour in the app comes from here.
+ *
+ * The eight series colours are a validated categorical palette: adjacent pairs stay separable under
+ * colour-vision deficiency in both themes, and the slot order is what makes that true, so a
+ * category's colour is fixed by its place in the taxonomy and never by its size in a chart.
+ * Unclassified is not among them; it is a hatched neutral, because it is the hole rather than a
+ * ninth kind of thing.
+ */
+
+:root {
+  color-scheme: light;
+
+  --plane: #f9f9f7;
+  --surface: #fcfcfb;
+  --raised: #ffffff;
+
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #898781;
+
+  --rule: #e1e0d9;
+  --axis: #c3c2b7;
+  --ring: rgba(11, 11, 11, 0.1);
+  --wash: rgba(11, 11, 11, 0.04);
+
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  --series-none: #b9b7b0;
+  --hatch-ink: #898781;
+
+  --bad: #d03b3b;
+  --accent: #2a78d6;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --plane: #0d0d0d;
+    --surface: #1a1a19;
+    --raised: #222220;
+
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #898781;
+
+    --rule: #2c2c2a;
+    --axis: #383835;
+    --ring: rgba(255, 255, 255, 0.1);
+    --wash: rgba(255, 255, 255, 0.05);
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    --series-none: #55534e;
+    --hatch-ink: #898781;
+
+    --bad: #e66767;
+    --accent: #3987e5;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --plane: #0d0d0d;
+  --surface: #1a1a19;
+  --raised: #222220;
+
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --ink-3: #898781;
+
+  --rule: #2c2c2a;
+  --axis: #383835;
+  --ring: rgba(255, 255, 255, 0.1);
+  --wash: rgba(255, 255, 255, 0.05);
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --series-none: #55534e;
+  --hatch-ink: #898781;
+
+  --bad: #e66767;
+  --accent: #3987e5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--plane);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+/* Layout ------------------------------------------------------------------ */
+
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 24px 96px;
+}
+
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--plane);
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 24px;
+}
+
+.top-in {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 9px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.logo {
+  display: block;
+  height: 26px;
+  width: auto;
+}
+
+/* Which logo is painted follows the theme by the same three rules the colour tokens do, so a
+   toggle wins over the OS setting in both directions and neither needs JavaScript. */
+.logo-dark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .logo-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .logo-dark {
+    display: block;
+  }
+}
+
+:root[data-theme='dark'] .logo-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .logo-dark {
+  display: block;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  min-width: 0;
+}
+
+.crumbs a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.crumb-sep {
+  color: var(--ink-3);
+}
+
+.crumb {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 30ch;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+h2 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 10px;
+}
+
+section {
+  margin-top: 32px;
+}
+
+/* Text -------------------------------------------------------------------- */
+
+.mono {
+  font-family: var(--mono);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--ink-3);
+}
+
+.dim {
+  color: var(--ink-2);
+}
+
+.note {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.bad {
+  color: var(--bad);
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.facts .sep {
+  color: var(--ink-3);
+}
+
+.asked {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--axis);
+  border-radius: 3px;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+/* Tables ------------------------------------------------------------------ */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+thead th {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: left;
+  padding: 0 10px 6px;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+tbody td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: middle;
+}
+
+tbody tr.row:hover {
+  background: var(--wash);
+  cursor: pointer;
+}
+
+.r {
+  text-align: right;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.clip {
+  max-width: 0;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Chart pieces ------------------------------------------------------------ */
+
+.swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: baseline;
+}
+
+/* The SVG pattern's counterpart, for slices drawn as elements rather than marks. */
+.hatch {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--hatch-ink) 0 1.4px,
+    var(--series-none) 1.4px 5px
+  );
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 10px 0 0;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.legend button {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+}
+
+.legend button[aria-pressed='false'] {
+  opacity: 0.4;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 14px 16px;
+}
+
+.tip {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--ring);
+  border-radius: 4px;
+  padding: 7px 9px;
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  max-width: 320px;
+}
+
+.tip-key {
+  color: var(--ink-3);
+}
+
+/* Actions ----------------------------------------------------------------- */
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.action {
+  padding: 3px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.action:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--axis);
+  background: var(--raised);
+}
+
+.action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.actions-compact .action {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.menu-anchor {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 260px;
+  background: var(--raised);
+  border: 1px solid var(--ring);
+  border-radius: 4px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+}
+
+.menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.menu button:hover {
+  background: var(--wash);
+}
+
+.menu-note {
+  display: block;
+  color: var(--ink-3);
+  font-size: 11px;
+  margin-top: 1px;
+}
+
+.said {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.said.bad {
+  color: var(--bad);
+}
+
+/* Trace ------------------------------------------------------------------- */
+
+.trace {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 12px 14px 6px;
+}
+
+.trace-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.toggle {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.toggle button {
+  padding: 2px 9px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.toggle button[aria-pressed='true'] {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+/* Inspector --------------------------------------------------------------- */
+
+.inspector {
+  margin-top: 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.inspector-body {
+  padding: 14px;
+  display: grid;
+  gap: 18px;
+}
+
+.prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.call {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.call + .call {
+  margin-top: 6px;
+}
+
+.call-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.call-head:hover {
+  background: var(--wash);
+}
+
+.call pre {
+  margin: 0;
+  padding: 10px;
+  border-top: 1px solid var(--rule);
+  background: var(--plane);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.theme {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1px;
+  flex: 0 0 auto;
+}
+
+.theme button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border-radius: 3px;
+  color: var(--ink-3);
+}
+
+.theme button:hover {
+  color: var(--ink-2);
+  background: var(--wash);
+}
+
+.theme button[aria-pressed='true'] {
+  color: var(--ink);
+  background: var(--wash);
+}
+
+.kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 0 4px;
+  color: var(--ink-2);
+}
+
+/* A page being re-read after a sync. The numbers under you are about to change, and a moment of
+   half-attention is more honest than swapping them silently. */
+.rereading {
+  opacity: 0.55;
+  transition: opacity 120ms ease-out;
+}
+
+/* States ------------------------------------------------------------------ */
+
+.center {
+  padding: 64px 0;
+  text-align: center;
+  color: var(--ink-3);
+}
+
+.error {
+  border: 1px solid var(--ring);
+  border-left: 2px solid var(--bad);
+  border-radius: 3px;
+  background: var(--surface);
+  padding: 14px 16px;
+  max-width: 620px;
+  margin: 48px auto;
+}

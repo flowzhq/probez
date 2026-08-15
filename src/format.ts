@@ -53,7 +53,10 @@ export function ago(ms: number): string {
   if (minutes < 2) return 'just now'
   if (hours < 1) return `${Math.round(minutes)} min ago`
   if (days < 1) return `${Math.round(hours)} hr ago`
-  if (days < 30) return `${Math.round(days)} days ago`
+  if (days < 30) {
+    const whole = Math.round(days)
+    return `${whole} day${whole === 1 ? '' : 's'} ago`
+  }
   return `${Math.round(days / 30)} mo ago`
 }
 

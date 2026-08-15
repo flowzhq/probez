@@ -1,0 +1,147 @@
+import { useEffect, useRef, useState } from 'react'
+import type { ReactElement } from 'react'
+
+import { api, exportProject } from '../api'
+import type { ExportFormat } from '../api'
+import { count, tokens } from '../format'
+
+/**
+ * The two things you can do to a project rather than read about it.
+ *
+ * **Sync** is `collect` then `analyze`, on this project, and it is the only write the view can
+ * make. It reports what it did in the same words the CLI would — new rounds, sessions read — rather
+ * than flashing a tick, because "synced" and "found nothing new" are different outcomes and the
+ * second one is the common one.
+ *
+ * **Export** hands the data to the browser to save. probez writes only under its own data
+ * directory, so it never puts a file in the folder you choose; it gives the bytes to the page and
+ * the page asks you where. Two formats, because they answer different questions: `.jsonl` is the
+ * store's own file, the contract every stage reads, and `.json` is a bundle to look at, carrying
+ * the analysis and the coverage its shares are shares of.
+ *
+ * Whatever comes out is unredacted — prompts, file paths, shell commands, exactly as typed.
+ */
+export function Actions({
+  slug,
+  onSynced,
+  compact = false,
+}: {
+  slug: string
+  /** Called after a sync that changed something, so the page behind can re-read. */
+  onSynced?: () => void
+  compact?: boolean
+}): ReactElement {
+  const [busy, setBusy] = useState<'sync' | ExportFormat | null>(null)
+  const [said, setSaid] = useState<string | null>(null)
+  const [bad, setBad] = useState(false)
+  const [menu, setMenu] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+
+  // A message about what just happened is worth reading and not worth keeping.
+  useEffect(() => {
+    if (said === null) return
+    const at = window.setTimeout(() => setSaid(null), 8000)
+    return () => window.clearTimeout(at)
+  }, [said])
+
+  useEffect(() => {
+    if (!menu) return
+    const close = (event: MouseEvent): void => {
+      if (box.current !== null && !box.current.contains(event.target as Node)) setMenu(false)
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [menu])
+
+  const report = (message: string, failed = false): void => {
+    setBad(failed)
+    setSaid(message)
+  }
+
+  const sync = async (): Promise<void> => {
+    setBusy('sync')
+    setSaid(null)
+    try {
+      const result = await api.sync(slug)
+      if (!result.source_found) {
+        report(
+          `no agent sessions found for this project${result.source_dir === null ? '' : ` at ${result.source_dir}`} — nothing left to collect from. Re-analysed ${count(result.rounds)} stored rounds`,
+        )
+      } else if (result.new_rounds === 0) {
+        report(`already up to date · ${count(result.rounds)} rounds, ${result.sessions} sessions`)
+      } else {
+        const rounds = `${count(result.new_rounds)} round${result.new_rounds === 1 ? '' : 's'}`
+        const sessions = `${result.read_sessions} session${result.read_sessions === 1 ? '' : 's'}`
+        report(`+${rounds} from ${sessions} · ${count(result.rounds)} total`)
+      }
+      onSynced?.()
+    } catch (problem) {
+      report((problem as Error).message, true)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const save = async (format: ExportFormat): Promise<void> => {
+    setMenu(false)
+    setBusy(format)
+    setSaid(null)
+    try {
+      const result = await exportProject(slug, format)
+      report(
+        result.saved === 'cancelled'
+          ? 'export cancelled'
+          : `${result.saved === 'picked' ? 'saved' : 'downloaded'} ${result.filename} · ${tokens(result.bytes)}B`,
+      )
+    } catch (problem) {
+      report((problem as Error).message, true)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const stop = (event: { stopPropagation: () => void }): void => event.stopPropagation()
+
+  return (
+    <div
+      className={`actions${compact ? ' actions-compact' : ''}`}
+      ref={box}
+      onClick={stop}
+      onMouseDown={stop}
+    >
+      <button className="action" onClick={() => void sync()} disabled={busy !== null}>
+        {busy === 'sync' ? 'Syncing…' : 'Sync'}
+      </button>
+
+      <div className="menu-anchor">
+        <button
+          className="action"
+          onClick={() => setMenu(!menu)}
+          disabled={busy !== null}
+          aria-expanded={menu}
+          aria-haspopup="menu"
+        >
+          {busy === 'jsonl' || busy === 'json' ? 'Exporting…' : 'Export'} <span aria-hidden>▾</span>
+        </button>
+        {menu ? (
+          <div className="menu" role="menu">
+            <button role="menuitem" onClick={() => void save('jsonl')}>
+              <strong>Rounds</strong> <span className="mono muted">.jsonl</span>
+              <span className="menu-note">the store's own file, one round per line</span>
+            </button>
+            <button role="menuitem" onClick={() => void save('json')}>
+              <strong>Bundle</strong> <span className="mono muted">.json</span>
+              <span className="menu-note">manifest, analysis and rounds in one document</span>
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {said === null ? null : (
+        <span className={`said${bad ? ' bad' : ''}`} role="status">
+          {said}
+        </span>
+      )}
+    </div>
+  )
+}

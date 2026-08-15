@@ -1,4 +1,9 @@
-# probez
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
+    <img src="docs/logo.png" alt="probez" width="320">
+  </picture>
+</p>
 
 [![npm](https://img.shields.io/npm/v/probez-cli.svg)](https://www.npmjs.com/package/probez-cli)
 [![CI](https://github.com/flowzhq/probez/actions/workflows/ci.yml/badge.svg)](https://github.com/flowzhq/probez/actions/workflows/ci.yml)
@@ -77,6 +82,7 @@ for tasks and rounds.
 | `probez round [project] <id>` | One round in full, including every tool call | `--session` |
 | `probez tools [project]` | Every tool the project called, with errors, time spent, and what `Bash` actually ran | `--kinds` `--limit` |
 | `probez analyze [project]` | Where the work went: one row per kind of work, per project, session or task | `--by` `--split` `--unclassified` `--session` `--task` `--limit` |
+| `probez view [project]` | Open the local profiler in your browser | `--port` `--no-open` |
 | `probez collect [project]` | Collect one project, or **every project under a parent folder** | `--full` |
 
 **These work on every command:** `--json` for machine-readable output, `--all` for every project on
@@ -390,6 +396,92 @@ the light of the ones around it is a second pass over a sequence rather than a l
 and it is the next version's job. Read the categories as what the agent did, not as what it was
 achieving.
 
+## The view
+
+Everything above is one table at a time. `probez view` is all of it at once, in a browser, arranged
+the way a profiler is arranged:
+
+```console
+$ probez view flowz-mcp
+
+  probez view  http://127.0.0.1:7373/p/flowz-mcp-75ad21ac?t=19e2a961-0965-49f5-a11b-fd909f1d8663
+  serving 45 projects from ~/.probez
+  ctrl-c to stop
+```
+
+It opens your browser at that URL. Naming a project goes straight to it; leaving it out opens the
+list of every project in the store.
+
+**Projects → project → session → task**, and on the task page, a trace. The trace is two rows over
+one axis. The top row is the phases the agent moved through; the bottom row is the rounds
+themselves, one cell each, stacked by the work each round did. Click a round and it opens in full
+underneath — what was asked, what was said, and every tool call with the arguments it was given.
+The arrow keys walk from one round to the next.
+
+```
+by round                                            89 rounds · 1.8m working · 18.8m elapsed
+
+ RECON │ IMPLEMENT ██████████████ │▌│▐│ IMPL │ RECON │ VERIF │ IMPL ████ │ DOCS │▌│ VERIF
+ ▊▐▙▟▊▌▐▙▟▐▊▌▟▙▐▊▌▐▙▊▟▌▐▊▙▐▌▟▊▐▙▌▐▊▟▙▐▌▊▐▟▙▊▌▐▊▙▟▐▌▊▐▙▟▊▌▐▟▙▊▐▌▙▟▐▊▌▐▙▊▟▐▌▊▐▙▟▊▌▐▙▟▊▐▌▙▟
+ 170        180        190        200        210        220        230        240      250
+ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+```
+
+*(A sketch of the layout, not terminal output — the trace is drawn in the browser.)*
+
+Three things about it are worth knowing before you read one.
+
+**The axis is round index by default, and time is a toggle.** Time is the honest axis for cost and a
+poor one for reading: the slowest round in a session can be four minutes and the fastest four
+milliseconds, so on a time axis most of the rounds collapse into slivers you cannot click. Switch to
+it when you want to see where the wait actually was — including the gaps where it was your turn.
+The header carries both totals either way, and they are different numbers: `working` is the time the
+rounds took, `elapsed` is how long you sat there.
+
+**Phases are smoothed, and the page says so.** Real work alternates round to round — read a file,
+edit it, read the next — so collapsing the raw per-round category gives a band every round or two.
+A 122-round task produced 80 of them, which is a barcode, not a story. Phases are the dominant
+category over five rounds instead. That is a choice rather than a measurement, so the page states
+the window, and every round cell still shows what its own round actually was.
+
+**It shows the rounds no tool saw.** Rounds of pure prose carry no label and sit outside every
+share; the strip draws them hatched rather than dropping them, because a timeline missing 5% of its
+rounds would be lying about how long the task was.
+
+### Sync and export
+
+Every project carries two buttons, on its own page and on its row in the list.
+
+**Sync** is `collect` then `analyze` for that one project, without leaving the page. It reports what
+it did in the words the CLI would use — `+8 rounds from 1 session · 1,201 total`, or `already up to
+date` — because finding nothing new is the common outcome and deserves saying. A project whose agent
+sessions have since been deleted still re-analyses what was collected, and says that is what
+happened.
+
+**Export** hands a project's data to your browser to save. Two formats, because they answer
+different questions:
+
+| | |
+| --- | --- |
+| **Rounds** `.jsonl` | The store's own file, byte for byte: one round per line, the contract every stage reads. What a script wants. |
+| **Bundle** `.json` | The manifest, the analysis and the rounds in one document, so a share never travels without the coverage it is a share of. What a person wants to open. |
+
+Where your browser supports a folder picker you get one; otherwise it lands where downloads land.
+probez never writes it: it hands over the bytes and the browser does the writing, which is what
+keeps "writes only under its own data directory" true.
+
+**Reading writes nothing.** Browsing leaves the store byte-identical — unlike `analyze`, which caches
+its result on the way through — and only Sync writes. It listens on `127.0.0.1` only, the URL carries
+a token that is new on every run, the page loads nothing from anywhere but itself, and syncing needs
+that token too: before it existed the token stood between a stray page and *reading* your prompts,
+and now it also stands between one and starting a collection.
+
+Nothing leaves the machine. What the page *does* put on screen — and what an export puts in a file —
+is your prompts and your shell commands, unredacted, so read [SECURITY.md](SECURITY.md) before
+opening it next to anyone or sending an export anywhere.
+
+Needs the store to have something in it: run `probez collect` first, or `probez <project>`.
+
 ## What you get
 
 One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.jsonl`:
@@ -432,22 +524,11 @@ is stored exactly as typed. The store is written owner-only, matching the agent'
 and `collect` tightens anything it finds looser. Treat `~/.probez` with the same care as the
 repositories it describes, and read [SECURITY.md](SECURITY.md) before sharing any of it.
 
-## Roadmap
-
-| | |
-| --- | --- |
-| **v0.1 · `collect`** | Record and normalize, locally, then read it back down to a single tool call |
-| **v0.2 · `analyze`** | Where the work went: reconstruction vs implementation vs documentation, per project and per task ← you are here |
-| **v0.3 · `view`** | A self-contained local HTML profile per project |
-| **v0.4 · `sync`** | collect → analyze → refresh, one command |
-| **v0.5 · trend** | How the distribution moves over time |
-
-See [docs/PRD.md](docs/PRD.md) for the goals and the operation taxonomy behind those numbers, and
-[CHANGELOG.md](CHANGELOG.md) for what has shipped.
-
 ## Contributing
 
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+[docs/PRD.md](docs/PRD.md) has the goals and the operation taxonomy behind these numbers, and
+[CHANGELOG.md](CHANGELOG.md) has what has shipped.
 
 ## License
 
