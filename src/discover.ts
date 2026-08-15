@@ -13,7 +13,7 @@ export function defaultClaudeDir(): string {
 
 /**
  * The agent names each project directory by replacing "/" with "-" in the working directory.
- * That encoding is lossy — "-Users-me-BizDev-Deck-Jul-26" could be ".../BizDev/Deck/Jul/26" or
+ * That encoding is lossy: "-Users-me-BizDev-Deck-Jul-26" could be ".../BizDev/Deck/Jul/26" or
  * ".../BizDev-Deck-Jul-26", and nothing in the name says which. So we never decode it. Every
  * session record carries the real `cwd`; read that instead and treat the name as an opaque key.
  */
@@ -120,7 +120,7 @@ export function matchProjects(projects: Project[], target: string): Project[] {
   return projects.filter((p) => p.path !== null && (p.path === root || p.path.startsWith(prefix)))
 }
 
-/** Projects whose directory is named `name` — so a bare project name works as a target. */
+/** Projects whose directory is named `name`, so a bare project name works as a target. */
 export function matchByName(projects: Project[], name: string): Project[] {
   const wanted = name.toLowerCase()
   return projects.filter((p) => projectName(p).toLowerCase() === wanted)
@@ -132,8 +132,8 @@ export function projectName(project: Project): string {
 
 /**
  * Whether a project lives in a scratch directory. Harnesses that run an agent per test case create
- * a fresh temp directory each time, so one benchmark becomes dozens of one-question "projects" —
- * real sessions, but not real work, and enough of them to skew any distribution measured later.
+ * a fresh temp directory each time, so one benchmark becomes dozens of one-question "projects".
+ * They are real sessions, but not real work, and enough of them to skew any distribution measured later.
  */
 export function isEphemeral(project: Project): boolean {
   if (project.path === null) return false

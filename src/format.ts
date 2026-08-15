@@ -68,7 +68,7 @@ export function padStart(value: string, width: number): string {
 
 /**
  * Break text into lines no wider than `width`, keeping the blank lines that separate paragraphs.
- * A word longer than the width — a URL or a path — is left whole rather than cut mid-token.
+ * A word longer than the width, such as a URL or a path, is left whole rather than cut mid-token.
  */
 export function wrap(text: string, width: number): string[] {
   const lines: string[] = []

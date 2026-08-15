@@ -1,12 +1,12 @@
 {
   "name": "probez-cli",
   "version": "0.1.0",
-  "description": "Records what your coding agent actually did — locally — so you can measure it instead of guessing.",
+  "description": "See what your coding agents actually did. Every session, measured locally.",
   "keywords": [
     "claude-code",
     "coding-agent",
     "llm",
-    "telemetry",
+    "observability",
     "analytics",
     "developer-productivity",
     "cli"
@@ -24,7 +24,8 @@
     "probez": "dist/src/cli.js"
   },
   "files": [
-    "dist/src"
+    "dist/src",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=20"
@@ -32,7 +33,8 @@
   "scripts": {
     "build": "tsc",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "prepublishOnly": "npm test"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",

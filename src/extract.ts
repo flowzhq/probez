@@ -96,7 +96,7 @@ interface Builder {
  * The file is a flat, append-only record stream, so a round has to be reconstructed from records
  * that are neither contiguous nor complete on their own:
  *
- * - A round is one assistant `message.id`. Several records repeat that id — one per content block —
+ * - A round is one assistant `message.id`. Several records repeat that id, one per content block,
  *   and they must merge into a single round.
  * - Usage is message-level and repeated on those records, sometimes as a partial placeholder. The
  *   most complete snapshot wins, not the last one seen.
@@ -231,8 +231,8 @@ export async function extractSession(file: string, sessionId: string): Promise<R
 
     if (results.length > 0) continue
 
-    // A real user turn. Consecutive user messages with no round between them — a caveat followed
-    // by the prompt it introduces, say — belong to the same task.
+    // A real user turn. Consecutive user messages with no round between them, such as a
+    // caveat followed by the prompt it introduces, belong to the same task.
     const text = toText(content)
     if (text !== '') pendingText.push(text)
     if (!sidechain && (task === 0 || taskUsed)) {

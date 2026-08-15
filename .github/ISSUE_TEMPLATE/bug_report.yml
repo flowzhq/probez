@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please do not paste raw session content — it contains your real prompts and commands.
+        Please do not paste raw session content. It contains your real prompts and commands.
         A minimal fixture with anything private stripped is the most useful attachment.
 
   - type: textarea
@@ -31,7 +31,7 @@ body:
     attributes:
       label: probez version
       description: The output of `probez --version`
-      placeholder: 0.1.1
+      placeholder: 0.1.0
     validations:
       required: true
 

@@ -22,7 +22,7 @@ export interface Round {
   task: number
   /** "sub" for subagent work, "main" otherwise. */
   agent: 'main' | 'sub'
-  /** Provider message id — unique within the session. */
+  /** Provider message id, unique within the session. */
   id: string
   /** ISO timestamp of the first record belonging to this round. */
   ts: string | null
@@ -50,7 +50,7 @@ export interface SessionFile {
 
 /** A project the agent has been run in. */
 export interface Project {
-  /** The agent's own directory name for this project. Opaque — do not decode it. */
+  /** The agent's own directory name for this project. Opaque: do not decode it. */
   key: string
   /** Absolute directory the agent ran in, read from the session records. */
   path: string | null

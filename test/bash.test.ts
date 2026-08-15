@@ -105,6 +105,6 @@ test('kinds follow what the command does, not who ran it', () => {
   assert.equal(kind('pnpm install --frozen-lockfile'), 'deps')
   assert.equal(kind('curl -s https://example.com'), 'net')
   assert.equal(kind('cd src'), 'nav')
-  // An unrecognized program is `other` — not a guess at what it might do.
+  // An unrecognized program is `other`, not a guess at what it might do.
   assert.equal(kind('flowz scan'), 'other')
 })

@@ -41,7 +41,7 @@ jobs:
 
       - name: No network access
         run: |
-          if grep -rnE "\b(fetch|XMLHttpRequest|node:https?|node:net|node:dgram|node:tls)\b" src/; then
+          if grep -arnE "\b(fetch|XMLHttpRequest|node:https?|node:net|node:dgram|node:tls|node:dns|child_process|execSync|spawnSync)\b" src/; then
             echo "probez must not make network calls"; exit 1
           fi
           echo "ok: no network usage"

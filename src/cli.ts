@@ -45,7 +45,7 @@ const COMMANDS = new Set([
 
 /** Commands that used to exist, and what to type instead. */
 const RETIRED: Record<string, string> = {
-  status: '`status` is gone — `probez <target>` collects and prints the same summary',
+  status: '`status` is gone. `probez <target>` collects and prints the same summary',
 }
 
 /** Rounds listed before `--limit` has to withhold any. */
@@ -53,7 +53,7 @@ const DEFAULT_LIMIT = 50
 /** Commands listed under a tool before `--limit` has to withhold any. */
 const DEFAULT_SUB_LIMIT = 8
 
-const HELP = `probez — see what your coding agents actually did.
+const HELP = `probez: see what your coding agents actually did.
 
 What is recorded, and what names it
   project        a directory an agent was started in       its name, or its path
@@ -67,49 +67,58 @@ same for tasks and rounds. An id is the path down to the thing it names, so each
 one above it and no two kinds of id can be mistaken for each other.
 
 Usage
-  probez [project]             Summary for a project — picks up anything new first
+  probez [project]             Summary for a project, picking up anything new first
   probez projects              Every project on this machine
 
 Sessions
   probez sessions [project]    One row per session
-  probez session <id>          One session — its tasks, and what each one asked
+  probez session <id>          One session: its tasks, and what each one asked
 
 Tasks
   probez tasks [project]       One row per task, across every session
-  probez task <id>             One task — what it asked, and every round it took
+  probez task <id>             One task: what it asked, and every round it took
 
 Rounds
   probez rounds [project]      Every round
   probez round <id>            One round in full, with every tool call
-  --session <id>               Only this session — any unique prefix of its id
+  --session <id>               Only this session, by any unique prefix of its id
   --task <n>                   Only this task number
   --tool <name>                Only rounds that called this tool
-  --command <name>             Only rounds that ran this shell command — "git" also
+  --command <name>             Only rounds that ran this shell command; "git" also
                                matches "git commit", the way the tools table names it
   --kind <kind>                Only rounds that ran a command of this kind:
                                ${COMMAND_KINDS.slice(0, 7).join(' · ')}
                                ${COMMAND_KINDS.slice(7).join(' · ')}
   --agent <main|sub>           Only main-agent or only subagent rounds
   --errors                     Only rounds where a tool failed
+  --limit <n>                  How many rounds to list (default ${DEFAULT_LIMIT}, 0 for all)
+
+\`--session\` also disambiguates \`probez task\` and \`probez round\` when a prefix is ambiguous.
 
 Tools
-  probez tools [project]       Every tool called — and what Bash actually ran
+  probez tools [project]       Every tool called, and what Bash actually ran
   --kinds                      Group Bash by kind of work instead of by command
+  --limit <n>                  How many commands to list under each tool
+                               (default ${DEFAULT_SUB_LIMIT}, 0 for all)
 
 Collection
   probez collect [project]     Collect one project, or every project under a folder
   probez collect --all         Collect every project on this machine
   --full                       Re-read every session instead of only what changed
-  --include-temp               Include scratch directories, which projects and --all skip
 
-Options
+Options (these work on every command)
   --json                       Machine-readable output
-  --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT}, 0 for all;
-                               ${DEFAULT_SUB_LIMIT} for the commands under a tool)
-  --data-dir <dir>             Where probez stores data (default ~/.probez)
+  --all                        Every project on this machine, not just one
+  --include-temp               Include scratch directories, which projects and --all skip
+  --data-dir <dir>             Where probez stores data (default ~/.probez,
+                               or \$PROBEZ_DATA_DIR when that is set)
   --claude-dir <dir>           Where to read sessions from (default ~/.claude/projects)
   --version                    Print the version
   -h, --help                   Print this help
+
+Every other flag above belongs to the command it is listed under. A flag a command does not use is
+currently accepted and ignored. \`--kinds\` does nothing outside \`tools\`, and \`--limit\` nothing
+outside \`rounds\` and \`tools\`.
 
 Naming a project
   Leave it out and probez uses the current directory. Otherwise give the project's name, as
@@ -119,7 +128,7 @@ Naming a project
   A path holding several projects covers all of them: \`probez collect ~/Dev\` collects each.
 
 Naming a session, a task or a round
-  Any unique prefix of a session id will do — the tables print the first eight characters:
+  Any unique prefix of a session id will do, since the tables print the first eight characters:
       probez session 0b2cc149     probez task 0b2cc149#3     probez round 0b2cc149#3.12
   The session comes off when the project has only one:
       probez task 3               probez round 3.12
@@ -147,15 +156,15 @@ function printSummary(summary: Summary, extra?: string): void {
 }
 
 function collectedLine(result: CollectResult): string {
-  if (result.read_sessions === 0) return `up to date — ${result.skipped_sessions} sessions unchanged`
+  if (result.read_sessions === 0) return `up to date, ${result.skipped_sessions} sessions unchanged`
   const sessions = `${result.read_sessions} session${result.read_sessions === 1 ? '' : 's'} read`
   const skipped = result.skipped_sessions > 0 ? `, ${result.skipped_sessions} unchanged` : ''
-  return `+${result.new_rounds} rounds — ${sessions}${skipped}`
+  return `+${result.new_rounds} rounds, ${sessions}${skipped}`
 }
 
 /**
  * Sessions record the path with symlinks resolved, so a target has to be resolved the same way
- * before comparing — on macOS /var/folders is really /private/var/folders, and checkouts are often
+ * before comparing. On macOS /var/folders is really /private/var/folders, and checkouts are often
  * reached through a link. The directory may also be long gone, which is normal for the scratch
  * directories agents work in, so resolve the deepest ancestor that still exists and re-attach the
  * rest.
@@ -183,7 +192,7 @@ interface Targets {
 }
 
 /**
- * A target is a path — a project or a folder containing several — or a bare project name.
+ * A target is a path (a project, or a folder containing several) or a bare project name.
  *
  * `--all` leaves scratch directories out, since a benchmark harness can turn one run into dozens
  * of throwaway projects. Asking for one by name or path always collects it.
@@ -226,7 +235,7 @@ function projectHeader(project: Project): void {
 }
 
 function nothingCollected(project: Project): void {
-  console.log(`\n  ${projectName(project)} — nothing collected yet. Run \`probez collect\`.\n`)
+  console.log(`\n  ${projectName(project)}: nothing collected yet. Run \`probez collect\`.\n`)
 }
 
 /** Model ids carry a vendor prefix and a training date that say nothing at a glance. */
@@ -278,7 +287,7 @@ function printTasks(tasks: TaskRow[], width: number, showSession: boolean): void
   printTaskRows(tasks, width, showSession)
   console.log('')
   console.log(
-    `  ${tasks.length} task${tasks.length === 1 ? '' : 's'} — \`probez task <id>\` shows one in full`,
+    `  ${tasks.length} task${tasks.length === 1 ? '' : 's'}. \`probez task <id>\` shows one in full`,
   )
   console.log('')
 }
@@ -310,8 +319,8 @@ function printTask(row: TaskRow, rounds: Round[], total: number, width: number):
 }
 
 /**
- * One session, as its tasks. A task is the unit someone actually remembers — what they asked, and
- * what it cost — which the round list never shows however far you scroll it.
+ * One session, as its tasks. A task is the unit someone actually remembers: what they asked, and
+ * what it cost, which the round list never shows however far you scroll it.
  */
 function printSession(row: SessionRow, tasks: TaskRow[], width: number, showSession: boolean): void {
   const errors = row.errors > 0 ? ` · ${row.errors} tool error${row.errors === 1 ? '' : 's'}` : ''
@@ -322,7 +331,7 @@ function printSession(row: SessionRow, tasks: TaskRow[], width: number, showSess
   printTaskRows(tasks, width, showSession)
   console.log('')
   console.log(
-    `  ${tasks.length} task${tasks.length === 1 ? '' : 's'} · ${row.rounds} rounds — \`probez task ${taskId(tasks[0] ?? ({ session: row.session, task: 1 } as TaskRow), showSession)}\` shows one in full`,
+    `  ${tasks.length} task${tasks.length === 1 ? '' : 's'} · ${row.rounds} rounds. \`probez task ${taskId(tasks[0] ?? ({ session: row.session, task: 1 } as TaskRow), showSession)}\` shows one in full`,
   )
   console.log('')
 }
@@ -330,7 +339,7 @@ function printSession(row: SessionRow, tasks: TaskRow[], width: number, showSess
 /**
  * `showSession` follows the project, not the rows on screen: with one session the round number is
  * enough to type back, but as soon as the project has several, every id has to carry its session or
- * it is not a selector `round` can resolve — even when a filter happens to leave one session shown.
+ * it is not a selector `round` can resolve, even when a filter happens to leave one session shown.
  */
 /** How a round is named on screen, and typed back: `504799b8#3.12`, or `3.12` inside a lone session. */
 function roundId(round: Round, showSession: boolean): string {
@@ -356,14 +365,14 @@ function printRounds(rounds: Round[], total: number, limit: number, showSession:
   printRoundRows(rounds, showSession)
   console.log('')
   if (limit > 0 && total > rounds.length) {
-    console.log(`  showing ${rounds.length} of ${total} rounds — --limit 0 for all`)
+    console.log(`  showing ${rounds.length} of ${total} rounds, --limit 0 for all`)
   } else {
     console.log(`  ${rounds.length} round${rounds.length === 1 ? '' : 's'}`)
   }
   console.log('')
 }
 
-/** One `key: value` line per top-level input key — paths and commands are what identify a call. */
+/** One `key: value` line per top-level input key. Paths and commands are what identify a call. */
 function printToolInput(input: unknown, width: number): void {
   if (input === null || input === undefined) return
   if (typeof input !== 'object' || Array.isArray(input)) {
@@ -442,7 +451,7 @@ function printTools(rows: ToolRow[], subLimit: number, noun: string): void {
     const shown = subLimit > 0 ? sub.slice(0, subLimit) : sub
     for (const entry of shown) console.log(toolLine(entry.name, 4, entry))
     if (shown.length < sub.length) {
-      console.log(`      … ${sub.length - shown.length} more — --limit 0 for all`)
+      console.log(`      … ${sub.length - shown.length} more, --limit 0 for all`)
     }
   }
   console.log('')
@@ -452,7 +461,7 @@ function printTools(rows: ToolRow[], subLimit: number, noun: string): void {
   if (broken.length > 0) {
     // Without this the sub-rows look like they should add up to their tool's own count, and they
     // never will: one call can run several commands, and it counts for each of them.
-    console.log(`  ${broken.join(' · ')} — a call that ran several is counted for each`)
+    console.log(`  ${broken.join(' · ')}. A call that ran several is counted for each`)
   }
   console.log('')
 }
@@ -472,7 +481,7 @@ function asCount(value: string | undefined, flag: string): number | undefined {
 async function main(): Promise<void> {
   const nodeMajor = Number(process.versions.node.split('.')[0])
   if (nodeMajor < 20) {
-    console.error(`probez needs Node 20 or newer — this is Node ${process.versions.node}.`)
+    console.error(`probez needs Node 20 or newer. This is Node ${process.versions.node}.`)
     process.exit(1)
   }
 
@@ -516,7 +525,7 @@ async function main(): Promise<void> {
 
   // The detail commands name something inside a project, so they take an id as well as a project
   // and either one may be omitted. Two positionals are `<project> <id>`; one is the id alone,
-  // except for `task` and `round`, whose ids are numeric — a positional that does not look like `7`
+  // except for `task` and `round`, whose ids are numeric, so a positional that does not look like `7`
   // or `fe64e716#7` is a project name there.
   if (command === 'session' || command === 'task' || command === 'round') {
     if (positionals[2] !== undefined) {
@@ -576,7 +585,7 @@ async function main(): Promise<void> {
     console.log(`\n  ${listed.length} projects`)
     if (skippedTemp > 0) {
       console.log(
-        `  ${skippedTemp} scratch project${skippedTemp === 1 ? '' : 's'} in temp directories hidden — --include-temp to list them`,
+        `  ${skippedTemp} scratch project${skippedTemp === 1 ? '' : 's'} in temp directories hidden. Use --include-temp to list them`,
       )
     }
     console.log('  `probez <name>` collects one and shows its summary.')
@@ -608,7 +617,7 @@ async function main(): Promise<void> {
     const DETAIL = ['session', 'task', 'round']
     if (DETAIL.includes(command) && matched.length > 1) {
       fail(
-        `"${target ?? process.cwd()}" matches ${matched.length} projects — name one to look inside it`,
+        `"${target ?? process.cwd()}" matches ${matched.length} projects. Name one to look inside it`,
       )
     }
     if (command === 'round' && selector === undefined) {
@@ -618,13 +627,13 @@ async function main(): Promise<void> {
       fail('task needs a task number, as `probez task 3` or `probez task fe64e716#3`')
     }
     if (command === 'session' && selector === undefined) {
-      fail('session needs a session id, as `probez session 0b2cc149` — `probez sessions` lists them')
+      fail('session needs a session id, as `probez session 0b2cc149`. `probez sessions` lists them')
     }
 
     const output: unknown[] = []
     for (const project of matched) {
       const rounds = await readRounds(project, dataDir)
-      // An empty store still has a shape in --json — an empty list of whatever was asked for, so a
+      // An empty store still has a shape in --json: an empty list of whatever was asked for, so a
       // script sees the same fields either way. Only the printed form needs to say what to do.
       if (rounds.length === 0 && !values.json) {
         nothingCollected(project)
@@ -686,7 +695,7 @@ async function main(): Promise<void> {
         const tasks = taskRows(mine)
         if (values.json) {
           // The session's own row, except that `tasks` carries the tasks rather than counting
-          // them — the count is the length, and a second key for it would be the same fact twice.
+          // them: the count is the length, and a second key for it would be the same fact twice.
           output.push({ ...row, tasks })
           continue
         }
@@ -787,7 +796,7 @@ async function main(): Promise<void> {
   for (const result of results) {
     rounds += result.rounds
     added += result.new_rounds
-    // The path, not the name, is what identifies a project — several can share a basename.
+    // The path, not the name, is what identifies a project, since several can share a basename.
     console.log(
       `  ${pad(result.project, 24)}${pad(`${result.rounds} rounds`, 13)}${pad(result.new_rounds > 0 ? `+${result.new_rounds}` : '·', 9)}${result.path ? shorten(result.path) : '(path unknown)'}`,
     )
@@ -798,7 +807,7 @@ async function main(): Promise<void> {
   console.log('')
   if (skippedTemp > 0) {
     console.log(
-      `  skipped ${skippedTemp} scratch project${skippedTemp === 1 ? '' : 's'} in temp directories — --include-temp to collect them`,
+      `  skipped ${skippedTemp} scratch project${skippedTemp === 1 ? '' : 's'} in temp directories. Use --include-temp to collect them`,
     )
   }
   console.log('  `probez <path>` shows one project, including where its rounds.jsonl is.')

@@ -1,7 +1,7 @@
 /**
  * What a `Bash` call actually ran.
  *
- * Every other tool is its own operation — a `Read` reads, an `Edit` edits. `Bash` is one name over
+ * Every other tool is its own operation: a `Read` reads, an `Edit` edits. `Bash` is one name over
  * an entire operating system, so tallying it by tool name says nothing. This turns the command
  * string into the commands it runs, and each command into a kind of work.
  *
@@ -109,7 +109,7 @@ const KIND_BY_NAME: Record<string, CommandKind> = {
   chown: 'edit', ln: 'edit', tee: 'edit', patch: 'edit', truncate: 'edit', tar: 'edit',
   unzip: 'edit', zip: 'edit', gzip: 'edit', gunzip: 'edit',
 
-  // vcs — the multiplexer default covers the rest
+  // vcs: the multiplexer default covers the rest
   'git commit': 'vcs', 'git push': 'vcs',
 
   // test
@@ -158,7 +158,7 @@ const KIND_BY_NAME: Record<string, CommandKind> = {
  * letter, which is what stops the `1` in `2>&1` from being read as a program.
  */
 const NAME = /^[A-Za-z_][\w.+@-]*$/
-/** A subcommand may also carry a colon, as npm script names do — `test:coverage`. */
+/** A subcommand may also carry a colon, as npm script names do, like `test:coverage`. */
 const SUBCOMMAND = /^[A-Za-z0-9_][\w.+:@-]*$/
 
 function isFlag(token: string): boolean {
@@ -175,8 +175,8 @@ function editsInPlace(argv: string[]): boolean {
 }
 
 /**
- * `label` is the token the work is really named after — the script for `npm run test:unit`, the
- * subcommand for `git commit` — which is not always the token the row is named after.
+ * `label` is the token the work is really named after: the script for `npm run test:unit`, the
+ * subcommand for `git commit`. That is not always the token the row is named after.
  */
 function kindOf(name: string, head: string, label: string | null, argv: string[]): CommandKind {
   if (head === 'sed' || head === 'perl') return editsInPlace(argv) ? 'edit' : 'read'
@@ -198,15 +198,16 @@ function kindOf(name: string, head: string, label: string | null, argv: string[]
 }
 
 /**
- * Name one segment of a command line, or return null when it holds no command worth counting —
+ * Name one segment of a command line, or return null when it holds no command worth counting:
  * a comment, a flag continued from a wrapped line, a shell keyword, or a name that only exists
  * after an expansion this reader will not perform.
  */
 function nameSegment(segment: string): Command | null {
   let tokens = segment.trim().replace(/^[({!]+\s*/, '').split(/\s+/).filter((t) => t !== '')
 
-  // Leading noise: `do grep …` inside a loop body, environment assignments, and wrappers. An
-  // assignment is dropped before anything is named, so an inline credential never reaches a row.
+  // Leading noise: `do grep …` inside a loop body, environment assignments, and wrappers. Dropping
+  // an assignment here keeps `FOO=bar cmd` counted as `cmd`; it is not redaction; this runs at read
+  // time on a command already stored verbatim, and probez redacts nothing. See SECURITY.md.
   for (;;) {
     const first = tokens[0]
     if (first === undefined) return null
@@ -215,7 +216,7 @@ function nameSegment(segment: string): Command | null {
       continue
     }
     if (first === 'timeout') {
-      // `timeout 30 node x.js` — the duration is not a command either.
+      // `timeout 30 node x.js`: the duration is not a command either.
       tokens = tokens.slice(tokens[1] !== undefined && !isFlag(tokens[1]) ? 2 : 1)
       continue
     }
@@ -253,7 +254,7 @@ function nameSegment(segment: string): Command | null {
   let name = `${head} ${sub}`
   let label = sub
   if (sub === 'run' || sub === 'exec') {
-    // `npm run build` is worth naming; `go run ./cmd/x` is not — a path is not a script name.
+    // `npm run build` is worth naming; `go run ./cmd/x` is not, since a path is not a script name.
     const after = tokens[at + 1]
     if (after !== undefined && !/^[-./]/.test(after) && SUBCOMMAND.test(after)) {
       name += ` ${after}`
@@ -323,7 +324,7 @@ function segments(source: string): string[] {
  * Every distinct command a Bash invocation runs, in the order it runs them.
  *
  * Deduplicated within the call, so `grep a | grep b` is one use of `grep`. A call that runs several
- * different commands yields all of them — `cd x && npm test` did both, and dropping either one to
+ * different commands yields all of them. `cd x && npm test` did both, and dropping either one to
  * pick a "primary" would be a guess about which mattered.
  */
 export function parseCommands(command: unknown): Command[] {

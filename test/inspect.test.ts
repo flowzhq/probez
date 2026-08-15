@@ -140,7 +140,7 @@ test('a task selector names its session, or takes the only one there is', () => 
     findTask(rounds, 'bbbb#1').map((r) => r.round),
     [0, 1],
   )
-  // A hinted session — from --session — stands in for the prefix.
+  // A hinted session, from --session, stands in for the prefix.
   assert.deepEqual(findTask(rounds, '2', 'aaaa1111').map((r) => r.round), [2])
   const single = rounds.filter((r) => r.session === 'aaaa1111')
   assert.equal(findTask(single, '2').length, 1)
@@ -148,7 +148,7 @@ test('a task selector names its session, or takes the only one there is', () => 
 
 test('an unresolvable task selector says what went wrong', () => {
   assert.throws(() => findTask(rounds, 'aaaa1111#9'), (error: Error) => {
-    assert.match(error.message, /no task 9 — it runs 1 to 2/)
+    assert.match(error.message, /no task 9, which runs 1 to 2/)
     return true
   })
   // Tasks start at 1, so 0 is not a task at all.
@@ -325,7 +325,7 @@ test('an id is told apart from a project name by its shape', () => {
 test('a round is found by session prefix, and by task.round alone when unambiguous', () => {
   assert.equal(findRound(rounds, 'bbbb#1.1').session, 'bbbb2222')
   assert.equal(findRound(rounds, 'aaaa1111#2.2').round, 2)
-  // A hinted session — from --session — stands in for the prefix.
+  // A hinted session, from --session, stands in for the prefix.
   assert.equal(findRound(rounds, '1.1', 'bbbb2222').session, 'bbbb2222')
   const single = rounds.filter((r) => r.session === 'aaaa1111')
   assert.equal(findRound(single, '2.2').round, 2)
@@ -340,7 +340,7 @@ test('a task id given to round says so, rather than naming a different round', (
     return true
   })
   assert.throws(() => findTask(rounds, 'aaaa1111#2.2'), (error: Error) => {
-    assert.match(error.message, /names a round — its task is aaaa1111#2/)
+    assert.match(error.message, /names a round\. Its task is aaaa1111#2/)
     return true
   })
 })
@@ -348,7 +348,7 @@ test('a task id given to round says so, rather than naming a different round', (
 test('the task in a round id is checked, not ignored', () => {
   // Round 2 of that session is in task 2, so this id was assembled from two different rows.
   assert.throws(() => findRound(rounds, 'aaaa1111#1.2'), (error: Error) => {
-    assert.match(error.message, /is in task 2, not task 1 — try aaaa1111#2.2/)
+    assert.match(error.message, /is in task 2, not task 1\. Try aaaa1111#2.2/)
     return true
   })
 })
@@ -359,7 +359,7 @@ test('an unresolvable selector says what went wrong', () => {
     return true
   })
   assert.throws(() => findRound(rounds, 'aaaa1111#1.9'), (error: Error) => {
-    assert.match(error.message, /no round 9 — it runs 0 to 2/)
+    assert.match(error.message, /no round 9, which runs 0 to 2/)
     return true
   })
   assert.throws(() => findRound(rounds, 'nope'), SelectorError)
