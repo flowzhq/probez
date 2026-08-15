@@ -41,6 +41,7 @@ rollups are only interesting once individual profiles are trusted.
 - Zero runtime dependencies. `npm ls --omit=dev` is empty.
 - Re-running `collect` is idempotent: the second run appends nothing and leaves the file
   byte-identical.
+- The store is no more readable than the logs it derives from: directories `0700`, files `0600`.
 - The round stream is sufficient input for the v0.2 taxonomy below, with no further collection.
 
 ## Time to value

@@ -8,33 +8,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-15
+
+Correctness and privacy fixes on top of the first release. No new commands.
+
+### Security
+
+- **The store is now owner-only.** Directories are created `0700` and files `0600`, matching the
+  mode the agent already uses for the session files probez reads. 0.1.0 used the system default, so
+  `rounds.jsonl` was world-readable at `0644` inside `0755` directories, publishing to every local
+  account the prompts, assistant text and shell commands distilled from logs the agent had
+  deliberately kept private. `collect` also tightens anything under the data directory it finds
+  looser, so an existing store is repaired the next time you collect it. probez only ever removes
+  access here, never grants it.
+
 ### Changed
 
+- **A flag a command does not use is now refused rather than ignored.** `probez sessions --kinds`
+  used to be accepted and silently dropped; it now exits 2 and says `--kinds` belongs to `tools`.
+  This is the one breaking change: an invocation that passed a flag with no effect will start
+  failing, which is the point. `--help` lists each flag under the command that takes it.
+- **Lists paginate, detail views do not.** `sessions` and `tasks` now honour `--limit` and default
+  to 50 rows like `rounds`, always saying how many they withheld. `session <id>` and `task <id>`
+  name one thing, so they show all of it unless `--limit` is given. `--limit 0` still means
+  everything.
 - Wording throughout the docs, the `--help` text and the CLI's own messages no longer leans on the
   em-dash. Footers and errors read as plain sentences instead: `+442 rounds, 5 sessions read`,
   `… 52 more, --limit 0 for all`, `"x" is not a round selector. Try 3.12 or fe64e716#3.12`. The
-  em-dash survives only as the placeholder glyph for a missing value in a table cell. No behaviour
-  changed, but anything grepping probez's output for those strings needs updating.
+  em-dash survives only as the placeholder glyph for a missing value in a table cell. Anything
+  grepping probez's output for those strings needs updating.
 - The package description and the README headline now match the CLI's own one-liner: "See what your
   coding agents actually did."
 
 ### Fixed
 
+- **`--session` on `tasks` was validated and then discarded**, so a bad id errored while a good one
+  silently listed every session's tasks. It now narrows the listing, the way it does on `rounds`.
 - `src/store.ts` used a raw NUL byte as an in-memory key separator, which made git record the file
   as binary, leaving no diff, no blame and no line-level review on the one file that performs
   every write, and made plain `grep` skip it. The separator is now written as a `\u0000` escape,
   which is byte-identical at runtime.
 
-### Known issues
+### Added
 
-- `--limit` is accepted but ignored by `sessions`, `session`, `tasks` and `task`; only `rounds` and
-  `tools` honour it.
-- `--session` on `tasks` is validated and then discarded, so a bad id errors while a good one
-  silently lists every session's tasks.
-- Flags are parsed globally, so a flag a command does not use is accepted and ignored rather than
-  refused, `--kinds` outside `tools` being one example. The documentation now states each flag's
-  scope; enforcing it is a v0.2 change, since refusing a flag that used to be tolerated can break an
-  existing invocation.
+- `test/cli.test.ts` covers the above end to end, building its own source tree and store so it
+  depends on neither `~/.claude` nor `~/.probez`.
 
 ## [0.1.0] - 2026-08-15
 
@@ -89,5 +107,6 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/flowzhq/probez/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/flowzhq/probez/commits/v0.1.0

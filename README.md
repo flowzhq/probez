@@ -69,10 +69,10 @@ for tasks and rounds.
 | --- | --- | --- |
 | `probez [project]` | Summary for a project, collecting anything new first | `--full` |
 | `probez projects` | Every project on this machine, with path, sessions and last activity | |
-| `probez sessions [project]` | One row per session: rounds, tasks, tool calls, tokens | |
-| `probez session [project] <id>` | One session as its tasks: what each asked, and what it cost | |
-| `probez tasks [project]` | One row per task, across every session | |
-| `probez task [project] <id>` | One task: what it asked, what it cost, and every round it took | `--session` |
+| `probez sessions [project]` | One row per session: rounds, tasks, tool calls, tokens | `--limit` |
+| `probez session [project] <id>` | One session as its tasks: what each asked, and what it cost | `--limit` |
+| `probez tasks [project]` | One row per task, across every session | `--session` `--limit` |
+| `probez task [project] <id>` | One task: what it asked, what it cost, and every round it took | `--session` `--limit` |
 | `probez rounds [project]` | One row per round | `--session` `--task` `--tool` `--command` `--kind` `--agent` `--errors` `--limit` |
 | `probez round [project] <id>` | One round in full, including every tool call | `--session` |
 | `probez tools [project]` | Every tool the project called, with errors, time spent, and what `Bash` actually ran | `--kinds` `--limit` |
@@ -82,9 +82,13 @@ for tasks and rounds.
 the machine, `--include-temp` to include scratch directories, `--data-dir` and `--claude-dir` to
 point at a different store or source, `--version`, and `--help`.
 
-Every other flag belongs to the command it is listed against: `--kinds` only means something to
-`tools`, and `--limit` only to `rounds` and `tools`. A flag given to a command that does not use it
-is currently accepted and ignored rather than refused.
+Every other flag belongs to the command it is listed against, and giving one to a command that does
+not take it is an error rather than a silent no-op: `probez sessions --kinds` tells you `--kinds`
+belongs to `tools`.
+
+**Lists paginate, detail views do not.** `sessions`, `tasks` and `rounds` show 50 rows at a time and
+always say how many they withheld. A detail view names one thing, so `session <id>`, `task <id>` and
+`round <id>` show all of it unless you pass `--limit` yourself. `--limit 0` means everything.
 
 **Naming a project.** Leave it out and probez uses the current directory. Otherwise give the
 project's name as `probez projects` lists it, or the path it was worked in. `probez sessions
@@ -303,8 +307,9 @@ store, and they contain the full reasoning text and full tool output that the ro
 out. "Character counts only" describes `rounds.jsonl`, not `~/.probez`.
 
 There is no redaction of any kind. A credential typed into a shell command or pasted into a prompt
-is stored exactly as typed. Treat `~/.probez` with the same care as the repositories it describes,
-and read [SECURITY.md](SECURITY.md) before sharing any of it.
+is stored exactly as typed. The store is written owner-only, matching the agent's own session files,
+and `collect` tightens anything it finds looser. Treat `~/.probez` with the same care as the
+repositories it describes, and read [SECURITY.md](SECURITY.md) before sharing any of it.
 
 ## Roadmap
 

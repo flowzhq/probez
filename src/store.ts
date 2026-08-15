@@ -1,6 +1,15 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { appendFile, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  chmod,
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -54,6 +63,29 @@ export function slugFor(project: Project): string {
 
 export function projectDir(dataDir: string, project: Project): string {
   return join(dataDir, 'projects', slugFor(project))
+}
+
+/** Owner-only, the mode the agent already uses for the session files probez reads. */
+const DIR_MODE = 0o700
+const FILE_MODE = 0o600
+/** Any bit granting group or other access. */
+const SHARED_BITS = 0o077
+
+/**
+ * Tighten one path if it is readable by anyone but its owner.
+ *
+ * probez distils the agent's `0600` logs into `rounds.jsonl`, so writing that extract at the
+ * default `0644` would publish, to every local account, what the source deliberately kept private.
+ * New stores are created owner-only; this repairs the ones written before that was true. It only
+ * ever removes access, never grants it, and only inside the data directory.
+ */
+async function tighten(path: string, mode: number): Promise<void> {
+  try {
+    const info = await stat(path)
+    if ((info.mode & SHARED_BITS) !== 0) await chmod(path, mode)
+  } catch {
+    // absent or not ours to change; the next collect tries again
+  }
 }
 
 async function readJson<T>(file: string): Promise<T | null> {
@@ -172,7 +204,11 @@ export async function collectProject(
   const dir = projectDir(dataDir, project)
   const roundsFile = join(dir, 'rounds.jsonl')
   const sessionsDir = join(dir, 'sessions')
-  await mkdir(sessionsDir, { recursive: true })
+  await mkdir(sessionsDir, { recursive: true, mode: DIR_MODE })
+  // Stores written before probez set a mode are still world-readable, so repair them on the way in.
+  for (const path of [dataDir, join(dataDir, 'projects'), dir, sessionsDir]) {
+    await tighten(path, DIR_MODE)
+  }
 
   const state =
     (options.full ? null : await readJson<State>(join(dir, 'state.json'))) ??
@@ -204,7 +240,7 @@ export async function collectProject(
       lines.push(JSON.stringify(round))
     }
     if (lines.length > 0) {
-      await appendFile(roundsFile, lines.join('\n') + '\n', 'utf8')
+      await appendFile(roundsFile, lines.join('\n') + '\n', { encoding: 'utf8', mode: FILE_MODE })
       newRounds += lines.length
     }
     // The raw copy is what keeps every field probez does not normalize re-derivable locally.
@@ -213,7 +249,10 @@ export async function collectProject(
   }
 
   state.schema_version = SCHEMA_VERSION
-  await writeFile(join(dir, 'state.json'), JSON.stringify(state, null, 2) + '\n', 'utf8')
+  await writeFile(join(dir, 'state.json'), JSON.stringify(state, null, 2) + '\n', {
+    encoding: 'utf8',
+    mode: FILE_MODE,
+  })
 
   const summary = await summarize(project, dataDir)
   summary.collected_at = new Date().toISOString()
@@ -239,8 +278,18 @@ export async function collectProject(
       null,
       2,
     ) + '\n',
-    'utf8',
+    { encoding: 'utf8', mode: FILE_MODE },
   )
+
+  // Files created before probez set a mode keep it until told otherwise. The session copies inherit
+  // the agent's mode, which is already owner-only, but a store written against a looser source is
+  // repaired here too rather than left to be discovered.
+  for (const file of [roundsFile, join(dir, 'state.json'), join(dir, 'manifest.json')]) {
+    await tighten(file, FILE_MODE)
+  }
+  for (const name of await readdir(sessionsDir).catch(() => [])) {
+    await tighten(join(sessionsDir, name), FILE_MODE)
+  }
 
   return {
     ...summary,

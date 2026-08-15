@@ -48,6 +48,42 @@ const RETIRED: Record<string, string> = {
   status: '`status` is gone. `probez <target>` collects and prints the same summary',
 }
 
+/** Flags that mean the same thing everywhere, so every command takes them. */
+const GLOBAL_FLAGS = new Set([
+  'json',
+  'all',
+  'include-temp',
+  'data-dir',
+  'claude-dir',
+  'version',
+  'help',
+])
+
+/**
+ * What each command accepts on top of the global set.
+ *
+ * Flags are parsed once for the whole CLI, so without this every flag parses on every command and
+ * the ones a command does not read are silently dropped. Being told `--kinds` does nothing here is
+ * worth more than a table that quietly ignores it.
+ */
+const COMMAND_FLAGS: Record<string, string[]> = {
+  collect: ['full'],
+  projects: [],
+  sessions: ['limit'],
+  session: ['limit'],
+  tasks: ['limit', 'session'],
+  task: ['limit', 'session'],
+  rounds: ['limit', 'session', 'task', 'tool', 'command', 'kind', 'agent', 'errors'],
+  round: ['session'],
+  tools: ['limit', 'kinds'],
+  help: [],
+}
+
+/** Where a flag does work, for the error that says it does not work here. */
+function acceptedBy(flag: string): string[] {
+  return Object.keys(COMMAND_FLAGS).filter((name) => COMMAND_FLAGS[name]!.includes(flag))
+}
+
 /** Rounds listed before `--limit` has to withhold any. */
 const DEFAULT_LIMIT = 50
 /** Commands listed under a tool before `--limit` has to withhold any. */
@@ -73,10 +109,14 @@ Usage
 Sessions
   probez sessions [project]    One row per session
   probez session <id>          One session: its tasks, and what each one asked
+  --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT} for the list,
+                               all of them for one session; 0 for all)
 
 Tasks
   probez tasks [project]       One row per task, across every session
   probez task <id>             One task: what it asked, and every round it took
+  --session <id>               Only tasks from this session
+  --limit <n>                  As above
 
 Rounds
   probez rounds [project]      Every round
@@ -116,9 +156,11 @@ Options (these work on every command)
   --version                    Print the version
   -h, --help                   Print this help
 
-Every other flag above belongs to the command it is listed under. A flag a command does not use is
-currently accepted and ignored. \`--kinds\` does nothing outside \`tools\`, and \`--limit\` nothing
-outside \`rounds\` and \`tools\`.
+Every other flag above belongs to the command it is listed under, and giving one to a command that
+does not take it is an error rather than a silent no-op.
+
+A list withholds rows past its limit and says so; a detail view (\`session <id>\`, \`task <id>\`,
+\`round <id>\`) shows the whole thing unless you ask for a limit.
 
 Naming a project
   Leave it out and probez uses the current directory. Otherwise give the project's name, as
@@ -244,7 +286,29 @@ function shortModel(model: string | null): string {
   return model.replace(/^claude-/, '').replace(/-\d{8}$/, '')
 }
 
-function printSessions(rows: ReturnType<typeof sessionRows>): void {
+/**
+ * How many rows to show, and how to say what was left out. A list that silently stops at its limit
+ * reads as the whole set, so every list says which it is.
+ */
+function shown<T>(rows: T[], limit: number): T[] {
+  return limit > 0 ? rows.slice(0, limit) : rows
+}
+
+function counted(count: number, total: number, noun: string): string {
+  return count < total
+    ? `showing ${count} of ${total} ${noun}s`
+    : `${total} ${noun}${total === 1 ? '' : 's'}`
+}
+
+/** Trails the footer rather than interrupting it, so the counts stay adjacent. */
+function more(count: number, total: number): string {
+  return count < total ? ', --limit 0 for all' : ''
+}
+
+function printSessions(all: ReturnType<typeof sessionRows>, limit: number): void {
+  // Totals describe the project, not the page, so they are counted before the limit is applied.
+  const totals = all.reduce((sum, row) => sum + row.rounds, 0)
+  const rows = shown(all, limit)
   console.log(
     `  ${pad('SESSION', 11)}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('OUT', 7)}  LAST`,
   )
@@ -255,9 +319,10 @@ function printSessions(rows: ReturnType<typeof sessionRows>): void {
       `  ${pad(row.session.slice(0, 8), 11)}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(tokens(row.out_tokens), 7)}  ${last}`,
     )
   }
-  const totals = rows.reduce((sum, row) => sum + row.rounds, 0)
   console.log('')
-  console.log(`  ${rows.length} session${rows.length === 1 ? '' : 's'} · ${totals} rounds`)
+  console.log(
+    `  ${counted(rows.length, all.length, 'session')} · ${totals} rounds${more(rows.length, all.length)}`,
+  )
   console.log('  `probez session <id>` shows one of them, task by task.')
   console.log('')
 }
@@ -283,17 +348,24 @@ function printTaskRows(tasks: TaskRow[], width: number, showSession: boolean): v
 }
 
 /** Every task in the project, which is the work seen in the units it was asked for. */
-function printTasks(tasks: TaskRow[], width: number, showSession: boolean): void {
+function printTasks(all: TaskRow[], width: number, showSession: boolean, limit: number): void {
+  const tasks = shown(all, limit)
   printTaskRows(tasks, width, showSession)
   console.log('')
   console.log(
-    `  ${tasks.length} task${tasks.length === 1 ? '' : 's'}. \`probez task <id>\` shows one in full`,
+    `  ${counted(tasks.length, all.length, 'task')}${more(tasks.length, all.length)}. \`probez task <id>\` shows one in full`,
   )
   console.log('')
 }
 
 /** One task: what was asked, what it cost, and every round it took. */
-function printTask(row: TaskRow, rounds: Round[], total: number, width: number): void {
+function printTask(
+  row: TaskRow,
+  rounds: Round[],
+  total: number,
+  width: number,
+  limit: number,
+): void {
   const tools = toolTally(rounds)
   const errors = tools.reduce((sum, tool) => sum + tool.errors, 0)
   console.log(
@@ -312,9 +384,12 @@ function printTask(row: TaskRow, rounds: Round[], total: number, width: number):
   }
 
   console.log('')
-  printRoundRows(rounds, true)
+  const page = shown(rounds, limit)
+  printRoundRows(page, true)
   console.log('')
-  console.log(`  ${rounds.length} round${rounds.length === 1 ? '' : 's'} · task ${row.task} of ${total}`)
+  console.log(
+    `  ${counted(page.length, rounds.length, 'round')} · task ${row.task} of ${total}${more(page.length, rounds.length)}`,
+  )
   console.log('')
 }
 
@@ -322,16 +397,23 @@ function printTask(row: TaskRow, rounds: Round[], total: number, width: number):
  * One session, as its tasks. A task is the unit someone actually remembers: what they asked, and
  * what it cost, which the round list never shows however far you scroll it.
  */
-function printSession(row: SessionRow, tasks: TaskRow[], width: number, showSession: boolean): void {
+function printSession(
+  row: SessionRow,
+  all: TaskRow[],
+  width: number,
+  showSession: boolean,
+  limit: number,
+): void {
   const errors = row.errors > 0 ? ` · ${row.errors} tool error${row.errors === 1 ? '' : 's'}` : ''
   console.log(
-    `  session ${row.session.slice(0, 8)}  ·  ${tasks.length} task${tasks.length === 1 ? '' : 's'} · ${row.rounds} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out${errors} · ${span(row.first_ts, row.last_ts)}`,
+    `  session ${row.session.slice(0, 8)}  ·  ${all.length} task${all.length === 1 ? '' : 's'} · ${row.rounds} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out${errors} · ${span(row.first_ts, row.last_ts)}`,
   )
   console.log('')
+  const tasks = shown(all, limit)
   printTaskRows(tasks, width, showSession)
   console.log('')
   console.log(
-    `  ${tasks.length} task${tasks.length === 1 ? '' : 's'} · ${row.rounds} rounds. \`probez task ${taskId(tasks[0] ?? ({ session: row.session, task: 1 } as TaskRow), showSession)}\` shows one in full`,
+    `  ${counted(tasks.length, all.length, 'task')} · ${row.rounds} rounds${more(tasks.length, all.length)}. \`probez task ${taskId(tasks[0] ?? ({ session: row.session, task: 1 } as TaskRow), showSession)}\` shows one in full`,
   )
   console.log('')
 }
@@ -489,6 +571,7 @@ async function main(): Promise<void> {
   try {
     parsed = parseArgs({
       allowPositionals: true,
+      tokens: true,
       options: {
         'data-dir': { type: 'string' },
         'claude-dir': { type: 'string' },
@@ -539,6 +622,21 @@ async function main(): Promise<void> {
   if (values.help || command === 'help') {
     console.log(HELP)
     return
+  }
+
+  // What was actually typed, which `values` cannot say: a boolean flag left out is `false` there,
+  // indistinguishable from one passed explicitly.
+  const allowed = COMMAND_FLAGS[command] ?? []
+  for (const token of parsed.tokens) {
+    if (token.kind !== 'option') continue
+    const flag = token.name
+    if (GLOBAL_FLAGS.has(flag) || allowed.includes(flag)) continue
+    const elsewhere = acceptedBy(flag)
+    const where =
+      elsewhere.length === 0
+        ? ''
+        : ` It belongs to ${elsewhere.map((name) => `\`${name}\``).join(', ')}.`
+    fail(`--${flag} does not apply to \`probez ${command}\`.${where}`)
   }
   if (values.version) {
     const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'))
@@ -605,6 +703,9 @@ async function main(): Promise<void> {
     // A tool's commands are a short list next to a session's rounds, so they keep their own default
     // and only follow --limit when it was actually typed.
     const subLimit = values.limit === undefined ? DEFAULT_SUB_LIMIT : limit
+    // Lists paginate; a detail view is a request for one thing in full, so `session <id>` and
+    // `task <id>` withhold nothing unless --limit was actually typed.
+    const detailLimit = asCount(values.limit, 'limit') ?? 0
     const taskFilter = asCount(values.task, 'task')
     if (values.agent !== undefined && values.agent !== 'main' && values.agent !== 'sub') {
       fail(`--agent takes main or sub, got "${values.agent}"`)
@@ -647,7 +748,7 @@ async function main(): Promise<void> {
           continue
         }
         projectHeader(project)
-        printSessions(rows)
+        printSessions(rows, limit)
         continue
       }
 
@@ -672,13 +773,15 @@ async function main(): Promise<void> {
       }
 
       if (command === 'tasks') {
-        const rows = taskRows(rounds)
+        // `--session` narrows to one session, the same way it does on `rounds`.
+        const mine = session === undefined ? rounds : rounds.filter((r) => r.session === session)
+        const rows = taskRows(mine)
         if (values.json) {
           output.push(matched.length > 1 ? { project: projectName(project), path: project.path, tasks: rows } : rows)
           continue
         }
         projectHeader(project)
-        printTasks(rows, width, sessions.length > 1)
+        printTasks(rows, width, sessions.length > 1, limit)
         continue
       }
 
@@ -700,7 +803,7 @@ async function main(): Promise<void> {
           continue
         }
         projectHeader(project)
-        printSession(row, tasks, width, sessions.length > 1)
+        printSession(row, tasks, width, sessions.length > 1, detailLimit)
         continue
       }
 
@@ -723,7 +826,7 @@ async function main(): Promise<void> {
           rounds.filter((r) => r.session === row.session).map((r) => r.task),
         ).size
         projectHeader(project)
-        printTask(row, mine, total, width)
+        printTask(row, mine, total, width, detailLimit)
         continue
       }
 

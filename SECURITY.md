@@ -30,11 +30,16 @@ round record leaves out, and it is the larger part of the store by far. "Charact
 describes `rounds.jsonl`, not `~/.probez`. Note also that agents prune their own old sessions while
 these copies are permanent: probez never deletes anything.
 
+**The store is owner-only.** Directories are created `0700` and files `0600`, matching the mode the
+agent already uses for the session files probez reads. `collect` also tightens anything under the
+data directory it finds looser, so a store written by probez 0.1.0, which used the system default
+and left `rounds.jsonl` world-readable, is repaired the next time you collect. probez only ever
+removes access here, never grants it.
+
 **`collect --all` concentrates everything.** It walks every project on the machine, so one directory
 ends up holding the session history of every repository you have worked in, with client work
 and personal projects side by side. That is a different exposure profile from the per-project
-layout it reads from. The store is created with default permissions, so on a shared machine it is
-readable by other local users; tighten it with `chmod -R go-rwx ~/.probez` if that matters to you.
+layout it reads from, and the reason the mode matters.
 
 **Therefore:** treat `~/.probez` with the same care as the repositories it describes. It can contain
 secrets that appeared in a prompt or a command line. probez does no redaction of any kind, and a
