@@ -237,8 +237,8 @@ export function Trace({
 /**
  * What the colours mean, for the categories actually on screen.
  *
- * The ribbon names its wider bands but the strip names nothing, so without this the cells are nine
- * unexplained hues. Only what is present is listed — a legend for work this span did not do would
+ * The ribbon names its wider bands but the strip names nothing, so without this the cells are a row
+ * of unexplained hues. Only what is present is listed — a legend for work this span did not do would
  * be a key to an empty room.
  */
 function Legend({ trace }: { trace: TraceData }): ReactElement | null {

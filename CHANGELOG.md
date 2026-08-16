@@ -6,6 +6,66 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [0.3.2] - 2026-08-16
+
+The classifier, taken apart. It did two jobs in one pass — working out what a call mechanically did,
+and deciding what kind of work that was — and because the two were interleaved, the same act could be
+filed two ways depending on which tool performed it. They are now two passes, and the second one is a
+table.
+
+### Changed
+
+- **A call is parsed before it is classified.** `src/act.ts` reads a tool call down to the *verbs* it
+  performed — read, write, search, test, commit, and thirteen others — each a fact you could confirm
+  by looking at the call. `src/classify.ts` maps each verb onto a category through one flat table.
+  A label you disagree with is now a row to change rather than a rule to trace through thirty-odd
+  return sites.
+- **Verification is dissolved and Review is gone; Testing is new.** Running a suite is `testing/test`
+  and running the project is `testing/run`. Compiling, typechecking and linting move to
+  `delivery/build`, on the grounds that building is part of shipping. Running a scripting language at
+  the project — `python3 p.py`, `python3 -c` — is `reconstruction/inspect`, because it computes an
+  answer rather than exercising the product. That last one encodes "the project is not written in a
+  scripting language", which holds for most repos and inverts in a Python one; it is one table in
+  `act.ts`.
+- **Reading prose is Planning.** Reading `docs/PRD.md`, a README or `CLAUDE.md` is `planning/read`
+  rather than `reconstruction/read`. **A planning share from 0.3.1 or earlier is not comparable to
+  one from 0.3.2**: the old number counted only the harness transitions around a plan, which are near
+  1% of any store, and the new one is time spent on what the work should be, whether that was spent
+  deciding or reading someone else's decision. The transitions are still there as `clarify`,
+  `decompose` and `design`.
+- **`implementation/refactor` folds into `implementation/modify`.** It was carrying two unrelated
+  things — moving files about, and an `Edit` with `replace_all` set — and neither was a change of
+  behaviour distinguishable from the other kind.
+- **`ANALYZER_VERSION` is 2.** Every stamp in an `analysis.jsonl` written by an older version refers
+  to a taxonomy that no longer exists.
+
+### Fixed
+
+- **A shell command that wrote prose was filed as implementation.** The prose check lived only on the
+  tool path, so `Write` on a README was `documentation/system` while `cat > README.md` and a
+  `python3` heredoc writing the same file were `implementation/modify`. The question is now asked once,
+  against the path, so the two cannot disagree.
+- **A `>` inside a quoted string or a heredoc body was read as a redirect.** `python3 - <<EOF` with
+  `print("wrote > notes.md")` in its body reported a write to `notes.md`, so a line that reported on a
+  file was counted as one that changed it. Both the redirect scan and the heredoc write-sniff now run
+  against the argument list only.
+
+### Removed
+
+- **The Review category, and with it the last rule that looked outside a call.** It existed to hold
+  one distinction — a `git diff` after an edit is checking your work, the same command before one is
+  orienting — and it cost every round the history of its task, so no round could be labelled without
+  replaying the project around it. Read-only git is now unconditionally `reconstruction/inspect`.
+  Classification is a function of the call, which is what `probez round` wanted all along.
+
+### Known limits
+
+- `npm run <script>` arrives from the command parser as kind `build` whatever the script is named, so
+  `npm run lint` and `npm run dev` both land in `delivery/build`. The script name is already on the
+  parsed command, so narrowing this is a table lookup rather than a parser change.
+- Writing a test file is `implementation`, with a `tests` target. Testing is what was *run*, not what
+  was authored.
+
 ## [0.3.1] - 2026-08-16
 
 Managing the store, from the page that lists it. 0.3 could collect a project, read it and send it
@@ -355,7 +415,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/flowzhq/probez/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/flowzhq/probez/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/flowzhq/probez/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/flowzhq/probez/compare/v0.1.1...v0.2.0

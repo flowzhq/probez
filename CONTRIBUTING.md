@@ -92,8 +92,10 @@ output in `dist/test/`, which is why `npm test` builds first.
 - `test/inspect.test.ts` covers the read side — session, task and tool aggregation, the work
   taxonomy's fractional split, the trace and its phase smoothing, round filters, and selector
   parsing — against rounds built in the test file itself, so it needs no fixture.
-- `test/classify.test.ts` covers the taxonomy, including the invariants that every category is
-  decomposed and that a round's labels always account for exactly one round.
+- `test/classify.test.ts` covers both halves of classification — `act.ts` reading a call down to its
+  verbs, and `classify.ts` mapping a verb onto a category — including the invariants that every
+  sub-kind the classifier emits is declared and every declared one is reachable, that the view's copy
+  of the taxonomy matches this one, and that a round's labels always account for exactly one round.
 - `test/bash.test.ts` covers reading a shell command into the commands it ran.
 - `test/cli.test.ts` runs the built CLI end to end in a temporary store, so it touches neither
   `~/.claude` nor `~/.probez`.

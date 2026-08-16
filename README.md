@@ -150,11 +150,11 @@ $ probez sessions flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   SESSION    ROUNDS  TASKS  TOOLS           IN      OUT  WORK       LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 40%   5 days ago
+  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 37%   5 days ago
   0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   5 days ago
-  51cced08      134      4  131          24.3M   138.1K  Impl 41%   4 days ago
-  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 68%  4 days ago
-  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 41%  4 days ago
+  51cced08      134      4  131          24.3M   138.1K  Impl 39%   4 days ago
+  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 55%  4 days ago
+  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 34%  4 days ago
 
   5 sessions · 442 rounds
   `probez session <id>` shows one of them, task by task.
@@ -168,28 +168,24 @@ $ probez analyze flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   WORK                  ROUNDS    SHARE      COST  ERRORS      TIME      OUT
-  Planning                10.0     2.0%     $1.18       ·     21.3s     5.7K
+  Planning                33.3    12.7%     $7.36     1.0     32.9s    11.2K
+    read                  23.3    10.7%     $6.18     1.0     11.6s     5.5K
     design                 8.0     1.5%     $0.86       ·       0ms      248
     clarify                2.0     0.6%     $0.32       ·     21.3s     5.4K
-  Reconstruction           115    26.4%    $15.29     3.0      1.3m    60.0K
-    read                  73.3    18.7%    $10.85     1.0     37.5s    30.7K
+  Reconstruction           103    19.2%    $11.09     2.0      2.8m    68.3K
+    read                  53.9     8.9%     $5.13       ·     26.3s    25.8K
     locate                41.2     7.6%     $4.43     2.0     39.9s    29.2K
-    inspect                0.1     0.0%     $0.01       ·     659ms      101
-  Implementation           161    39.1%    $22.66     4.0     24.7m   292.3K
-    modify                 102    22.4%    $12.98     2.0      6.2m   102.5K
+    inspect                7.8     2.6%     $1.53       ·      1.7m    13.3K
+  Implementation           155    37.6%    $21.74     4.0     24.0m   281.9K
+    modify                 111    23.9%    $13.85     4.0      6.5m   107.0K
     create                44.0    13.6%     $7.90       ·     17.5m   175.0K
-    refactor              14.4     3.1%     $1.78     2.0     55.9s    14.9K
-  Verification            62.3    12.9%     $7.47     1.0      2.2m    25.5K
-    build                 28.2     4.9%     $2.83     1.0     16.1s     7.6K
+  Testing                 26.4     5.4%     $3.12       ·     10.4s     4.8K
     test                  26.4     5.4%     $3.12       ·     10.4s     4.8K
-    run                    7.6     2.6%     $1.51       ·      1.7m    13.1K
-  Review                   4.1     0.8%     $0.47       ·      1.1s      685
-    read-back              4.0     0.8%     $0.46       ·     355ms      593
-    diff                   0.1     0.0%   $0.0089       ·     709ms       92
-  Documentation           55.0    14.0%     $8.13       ·      8.7m    81.7K
-    system                44.0    11.1%     $6.44       ·      5.1m    57.3K
-    agent                 11.0     2.9%     $1.69       ·      3.6m    24.3K
-  Delivery                 4.9     0.9%     $0.51       ·     18.7s     6.9K
+  Documentation           61.0    15.6%     $9.04       ·      9.4m    92.0K
+    system                47.0    11.8%     $6.84       ·      5.2m    61.7K
+    agent                 14.0     3.8%     $2.20       ·      4.2m    30.3K
+  Delivery                33.2     5.8%     $3.34     1.0     34.8s    14.5K
+    build                 28.2     4.9%     $2.83     1.0     16.1s     7.6K
     branch                 4.5     0.8%     $0.47       ·     16.0s     6.5K
     commit                 0.5     0.1%     $0.04       ·      2.7s      385
   Environment              4.7     0.8%     $0.44       ·     11.1s     3.2K
@@ -225,7 +221,7 @@ $ probez round flowz-mcp 0bfa7fe3#1.36
 
   tools (1)
      1    Bash             9.4s  848 chars
-       verification/test
+       testing/test
        command: go test ./... 2>&1 | tail -40
        description: Run the full test suite
 ```

@@ -1,17 +1,13 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
-import {
-  CATEGORIES,
-  advance,
-  classifyCall,
-  classifyRound,
-  classifyRounds,
-  newContext,
-  targetOf,
-  writesToFile,
-} from '../src/classify.js'
-import type { CallContext, Label } from '../src/classify.js'
+import { actsOf, isProse, targetOf, VERBS, writesToFile } from '../src/act.js'
+import type { Act, Verb } from '../src/act.js'
+import { CATEGORIES, classifyCall, classifyRound, classifyRounds, labelOf } from '../src/classify.js'
+import type { Label } from '../src/classify.js'
 import type { Round, ToolCall } from '../src/types.js'
 import { ROUND_DEFAULTS, TOOL_DEFAULTS } from './support.js'
 
@@ -33,8 +29,13 @@ function cells(labels: Label[]): string[] {
 }
 
 /** The one label a single-command call produces, for the cases where the mapping is the point. */
-function cell(call: ToolCall, ctx: CallContext = newContext()): string | undefined {
-  return cells(classifyCall(call, ctx))[0]
+function cell(call: ToolCall): string | undefined {
+  return cells(classifyCall(call))[0]
+}
+
+/** The verbs a call parsed to, before anything decided what kind of work they were. */
+function verbs(call: ToolCall): Verb[] {
+  return actsOf(call).map((one) => one.verb)
 }
 
 function weight(labels: Label[]): number {
@@ -75,6 +76,16 @@ test('targets read the file, not the folder it happens to sit in', () => {
   assert.equal(targetOf(''), 'unknown')
 })
 
+test('prose is a property of the file, and docs is a target that nearly matches it', () => {
+  // The two axes agree almost everywhere, which is why one used to stand in for the other.
+  assert.ok(isProse('/repo/README.md'))
+  assert.ok(isProse('/repo/docs/anything.txt'))
+  assert.ok(!isProse('/repo/src/a.ts'))
+  // `AUTHORS` files under `docs` for the target axis, but nobody writes one as documentation work.
+  assert.equal(targetOf('/repo/AUTHORS'), 'docs')
+  assert.ok(!isProse('/repo/AUTHORS'))
+})
+
 // --- writes hiding in shell commands ---------------------------------------------------------
 
 test('a redirect counts as a write only when it lands somewhere that matters', () => {
@@ -96,58 +107,80 @@ test('a heredoc is a write only when its body writes', () => {
   assert.equal(writesToFile(reading), null)
 })
 
+test('a redirect inside a quoted string or a heredoc body is data, not a redirect', () => {
+  // The scan runs over the argument list only. Without that, printing a `>` reports a write and a
+  // command that reports on the project is filed as one that changed it.
+  assert.equal(writesToFile(`python3 - <<'EOF'\nprint("wrote > notes.md")\nEOF`), null)
+  assert.equal(writesToFile('git commit -m "redirect output > report.md"'), null)
+})
+
 test('sed in place is left to the command parser, which already reads the flag', () => {
   // `bash.ts` calls this `edit`; the write-sniff must not claim it a second time.
   assert.equal(writesToFile("sed -i '' 's/a/b/' notes.md"), null)
 })
 
-// --- commands --------------------------------------------------------------------------------
+// --- the parser: what a call mechanically did ------------------------------------------------
+
+test('a call parses to verbs before anything decides what kind of work they are', () => {
+  assert.deepEqual(verbs(bash('git diff')), ['query'])
+  assert.deepEqual(verbs(bash('git commit -m "x"')), ['commit'])
+  assert.deepEqual(verbs(bash('npm test')), ['test'])
+  assert.deepEqual(verbs(bash('cat README.md')), ['read'])
+  assert.deepEqual(verbs(tool('Edit', { file_path: '/repo/src/a.ts' })), ['write'])
+  assert.deepEqual(verbs(tool('Grep', { pattern: 'flush' })), ['search'])
+})
+
+test('an act carries the file it named, which is what the category rules ask about', () => {
+  const [read] = actsOf(tool('Read', { file_path: '/repo/README.md' }))
+  assert.equal(read?.path, '/repo/README.md')
+  assert.equal(read?.target, 'docs')
+  assert.equal(read?.creating, false)
+
+  const [made] = actsOf(tool('Write', { file_path: '/repo/src/a.ts' }))
+  assert.equal(made?.creating, true)
+
+  // A search names a pattern, not a file, whatever its input happens to hold.
+  const [found] = actsOf(tool('Grep', { pattern: 'flush', path: '/repo/src' }))
+  assert.equal(found?.path, '')
+  assert.equal(found?.target, 'unknown')
+})
 
 test('shell scaffolding is dropped from a call that also did something', () => {
-  assert.deepEqual(cells(classifyCall(bash('cd /repo && npm test'), newContext())), [
-    'verification/test',
-  ])
-  assert.deepEqual(cells(classifyCall(bash('echo --- && grep -rn flush src'), newContext())), [
-    'reconstruction/locate',
-  ])
+  assert.deepEqual(verbs(bash('cd /repo && npm test')), ['test'])
+  assert.deepEqual(verbs(bash('echo --- && grep -rn flush src')), ['search'])
   // A call that is only scaffolding has nothing else to be.
-  assert.deepEqual(cells(classifyCall(bash('cd src'), newContext())), ['unclassified/incidental'])
+  assert.deepEqual(verbs(bash('cd src')), ['noop'])
 })
 
 test('what follows a pipe is looking at output, not opening a file', () => {
   // `2>&1 | tail -25` is on a large share of the Bash calls in a real store. Counting the `tail`
   // as reading a file put several points of the distribution in the wrong category.
-  assert.deepEqual(cells(classifyCall(bash('pnpm test 2>&1 | tail -25'), newContext())), [
-    'verification/test',
-  ])
-  assert.deepEqual(cells(classifyCall(bash('go test ./... 2>&1 | tail -40'), newContext())), [
-    'verification/test',
-  ])
+  assert.deepEqual(cells(classifyCall(bash('pnpm test 2>&1 | tail -25'))), ['testing/test'])
+  assert.deepEqual(cells(classifyCall(bash('go test ./... 2>&1 | tail -40'))), ['testing/test'])
   // Without a pipe the same program really is reading a file.
   assert.equal(cell(bash('tail -50 src/loop.ts')), 'reconstruction/read')
-  assert.equal(cell(bash('head -20 README.md')), 'reconstruction/read')
 })
 
 test('a directory argument still says what was worked on', () => {
-  const [label] = classifyCall(bash('grep -rn flush src'), newContext())
+  const [label] = classifyCall(bash('grep -rn flush src'))
   assert.equal(label?.target, 'code')
-  const [docs] = classifyCall(bash('grep -rn adr docs'), newContext())
+  const [docs] = classifyCall(bash('grep -rn adr docs'))
   assert.equal(docs?.target, 'docs')
   // `./...` is not a dotfile, whatever it looks like to a rule that only checks the leading dot.
-  const [none] = classifyCall(bash('go build ./...'), newContext())
+  const [none] = classifyCall(bash('go build ./...'))
   assert.equal(none?.target, 'unknown')
 })
 
 test('a call that ran several real commands splits its weight between them', () => {
-  const labels = classifyCall(bash('pnpm lint && pnpm test'), newContext())
-  assert.deepEqual(cells(labels), ['verification/build', 'verification/test'])
+  const labels = classifyCall(bash('pnpm lint && pnpm test'))
+  assert.deepEqual(cells(labels), ['delivery/build', 'testing/test'])
   assert.equal(weight(labels), 1)
   assert.equal(labels[0]?.weight, 0.5)
 })
 
 test('git is routed by what the subcommand does, not by the kind the parser gives it', () => {
   // `git diff` comes back from `bash.ts` as kind `read`, so a mapping keyed on kind alone would
-  // file it under reconstruction no matter where it sat.
+  // file it under reading a file rather than reporting on the tree.
   assert.equal(cell(bash('git commit -m "x"')), 'delivery/commit')
   assert.equal(cell(bash('git add -A')), 'delivery/commit')
   assert.equal(cell(bash('git push origin main')), 'delivery/publish')
@@ -158,48 +191,67 @@ test('git is routed by what the subcommand does, not by the kind the parser give
   assert.equal(cell(bash('git merge-base main HEAD')), 'unclassified/incidental')
 })
 
-test('looking at the repository means orientation before an edit and review after one', () => {
-  const before = newContext()
-  assert.equal(cell(bash('git diff'), before), 'reconstruction/inspect')
-  assert.equal(cell(bash('git status'), before), 'reconstruction/inspect')
-
-  const after = newContext()
-  advance(tool('Edit', { file_path: '/repo/src/a.ts' }), after)
-  assert.equal(cell(bash('git diff'), after), 'review/diff')
-  assert.equal(cell(bash('git log --oneline'), after), 'review/diff')
+test('reading the repository is reconstruction wherever it sits in a task', () => {
+  // This used to depend on whether anything had been edited yet, which meant a round could not be
+  // labelled without replaying its whole task. Read-only git is now the same act either way.
+  assert.equal(cell(bash('git diff')), 'reconstruction/inspect')
+  assert.equal(cell(bash('git status')), 'reconstruction/inspect')
+  assert.equal(cell(bash('git log --oneline')), 'reconstruction/inspect')
+  assert.equal(cell(bash('git blame src/a.ts')), 'reconstruction/inspect')
 })
 
 test('kinds follow what the command does', () => {
   assert.equal(cell(bash('grep -rn foo src')), 'reconstruction/locate')
-  assert.equal(cell(bash('cat README.md')), 'reconstruction/read')
-  assert.equal(cell(bash('go test ./...')), 'verification/test')
-  assert.equal(cell(bash('npm run build')), 'verification/build')
-  // Linters and typecheckers stay with build: splitting them out produced a sub-kind too small to
-  // read, and half of it was compilation rather than linting.
-  assert.equal(cell(bash('npx tsc --noEmit')), 'verification/build')
-  assert.equal(cell(bash('npx eslint .')), 'verification/build')
+  assert.equal(cell(bash('cat src/a.ts')), 'reconstruction/read')
+  assert.equal(cell(bash('go test ./...')), 'testing/test')
   assert.equal(cell(bash('pnpm install')), 'environment/deps')
   assert.equal(cell(bash('curl -s https://example.com')), 'reconstruction/read')
-  // Moving files about is restructuring, which is what refactor names.
-  assert.equal(cell(bash('mv src/a.ts src/b.ts')), 'implementation/refactor')
+  // Moving files about changes the tree rather than a file's contents; both are implementation.
+  assert.equal(cell(bash('mv src/a.ts src/b.ts')), 'implementation/modify')
   // An unrecognized program is unknown, not a guess at what it might do.
   assert.equal(cell(bash('flowz scan')), 'unclassified/unknown')
 })
 
-test('a shell command that writes to a real file is implementation, not a test run', () => {
-  assert.equal(cell(bash("python3 - <<'EOF'\np='a.md'\nopen(p,'w').write('x')\nEOF")), 'implementation/modify')
+test('compiling is part of shipping, and running a suite is not', () => {
+  assert.equal(cell(bash('npm run build')), 'delivery/build')
+  assert.equal(cell(bash('npx tsc --noEmit')), 'delivery/build')
+  // Linters and typecheckers stay with build: splitting them out produced a sub-kind too small to
+  // read, and half of it was compilation rather than linting.
+  assert.equal(cell(bash('npx eslint .')), 'delivery/build')
+  assert.equal(cell(bash('npm test')), 'testing/test')
+})
+
+test('running the project is testing and running a script at it is reconstruction', () => {
+  // The signal is the interpreter, which encodes "the project is written in the first list's
+  // languages". True of most repos an agent works in, and false in a Python one.
+  assert.equal(cell(bash('node scripts/check.mjs')), 'testing/run')
+  assert.equal(cell(bash('npm start')), 'testing/run')
+  assert.equal(cell(bash('python3 scripts/count.py')), 'reconstruction/inspect')
+  assert.equal(cell(bash('python3 -c "import json; print(1)"')), 'reconstruction/inspect')
+})
+
+test('a shell command that writes a file is judged by the file, exactly like the tool would be', () => {
+  // The prose question is asked once, against the path, so these cannot disagree with `Write`.
+  assert.equal(cell(bash("python3 - <<'EOF'\np='a.md'\nopen(p,'w').write('x')\nEOF")), 'documentation/system')
+  assert.equal(cell(bash('cat > README.md')), 'documentation/system')
+  assert.equal(cell(tool('Write', { file_path: 'README.md' })), 'documentation/system')
   assert.equal(cell(bash('cat > src/index.ts')), 'implementation/modify')
-  // Running something and watching what it says is still verification.
-  assert.equal(cell(bash('node scripts/check.mjs')), 'verification/run')
 })
 
 // --- tools -----------------------------------------------------------------------------------
 
-test('reading and writing are never the same operation', () => {
-  assert.equal(cell(tool('Read', { file_path: '/repo/README.md' })), 'reconstruction/read')
-  assert.equal(cell(tool('Write', { file_path: '/repo/README.md' })), 'documentation/system')
+test('reading is never writing', () => {
   assert.equal(cell(tool('Read', { file_path: '/repo/src/a.ts' })), 'reconstruction/read')
   assert.equal(cell(tool('Write', { file_path: '/repo/src/a.ts' })), 'implementation/create')
+  assert.equal(cell(tool('Read', { file_path: '/repo/README.md' })), 'planning/read')
+  assert.equal(cell(tool('Write', { file_path: '/repo/README.md' })), 'documentation/system')
+})
+
+test('reading prose is planning and reading code is reconstruction', () => {
+  assert.equal(cell(tool('Read', { file_path: '/repo/docs/PRD.md' })), 'planning/read')
+  assert.equal(cell(tool('Read', { file_path: '/repo/CLAUDE.md' })), 'planning/read')
+  assert.equal(cell(bash('head -20 README.md')), 'planning/read')
+  assert.equal(cell(tool('Read', { file_path: '/repo/package.json' })), 'reconstruction/read')
 })
 
 test('writing prose is documentation and writing code is implementation', () => {
@@ -207,20 +259,23 @@ test('writing prose is documentation and writing code is implementation', () => 
   assert.equal(cell(tool('Edit', { file_path: '/repo/CHANGELOG.md' })), 'documentation/change')
   assert.equal(cell(tool('Edit', { file_path: '/repo/CLAUDE.md' })), 'documentation/agent')
   assert.equal(cell(tool('Edit', { file_path: '/repo/src/a.ts' })), 'implementation/modify')
-  // A replace-all edit is a sweep across the file rather than a change of behaviour.
-  assert.equal(
-    cell(tool('Edit', { file_path: '/repo/src/a.ts', replace_all: true })),
-    'implementation/refactor',
-  )
+  // Creating the file is the one thing that separates the two implementation sub-kinds.
+  assert.equal(cell(tool('Write', { file_path: '/repo/src/a.ts' })), 'implementation/create')
 })
 
-test('re-opening a file you already changed is checking your own work', () => {
-  const ctx = newContext()
-  assert.equal(cell(tool('Read', { file_path: '/repo/src/a.ts' }), ctx), 'reconstruction/read')
-  advance(tool('Edit', { file_path: '/repo/src/a.ts' }), ctx)
-  assert.equal(cell(tool('Read', { file_path: '/repo/src/a.ts' }), ctx), 'review/read-back')
-  // A file you have not touched is still just being read.
-  assert.equal(cell(tool('Read', { file_path: '/repo/src/b.ts' }), ctx), 'reconstruction/read')
+test('a file is labelled the same however many times it has already been touched', () => {
+  // Re-reading your own edit used to be its own category. It cost every round its task history.
+  const labels = classifyRound(
+    round({
+      session: 's',
+      round: 1,
+      tools: [
+        tool('Edit', { file_path: '/repo/src/a.ts' }),
+        tool('Read', { file_path: '/repo/src/a.ts' }),
+      ],
+    }),
+  )
+  assert.deepEqual(cells(labels), ['implementation/modify', 'reconstruction/read'])
 })
 
 test('the planning a tool log can see is the harness moving around it', () => {
@@ -231,7 +286,7 @@ test('the planning a tool log can see is the harness moving around it', () => {
 })
 
 test('a tool with no table entry is named rather than guessed at', () => {
-  const labels = classifyCall(tool('mcp__figma__use_figma', { id: '1' }), newContext())
+  const labels = classifyCall(tool('mcp__figma__use_figma', { id: '1' }))
   assert.deepEqual(cells(labels), ['unclassified/unknown'])
   // The name survives, so `analyze --unclassified` can say what the hole is made of.
   assert.equal(labels[0]?.source, 'mcp__figma__use_figma')
@@ -250,7 +305,7 @@ test('a round’s labels always account for exactly one round', () => {
       tool('Edit', { file_path: '/repo/src/a.ts' }),
     ],
   })
-  const labels = classifyRound(worked, newContext())
+  const labels = classifyRound(worked)
   assert.equal(weight(labels), 1)
   assert.deepEqual(cells(labels), [
     'reconstruction/read',
@@ -264,40 +319,75 @@ test('a round that called no tool is not classified at all', () => {
   // Roughly one round in eleven is pure prose. Splitting it between planning and explaining would
   // be an assumption, so it carries no weight and is reported as coverage instead.
   const talked = round({ session: 's', round: 2, text: 'Here is what I found.' })
-  assert.deepEqual(classifyRound(talked, newContext()), [])
+  assert.deepEqual(classifyRound(talked), [])
 })
 
-test('context is carried across rounds within a task and reset between tasks', () => {
-  const first = round({
+test('a round is labelled the same alone as it is among its neighbours', () => {
+  // The property that removing `review` bought: no rule reaches outside the call it is looking at,
+  // so `probez round` does not have to replay a whole project to label one round.
+  const edit = round({
     session: 's',
     round: 1,
     task: 1,
     tools: [tool('Edit', { file_path: '/repo/src/a.ts' })],
   })
-  const second = round({ session: 's', round: 2, task: 1, tools: [bash('git diff')] })
-  const third = round({ session: 's', round: 3, task: 2, tools: [bash('git diff')] })
+  const diff = round({ session: 's', round: 2, task: 1, tools: [bash('git diff')] })
 
-  const labelled = classifyRounds([first, second, third])
-  // The edit happened earlier in the same task, so the diff reviews it.
-  assert.deepEqual(cells(labelled.get('s\u00002') ?? []), ['review/diff'])
-  // A new task starts over: nothing has been edited yet, so the same command is orientation.
-  assert.deepEqual(cells(labelled.get('s\u00003') ?? []), ['reconstruction/inspect'])
+  const together = classifyRounds([edit, diff])
+  assert.deepEqual(cells(together.get('s 2') ?? []), cells(classifyRound(diff)))
+  assert.deepEqual(cells(classifyRound(diff)), ['reconstruction/inspect'])
 })
 
-test('every category is decomposed, and every sub-kind belongs to its category', () => {
-  // A flat bucket beside a decomposed one would mean only one of them was taken seriously.
-  for (const info of CATEGORIES) {
-    assert.ok(info.subs.length >= 2, `${info.id} has fewer than two sub-kinds`)
+// --- the taxonomy holds together -------------------------------------------------------------
+
+/** Every label the classifier can produce, over every verb and every path shape. */
+function reachable(): Set<string> {
+  const paths = ['', '/repo/src/a.ts', '/repo/README.md', '/repo/CHANGELOG.md', '/repo/CLAUDE.md']
+  const out = new Set<string>()
+  for (const verb of VERBS) {
+    for (const path of paths) {
+      for (const creating of [false, true]) {
+        const one: Act = { verb, path, target: targetOf(path), creating, source: 'x', weight: 1 }
+        const label = labelOf(one)
+        out.add(`${label.category}/${label.sub}`)
+      }
+    }
   }
+  return out
+}
+
+test('every sub-kind the classifier emits is declared, and every declared one is reachable', () => {
+  // A count of sub-kinds says nothing about whether they agree. This is the invariant that
+  // actually holds the table to the taxonomy, in both directions.
+  const declared = new Set(
+    CATEGORIES.flatMap((info) => info.subs.map((sub) => `${info.id}/${sub}`)),
+  )
+  const emitted = reachable()
+  assert.deepEqual([...emitted].filter((c) => !declared.has(c)), [], 'emitted but not declared')
+  assert.deepEqual([...declared].filter((c) => !emitted.has(c)), [], 'declared but unreachable')
+})
+
+test('the view’s copy of the taxonomy matches this one', () => {
+  // `web/src/categories.ts` is built separately and cannot import from `classify.ts`, and its
+  // `styleOf` falls back to a neutral for an id it does not know. A drift would show up as a grey
+  // chart rather than an error, so it is checked here instead.
+  const here = dirname(fileURLToPath(import.meta.url))
+  const source = readFileSync(join(here, '..', '..', 'web', 'src', 'categories.ts'), 'utf8')
+  const table = source.slice(source.indexOf('export const CATEGORIES'))
+  const ids = [...table.matchAll(/id: '([a-z]+)'/g)].map((match) => match[1])
+  assert.deepEqual(
+    ids.slice(0, CATEGORIES.length),
+    CATEGORIES.map((info) => info.id),
+  )
 })
 
 test('a subcommand is not a directory, however much it looks like one', () => {
   // `go test` names an operation. Reading its second word as a folder called `test` put the target
   // of every Go test run on the test surface rather than leaving it unknown.
-  const [label] = classifyCall(bash('go test ./... 2>&1 | tail -40'), newContext())
-  assert.equal(`${label?.category}/${label?.sub}`, 'verification/test')
+  const [label] = classifyCall(bash('go test ./... 2>&1 | tail -40'))
+  assert.equal(`${label?.category}/${label?.sub}`, 'testing/test')
   assert.equal(label?.target, 'unknown')
   // A real directory argument still resolves.
-  const [real] = classifyCall(bash('go test ./internal/...'), newContext())
+  const [real] = classifyCall(bash('go test ./internal/...'))
   assert.equal(real?.target, 'code')
 })

@@ -258,8 +258,8 @@ export function analysisFile(dataDir: string, project: Project): string {
   return join(projectDir(dataDir, project), 'analysis.jsonl')
 }
 
-/** Bumped when a change to `classify.ts` would give the same rounds different labels. */
-export const ANALYZER_VERSION = 1
+/** Bumped when a change to `act.ts` or `classify.ts` would give the same rounds different labels. */
+export const ANALYZER_VERSION = 2
 
 export interface AnalysisHeader {
   schema_version: number

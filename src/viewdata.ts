@@ -373,8 +373,6 @@ export async function roundPayload(
   round: number,
 ): Promise<RoundPayload> {
   const { stored, rounds, pricing } = await open(dataDir, slug)
-  // Labels depend on what came before in the task, so the whole project is labelled and this one
-  // looked up. Classifying a round on its own would give a different answer.
   const labelled = labelRounds(rounds)
   const found = rounds.find(
     (candidate) => candidate.session.startsWith(session) && candidate.round === round,

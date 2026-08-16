@@ -1,5 +1,5 @@
 /**
- * The nine kinds of work, and how each one is drawn.
+ * The eight kinds of work, and how each one is drawn.
  *
  * The order is `classify.ts`'s order, which is roughly the order work tends to happen in, and it is
  * also the order colours are assigned in. That matters: the palette's slot ordering is what makes
@@ -7,9 +7,14 @@
  * place in the taxonomy and never its size in the current chart. A filter that drops a category
  * must not repaint the others.
  *
- * Unclassified is the exception, and deliberately so. It is not a ninth hue but a hatched neutral,
+ * Unclassified is the exception, and deliberately so. It is not an eighth hue but a hatched neutral,
  * because it is not a kind of work — it is the part the analyzer could not name. Drawing the hole
  * as though it were another colour of thing would be the one dishonesty this view cannot afford.
+ *
+ * This table is a hand-maintained copy of `CATEGORIES` in `src/classify.ts`: the view is built
+ * separately and cannot import from it. `styleOf` falls back to the neutral for an id it does not
+ * know, so a drift shows up as a grey chart rather than an error — which is why
+ * `test/classify.test.ts` asserts the two lists match.
  */
 export interface CategoryStyle {
   id: string
@@ -25,11 +30,10 @@ export const CATEGORIES: CategoryStyle[] = [
   { id: 'planning', label: 'Planning', short: 'Plan', fill: 'var(--series-1)' },
   { id: 'reconstruction', label: 'Reconstruction', short: 'Recon', fill: 'var(--series-2)' },
   { id: 'implementation', label: 'Implementation', short: 'Impl', fill: 'var(--series-3)' },
-  { id: 'verification', label: 'Verification', short: 'Verif', fill: 'var(--series-4)' },
-  { id: 'review', label: 'Review', short: 'Review', fill: 'var(--series-5)' },
-  { id: 'documentation', label: 'Documentation', short: 'Docs', fill: 'var(--series-6)' },
-  { id: 'delivery', label: 'Delivery', short: 'Deliv', fill: 'var(--series-7)' },
-  { id: 'environment', label: 'Environment', short: 'Env', fill: 'var(--series-8)' },
+  { id: 'testing', label: 'Testing', short: 'Test', fill: 'var(--series-4)' },
+  { id: 'documentation', label: 'Documentation', short: 'Docs', fill: 'var(--series-5)' },
+  { id: 'delivery', label: 'Delivery', short: 'Deliv', fill: 'var(--series-6)' },
+  { id: 'environment', label: 'Environment', short: 'Env', fill: 'var(--series-7)' },
   {
     id: 'unclassified',
     label: 'Unclassified',
