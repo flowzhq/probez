@@ -1,6 +1,6 @@
 import { commandOf, parseCommands, UNPARSED } from './bash.js'
 import type { Command } from './bash.js'
-import { advance, CATEGORIES, categoryInfo, classifyCall, newContext } from './classify.js'
+import { CATEGORIES, categoryInfo, classifyCall } from './classify.js'
 import type { Category, Label } from './classify.js'
 import { costOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
@@ -381,37 +381,28 @@ export function toolTally(rounds: Round[], sub?: 'command' | 'kind'): ToolRow[] 
   return rows
 }
 
-/**
- * Every round, labelled, with the task context carried along.
- *
- * Context is per task, because a task is one user turn and everything it led to, and "has anything
- * been edited yet" is only a meaningful question inside one. Rounds arrive in the order they were
- * appended, which is the order they happened.
- */
 /** A label, plus whether the call that produced it failed. */
 export interface RoundLabel extends Label {
   errored: boolean
 }
 
+/**
+ * Every round, labelled.
+ *
+ * Each round is labelled on its own. No rule reaches outside the call it is looking at, so there is
+ * no task context to build up, and the order rounds arrive in no longer changes what they get.
+ */
 export function labelRounds(rounds: Round[]): Map<Round, RoundLabel[]> {
   const out = new Map<Round, RoundLabel[]>()
-  const contexts = new Map<string, ReturnType<typeof newContext>>()
   for (const round of rounds) {
-    const key = `${round.session} ${round.task}`
-    let ctx = contexts.get(key)
-    if (ctx === undefined) {
-      ctx = newContext()
-      contexts.set(key, ctx)
-    }
     const tools = round.tools ?? []
     const labels: RoundLabel[] = []
     if (tools.length > 0) {
       const perCall = 1 / tools.length
       for (const tool of tools) {
-        for (const label of classifyCall(tool, ctx)) {
+        for (const label of classifyCall(tool)) {
           labels.push({ ...label, weight: label.weight * perCall, errored: tool.is_error === true })
         }
-        advance(tool, ctx)
       }
     }
     out.set(round, labels)

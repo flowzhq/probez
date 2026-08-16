@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import { COMMAND_KINDS } from './bash.js'
-import { advance, CATEGORIES, classifyCall, isCategory, isTarget, newContext, TARGETS } from './classify.js'
+import { CATEGORIES, classifyCall, isCategory, isTarget, TARGETS } from './classify.js'
 import {
   defaultClaudeDir,
   discoverProjects,
@@ -168,8 +168,8 @@ Rounds
                                ${COMMAND_KINDS.slice(0, 7).join(' · ')}
                                ${COMMAND_KINDS.slice(7).join(' · ')}
   --category <name>            Only rounds that did this kind of work:
-                               ${CATEGORIES.slice(0, 5).map((c) => c.id).join(' · ')}
-                               ${CATEGORIES.slice(5).map((c) => c.id).join(' · ')}
+                               ${CATEGORIES.slice(0, 4).map((c) => c.id).join(' · ')}
+                               ${CATEGORIES.slice(4).map((c) => c.id).join(' · ')}
   --target <name>              Only rounds that worked on this: ${TARGETS.join(' · ')}
   --agent <main|sub>           Only main-agent or only subagent rounds
   --errors                     Only rounds where a tool failed
@@ -801,14 +801,9 @@ function printRound(round: Round, width: number): void {
     return
   }
   console.log(`  tools (${tools.length})`)
-  // The round is replayed through a fresh context, so a call is labelled by what came before it
-  // here. This is a detail view of one round: what a whole task had already edited is not in view.
-  const ctx = newContext()
   tools.forEach((tool, index) => {
     const chars = tool.result_chars === null ? '—' : `${tokens(tool.result_chars)} chars`
-    const labels = classifyCall(tool, ctx)
-    advance(tool, ctx)
-    const work = labels
+    const work = classifyCall(tool)
       .map((label) => `${label.category}/${label.sub}${label.target === 'unknown' ? '' : ` × ${label.target}`}`)
       .join(' · ')
     console.log(
@@ -1355,8 +1350,8 @@ async function main(): Promise<void> {
         nothingCollected(project)
         continue
       }
-      // Labels depend on what came before in a task, so they are worked out over the whole project
-      // once and looked up by every table, rather than recomputed per page.
+      // Labels are worked out over the whole project once and looked up by every table, rather
+      // than recomputed per page.
       const work = printableWork(rounds)
       // Rates are read once per project rather than per table, so every share on the page is a
       // share of the same money.

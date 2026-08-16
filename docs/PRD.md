@@ -140,26 +140,31 @@ including the sessions the agent has since pruned.
 
 ## Taxonomy
 
-Two rules keep it honest. **Every category gets sub-kinds.** A flat bucket next to a decomposed one
-signals that only one of them was taken seriously. And **reading is never the same operation as
-writing**: reading docs is Reconstruction with a docs target, writing docs is Documentation.
+Classification happens in two passes, and keeping them apart is what makes the second one small.
+`act.ts` reads a call down to the **verbs** it performed — read, write, search, test, commit — which
+are facts you could confirm by looking at the call. `classify.ts` maps each verb onto a category
+through one flat table. A label you disagree with is a row to change, not a rule to trace.
 
-A third rule earns its place once the categories meet real data. **A category is the shape of the
-act; the target is what the act was done to.** "Read the README" and "read the router" are the same
-cell, differing only in target, which is why there is no separate category for working on tests or
-on configuration: those are targets, and the target axis already carries them.
+Two rules keep the taxonomy honest. **Reading is never the same operation as writing**: reading
+`CHANGELOG.md` is Planning, writing it is Documentation. And **a category is the shape of the act;
+the target is what the act was done to** — which is why there is no separate category for working on
+tests or on configuration. Those are targets, and the target axis already carries them.
 
 | Category | Sub-kinds |
 | --- | --- |
-| Planning | clarify · decompose · design |
+| Planning | read · clarify · decompose · design |
 | Reconstruction | locate · read · inspect |
-| Implementation | create · modify · refactor |
-| Verification | test · build · run |
-| Review | diff · read-back |
+| Implementation | create · modify |
+| Testing | test · run |
 | Documentation | system · change · agent |
-| Delivery | commit · publish · branch |
+| Delivery | build · commit · publish · branch |
 | Environment | deps · env |
 | Unclassified | incidental · unknown |
+
+The one place a path changes a *category* rather than only a target is prose. Reading prose is
+Planning, writing it is Documentation, and everything else is the verb's row. Because that question
+is asked once, against the path, `Write` on a README and `cat > README.md` cannot disagree — which
+they did while the check lived on the tool path only.
 
 The **target** axis (`code · tests · docs · config · infra · agent · external · unknown`) is derived
 from file paths and commands. `agent` is for paths under the agent's own directory, plans and memory
@@ -196,8 +201,14 @@ here because the reasons generalise:
   size is set by an unjustifiable constant is a knob, not a measurement.
 - **Rounds that call no tool carry no label.** Nine percent of rounds are pure prose, and
   `thinking_chars` is zero throughout, so planning, explaining and summarising are indistinguishable
-  there. They are excluded from the denominator and reported on the coverage line. This is why
-  Planning reads near 1%: not because agents rarely plan, but because a tool log cannot see it.
+  there. They are excluded from the denominator and reported on the coverage line. Deliberation
+  itself remains invisible to this instrument, whatever Planning's number says.
+
+A fourth was removed in 0.3.2 rather than refused outright. **Review did not earn what it cost.** It
+held one rule — a `git diff` after an edit is checking your work, the same command before one is
+orienting — and paying for that rule meant every round carrying the history of its task, so no round
+could be labelled on its own. Read-only git is now unconditionally Reconstruction. The distinction
+was never load-bearing; the property bought back is that classification is a function of the call.
 
 ### How deep the categories go, and how deep they will go
 
@@ -211,8 +222,9 @@ Going deeper means reading an operation in the context of the ones around it: ho
 agent spent before it wrote anything, whether a search was followed by reads that followed its
 hits, whether the same area was returned to. The round stream already carries what that needs, and
 none of it requires new collection. What it requires is a second pass over a sequence rather than a
-table lookup on a call, which is a different kind of analysis and belongs in its own version. The
-one ordering rule in v0.2, review versus orientation, is the shape the rest of it takes.
+table lookup on a call, which is a different kind of analysis and belongs in its own version. v0.2
+tried to smuggle one such rule into the per-call table as Review, and 0.3.2 took it back out: that
+analysis wants its own pass, not a category propped up by task history.
 
 Until then the categories should be read as what the agent *did*, not as what it was *achieving*.
 
@@ -223,9 +235,9 @@ who works across repos from one session. `tools[].input` carries the paths each 
 later version can attribute by files actually edited rather than by launch directory, again with no
 additional collection.
 
-Every sub-kind above is derived from v0.1 fields: `tools[].name` separates Write from Edit,
-`tools[].input` carries paths and shell commands, and a `git diff` that follows an edit within the
-same task is the review signal. **v0.2 required no additional collection.**
+Every sub-kind above is derived from v0.1 fields: `tools[].name` separates Write from Edit, and
+`tools[].input` carries the paths and shell commands everything else is read out of. **v0.2 required
+no additional collection**, and neither did the 0.3.2 rework.
 
 One assumption in that list was wrong, and the correction is worth keeping: an earlier draft claimed
 `tools[].name` also separates Grep from Read. It does not, in practice. A real store contains six

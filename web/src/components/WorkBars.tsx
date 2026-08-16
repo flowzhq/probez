@@ -14,7 +14,7 @@ import type { ReactElement } from 'react'
  * Where the work went, one row per category.
  *
  * Every bar is directly labelled with its category and its share, which is not decoration: three of
- * the eight series colours sit below 3:1 contrast on the light surface, and a visible label is what
+ * the series colours sit below 3:1 contrast on the light surface, and a visible label is what
  * makes that legal rather than merely pretty. It also means the chart is readable with the colours
  * ignored entirely.
  *
@@ -203,7 +203,7 @@ export function Coverage({ analysis }: { analysis: Analysis }): ReactElement {
   )
 }
 
-/** The same distribution as one bar, for a table row that has no room for nine. */
+/** The same distribution as one bar, for a table row that has no room for a stack of them. */
 export function MixBar({
   mix,
 }: {
