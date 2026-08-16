@@ -293,6 +293,8 @@ export interface Label {
   target: string
   weight: number
   source: string
+  /** Which call in `round.tools` produced this label, zero-based. */
+  call: number
   errored: boolean
 }
 

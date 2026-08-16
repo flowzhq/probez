@@ -29,6 +29,7 @@ import {
 } from './store.js'
 import type { CollectResult, ImportResult, RemoveResult, StoredProject } from './store.js'
 import { CONTROL, ImportError, parseExport } from './import.js'
+import { shorten } from './format.js'
 import {
   costOf,
   defaultPricing,
@@ -51,6 +52,17 @@ import type { Round } from './types.js'
  * Nothing in this file writes. `analyze` caches its result to `analysis.jsonl` as a side effect of
  * reading; `view` deliberately does not, so browsing a store leaves it byte-identical.
  */
+
+/**
+ * A project as the view should print it, which is a path under home written `~/…`.
+ *
+ * The CLI has always shortened; the view printed the path in full, so every screenshot of it
+ * carried whoever's home directory it ran in. The store keeps the real path — this is the copy the
+ * browser is handed, and nothing sends it back.
+ */
+function shown<T extends { path: string | null }>(project: T): T {
+  return project.path === null ? project : { ...project, path: shorten(project.path) }
+}
 
 /** A session as the view lists it: the stored row, plus what the tables around it need. */
 export interface ViewSession extends SessionRow {
@@ -248,9 +260,9 @@ export async function projectsPayload(dataDir: string): Promise<ProjectsPayload>
     const analysis = categoryTally(rounds, pricing)
     const all: RoundLabel[] = []
     for (const labels of labelRounds(rounds).values()) all.push(...labels)
-    projects.push({ ...project, work: dominant(all), mix: mixOf(analysis) })
+    projects.push({ ...shown(project), work: dominant(all), mix: mixOf(analysis) })
   }
-  return { data_dir: dataDir, projects }
+  return { data_dir: shorten(dataDir), projects }
 }
 
 export async function projectPayload(dataDir: string, slug: string): Promise<ProjectPayload> {
@@ -283,7 +295,7 @@ export async function projectPayload(dataDir: string, slug: string): Promise<Pro
   }
 
   return {
-    project: stored,
+    project: shown(stored),
     cost,
     unpriced,
     ...callsIn(rounds),
@@ -322,7 +334,7 @@ export async function sessionPayload(
   })
 
   return {
-    project: stored,
+    project: shown(stored),
     session: {
       ...row,
       model: modelOf(mine),
@@ -353,7 +365,7 @@ export async function taskPayload(
   const work = workIndex(rounds)
   const row = taskRows(mine, pricing)[0]!
   return {
-    project: stored,
+    project: shown(stored),
     session: mine[0]!.session,
     task: {
       ...row,
@@ -378,12 +390,12 @@ export async function roundPayload(
     (candidate) => candidate.session.startsWith(session) && candidate.round === round,
   )
   if (found === undefined) throw new NotFound(`no round ${round} in session ${session}`)
-  return { project: stored, round: found, labels: labelled.get(found) ?? [] }
+  return { project: shown(stored), round: found, labels: labelled.get(found) ?? [] }
 }
 
 export async function toolsPayload(dataDir: string, slug: string): Promise<ToolsPayload> {
   const { stored, rounds, pricing } = await open(dataDir, slug)
-  return { project: stored, tools: toolTally(rounds, 'command'), kinds: toolTally(rounds, 'kind') }
+  return { project: shown(stored), tools: toolTally(rounds, 'command'), kinds: toolTally(rounds, 'kind') }
 }
 
 /* Sync and export: the two things the view does that are not reading. -------------------------- */
@@ -457,7 +469,7 @@ export async function syncProject(
       slug,
       project: after.project,
       source_found: source !== null,
-      source_dir: source?.dir ?? stored.source_dir,
+      source_dir: source === null ? stored.source_dir : shorten(source.dir),
       new_rounds: collected?.new_rounds ?? 0,
       read_sessions: collected?.read_sessions ?? 0,
       skipped_sessions: collected?.skipped_sessions ?? 0,
@@ -494,7 +506,7 @@ export async function renameStored(
   if (wanted.length > MAX_NAME * 4) throw new BadRequest(`a name has to fit in ${MAX_NAME} characters`)
   const renamed = await renameProject(dataDir, slug, wanted)
   if (renamed === null) throw new NotFound(`no project ${slug} in this store`)
-  return { project: renamed }
+  return { project: shown(renamed) }
 }
 
 /**
@@ -667,7 +679,7 @@ export async function pricingPayload(dataDir: string): Promise<PricingPayload> {
     })
     .sort((a, b) => b.rounds - a.rounds || a.model.localeCompare(b.model))
 
-  return { file: pricingFile(dataDir), models, defaults }
+  return { file: shorten(pricingFile(dataDir)), models, defaults }
 }
 
 /**

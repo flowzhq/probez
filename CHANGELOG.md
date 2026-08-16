@@ -8,6 +8,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-16
+
+The view says more and gives away less. Every tool call now carries the work it was counted as,
+which is what `probez round <id>` has always printed; and no path the view puts on screen names the
+person who ran it.
+
+### Added
+
+- **Every tool call in the view says what it was counted as.** The round inspector showed the
+  round's labels added up — "Reconstruction · read 20% · Implementation · modify 60%" — and then a
+  list of calls with no way to tell which call was which. Each call now carries its own chips, in
+  the category's colour, with the full category, the target and the tool or command in the title;
+  a call that did the same thing several times says `×3` rather than repeating itself. That is what
+  `probez round <id>` has always printed under each call, so the two front ends now show the same
+  thing. Labels served by the view carry the index of the call that produced them, since `source`
+  names a tool but cannot tell two `Bash` calls apart.
+
+### Changed
+
+- **The view writes a path under home as `~/…`, the way the CLI always has.** It printed the
+  absolute path, so a project header read `/Users/<someone>/Dev/…` and every screenshot of the view
+  carried a username that was nobody else's business. The store still keeps the real path — only the
+  copy handed to the browser is shortened, and nothing sends it back. The same goes for the store
+  directory on the projects page, the pricing file on Settings, and the source directory a failed
+  sync reports. An export is untouched: it is a copy of the record, and the record has always been
+  unredacted.
+- **The README's two screenshots are regenerated.** They still showed the pre-0.3.2 categories —
+  Verification and Review, neither of which exists — beside a work profile that no longer matches
+  what the code produces.
+
 ### Fixed
 
 - **A `>` inside a heredoc is a comparison, not a redirect.** The write-sniff that decides whether
@@ -427,7 +457,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/flowzhq/probez/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/flowzhq/probez/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/flowzhq/probez/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/flowzhq/probez/compare/v0.2.0...v0.3.0

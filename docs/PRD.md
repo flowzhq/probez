@@ -298,6 +298,12 @@ Three decisions in it are worth recording, because each was a choice with an alt
 **Every share carries its denominator**, the same coverage line the CLI prints, in the chart rather
 than under it.
 
+**The inspector marks the call, not only the round.** A round's labels are its calls added up, which
+is the number every chart above is built from; each call now carries the categories it contributed,
+so a `Bash` call that ran three commands shows all three and a share you disagree with leads back to
+the call that produced it. That is the per-call line `probez round <id>` has always printed, which
+is the point: two front ends over one classifier should not show different things.
+
 **Why a server and not a file.** An earlier plan promised a self-contained HTML profile. A store on this
 machine holds 3,667 rounds in one project and 6.5 MB of prose; inlining that produces a document
 that is slow to open and stale the moment it is written. A loopback server lazy-loads instead, and

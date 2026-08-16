@@ -146,9 +146,37 @@ test('every level answers, and its numbers are the ones the store holds', async 
     assert.equal(round.round.round, 0)
     // The full record, not a summary of it: the inspector shows what each tool was given.
     assert.ok(Array.isArray(round.round.tools))
+    // And every label names the call that produced it, which is what lets the inspector mark the
+    // calls themselves rather than only the round they add up to.
+    assert.ok(round.labels.length > 0)
+    for (const label of round.labels) {
+      assert.ok(Number.isInteger(label.call), 'a label with no call behind it')
+      assert.ok(round.round.tools[label.call] !== undefined, `no call ${label.call} in this round`)
+    }
 
     const tools = await body(withToken(server, `/api/projects/${slug}/tools`))
     assert.ok(tools.tools.length > 0)
+  } finally {
+    await server.close()
+  }
+})
+
+test('the paths it hands the browser are the short ones', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    // `shorten` writes a path under home as `~/…` and one under the temp directory as `$TMPDIR/…`,
+    // so on any machine what the view prints stops being absolute. A screenshot of it should not
+    // carry whoever's home directory it ran in.
+    const projects = await body(withToken(server, '/api/projects'))
+    assert.ok(!projects.data_dir.startsWith('/'), projects.data_dir)
+    assert.ok(!projects.projects[0].path.startsWith('/'), projects.projects[0].path)
+
+    const project = await body(withToken(server, `/api/projects/${slug}`))
+    assert.ok(!project.project.path.startsWith('/'), project.project.path)
+
+    const pricing = await body(withToken(server, '/api/pricing'))
+    assert.ok(!pricing.file.startsWith('/'), pricing.file)
   } finally {
     await server.close()
   }

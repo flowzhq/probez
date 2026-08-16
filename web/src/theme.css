@@ -794,6 +794,17 @@ button.save.grave:hover {
   background: var(--wash);
 }
 
+/*
+ * What a call was counted as, beside its name. It wraps rather than pushing the sizes off the row,
+ * since a Bash call that ran four commands carries four of these.
+ */
+.work {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
 .call pre {
   margin: 0;
   padding: 10px;

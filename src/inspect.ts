@@ -381,8 +381,14 @@ export function toolTally(rounds: Round[], sub?: 'command' | 'kind'): ToolRow[] 
   return rows
 }
 
-/** A label, plus whether the call that produced it failed. */
+/** A label, plus which call in the round produced it and whether that call failed. */
 export interface RoundLabel extends Label {
+  /**
+   * The call's position in `round.tools`, zero-based. `source` names the tool or command, which is
+   * enough to say what produced a label but not which of two `Bash` calls it was; the index is, so
+   * a reader can put every label back on the call it came from.
+   */
+  call: number
   errored: boolean
 }
 
@@ -399,11 +405,16 @@ export function labelRounds(rounds: Round[]): Map<Round, RoundLabel[]> {
     const labels: RoundLabel[] = []
     if (tools.length > 0) {
       const perCall = 1 / tools.length
-      for (const tool of tools) {
+      tools.forEach((tool, call) => {
         for (const label of classifyCall(tool)) {
-          labels.push({ ...label, weight: label.weight * perCall, errored: tool.is_error === true })
+          labels.push({
+            ...label,
+            weight: label.weight * perCall,
+            call,
+            errored: tool.is_error === true,
+          })
         }
-      }
+      })
     }
     out.set(round, labels)
   }

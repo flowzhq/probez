@@ -63,8 +63,9 @@ down to a single tool call. It listens on `127.0.0.1` with a token that is new o
 </p>
 
 **A session** — the trace. Two rows over one axis: the phases the agent moved through, and the
-rounds themselves, each stacked by the work it did. Click a round to open it in full; the arrow
-keys walk to the next.
+rounds themselves, each stacked by the work it did. Click a round to open it in full — what it was
+asked, what it said, and every tool call marked with the work it was counted as; the arrow keys walk
+to the next.
 
 <p align="center">
   <img src="docs/view-session.png" alt="probez view: a session trace and its work profile" width="900">
