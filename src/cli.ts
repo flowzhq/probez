@@ -203,8 +203,11 @@ The view
   --port <n>                   Which port to listen on (default ${DEFAULT_PORT})
   --no-open                    Print the URL instead of opening a browser
 
-  From there you can Sync a project, which is collect then analyze on that one, and Export
-  its rounds for your browser to save wherever you point it.
+  From there each project has a ⋮ menu: Sync, which is collect then analyze on that one;
+  Rename, which sets a label this CLI answers to and moves nothing; Export, which hands its
+  rounds to your browser to save wherever you point it; and Delete, which asks first and then
+  removes the project and everything probez recorded for it. The agent's own session files are
+  never touched, so a collected project comes back with \`probez collect\`. An import does not.
 
   It listens on 127.0.0.1 and nothing leaves the machine. The URL carries a token that is new
   on every run, without which the data neither answers nor syncs. Reading writes nothing.
@@ -479,14 +482,15 @@ function noMatch(projects: Project[], target: string | undefined): never {
 function projectHeader(project: Project): void {
   const name = projectName(project)
   console.log('')
-  // An import has no path here because it was never run here. Saying so beats "(path unknown)",
-  // which reads as something probez failed to work out rather than something that is not its own.
-  const where =
-    project.slug !== undefined
+  // An import has no path because it was never run here. Saying so beats "(path unknown)", which
+  // reads as something probez failed to work out rather than something that is not its own. The
+  // path comes first because a project matched through the store is not necessarily an import —
+  // one renamed here is matched that way too, and it has a path like any other.
+  const where = project.path
+    ? shorten(project.path)
+    : project.slug !== undefined
       ? '(imported)'
-      : project.path
-        ? shorten(project.path)
-        : '(path unknown)'
+      : '(path unknown)'
   console.log(`  ${name}  ${where}`)
   console.log('')
 }
@@ -514,6 +518,8 @@ async function storedMatches(dataDir: string, target: string | undefined): Promi
         : stored.filter((row) => row.project.toLowerCase() === wanted)
   return matched.map((row) => ({
     key: row.project,
+    // What the store calls it, which is the one thing discovery could not have told us.
+    name: row.project,
     path: row.path,
     dir: row.source_dir ?? '',
     sessions: [],
@@ -1204,24 +1210,37 @@ async function main(): Promise<void> {
   if (command === 'projects') {
     // Scratch projects are mostly noise in a listing for the same reason --all skips them.
     const own = values['include-temp'] ? projects : projects.filter((p) => !isEphemeral(p))
+    const stored = await listStored(dataDir)
+    // A name someone chose in `probez view` is the project's name everywhere, or the two lists
+    // disagree about what the same project is called. Only the store knows it, since discovery
+    // reads the agent's directory and has never heard of it.
+    const chosen = new Map(stored.filter((row) => row.renamed).map((row) => [row.slug, row.project]))
     // Imports are in the store and nowhere else, so a listing built only from the agent's
     // directory would leave out projects this machine can plainly read.
-    const imported = (await listStored(dataDir))
+    const imported = stored
       .filter((row) => row.imported_at !== null)
       .map((row) => ({
         key: row.project,
         path: null,
         dir: '',
         sessions: [],
-        lastActivity: Date.parse(row.imported_at ?? row.last_ts ?? '') || 0,
+        // The last round in it, the same thing this column means on every other row and the same
+        // thing `probez view` prints. When it arrived is a different fact, and the project page is
+        // where that one is stated.
+        lastActivity: Date.parse(row.last_ts ?? row.imported_at ?? '') || 0,
         slug: row.slug,
       }))
     const listed = [...own, ...imported]
+    const named = (project: Project): string =>
+      chosen.get(slugFor(project)) ?? (project.path ? project.path.split('/').pop()! : project.key)
     const skippedTemp = projects.length - own.length
     if (values.json) {
       console.log(
         JSON.stringify(
           listed.map((p) => ({
+            // `key` is the agent's own directory name and stays that; `name` is what the tables
+            // print, which is a chosen name where there is one.
+            name: named(p),
             key: p.key,
             path: p.path,
             slug: p.slug,
@@ -1237,7 +1256,7 @@ async function main(): Promise<void> {
     }
     console.log('')
     for (const project of listed) {
-      const name = project.path ? project.path.split('/').pop()! : project.key
+      const name = named(project)
       const count = project.sessions.length
       const where =
         project.slug !== undefined

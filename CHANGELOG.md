@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [0.3.1] - 2026-08-16
+
+Managing the store, from the page that lists it. 0.3 could collect a project, read it and send it
+somewhere; it could not rename one or get rid of one.
+
+### Added
+
+- **Rename a project, from the ⋮ menu.** A label and only a label: the store directory is a hash of
+  the path an agent ran in, so renaming moves nothing and cannot land one project on top of another.
+  The chosen name lives in the manifest beside the derived one — `collect` recomputes the derived
+  name from the path every time it runs and carries the chosen one across, so a rename survives every
+  later sync — and clearing the field is a revert rather than a project with no name. The CLI reads
+  the same field, so a project renamed in the browser is what `probez projects` prints and what
+  `probez analyze <name>` answers to.
+- **Delete a project, after being asked.** It removes one project's directory — rounds, the session
+  copies beside them, the analysis cache, the manifest — and there is no undo. It is the only thing
+  in probez that destroys data, and it is fenced twice: the slug must have the shape `slugFor`
+  produces, and the path it resolves to must be under `<data-dir>/projects/`. The agent's own session
+  files are not touched, so a collected project comes back with `probez collect` minus whatever the
+  agent has pruned since; an imported one does not come back at all. The panel that asks says both.
+- **`POST .../rename` and `POST .../delete`**, alongside `sync`. Like it, both refuse `GET`, because
+  a URL that renames or deletes when it is merely visited is a URL that can be put in an `<img>` tag.
+- **Projects that arrived as a file are marked `imported`** in the list and on their own page. Every
+  number on such a row was measured on somebody else's machine, and nothing else in the table said so.
+- **`probez projects --json` gained `name`**, the name the tables print. `key` is unchanged and is
+  still the agent's own directory name.
+
+### Fixed
+
+- **The projects list and a project's page disagreed about "Last".** The column showed when the most
+  recent round ran; the page showed when probez last read the sessions, under a name close enough to
+  read as the same fact. The column is now `Last activity`, the page leads with the same figure under
+  the same name, and when it was collected — or imported — follows as the separate thing it is.
+- **A project's path was invisible in the page header.** It has been in the markup since 0.2 and zero
+  pixels wide: `.clip` sizes itself with a table trick that resolves to a literal zero in a flex row.
+- **`probez analyze <name>` printed `(imported)` for a project that was not imported.** A project
+  matched through the store rather than through the agent's directory carries a slug, and the header
+  read that as "this is an import". It reads the path first now, which an import does not have.
+- **The CLI listed an imported project's `LAST` as when it was imported**, while every other row —
+  and the view — meant the last round in it.
+
 ## [0.3.0] - 2026-08-16
 
 The record. 0.2 said what the work was; this says what it cost, how long it really took, and when it
@@ -314,7 +355,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/flowzhq/probez/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/flowzhq/probez/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/flowzhq/probez/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/flowzhq/probez/compare/v0.1.0...v0.1.1

@@ -20,11 +20,14 @@ import {
   findStored,
   importProject,
   listStored,
+  MAX_NAME,
   readRoundsIn,
+  removeProject,
+  renameProject,
   slugFor,
   writeAnalysis,
 } from './store.js'
-import type { CollectResult, ImportResult, StoredProject } from './store.js'
+import type { CollectResult, ImportResult, RemoveResult, StoredProject } from './store.js'
 import { CONTROL, ImportError, parseExport } from './import.js'
 import {
   costOf,
@@ -473,6 +476,44 @@ export async function syncProject(
   } finally {
     running.delete(slug)
   }
+}
+
+/* Renaming and removing: the two things the view does to a project rather than to its data. ------ */
+
+/**
+ * Give a project a name of your own, from the browser.
+ *
+ * A label and nothing more. It changes what every page calls the project and what `probez <name>`
+ * answers to, and it changes neither the slug in the address bar nor a byte of the rounds.
+ */
+export async function renameStored(
+  dataDir: string,
+  slug: string,
+  body: unknown,
+): Promise<{ project: StoredProject }> {
+  const wanted = (body as { name?: unknown } | null)?.name
+  if (typeof wanted !== 'string') throw new BadRequest('expected { name: "<what to call it>" }')
+  if (wanted.length > MAX_NAME * 4) throw new BadRequest(`a name has to fit in ${MAX_NAME} characters`)
+  const renamed = await renameProject(dataDir, slug, wanted)
+  if (renamed === null) throw new NotFound(`no project ${slug} in this store`)
+  return { project: renamed }
+}
+
+/**
+ * Remove a project from the store.
+ *
+ * The only route here that destroys anything, and it destroys the whole of what probez recorded for
+ * one project. The agent's own session files are untouched, so a collected project comes back with
+ * `probez collect` minus whatever the agent has since pruned; an imported one does not come back at
+ * all, because the file it arrived as is the only copy that ever existed here. Which is why the page
+ * asks first, and why this reports what went rather than answering with a tick.
+ */
+export async function removeStored(dataDir: string, slug: string): Promise<RemoveResult> {
+  const removed = await removeProject(dataDir, slug)
+  if (removed === null) throw new NotFound(`no project ${slug} in this store`)
+  // The rounds cache is keyed on a file that no longer exists.
+  cache.delete(removed.dir)
+  return removed
 }
 
 export type ExportFormat = 'jsonl' | 'json'

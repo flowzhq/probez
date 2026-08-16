@@ -26,24 +26,43 @@ ways:
   DNS rebinding, where a page you visit resolves its own domain to `127.0.0.1` and talks to the
   server from inside your browser. The token alone would not stop that, because the browser would
   send it.
-- `GET` is the only method with an implementation, apart from three: `POST .../sync`, which runs a
-  collection on that project, `POST /api/pricing`, which saves the token rates, and
-  `POST /api/import`, which takes in a project someone sent you. Nothing else accepts anything but
-  `GET`, and all three refuse `GET` themselves — a URL that collects, or imports, when it is merely
-  visited is a URL that can be put in an `<img>` tag on any page you happen to open. Pricing is
-  readable with `GET` because reading a rate table changes nothing.
+- `GET` is the only method with an implementation, apart from five: `POST .../sync`, which runs a
+  collection on that project, `POST .../rename`, which sets the name a project is shown under,
+  `POST .../delete`, which removes a project from the store, `POST /api/pricing`, which saves the
+  token rates, and `POST /api/import`, which takes in a project someone sent you. Nothing else
+  accepts anything but `GET`, and all five refuse `GET` themselves — a URL that collects, renames,
+  deletes or imports when it is merely visited is a URL that can be put in an `<img>` tag on any
+  page you happen to open. Pricing is readable with `GET` because reading a rate table changes
+  nothing.
 - The page it serves may load only from its own origin, enforced by a content-security-policy on
   every response, and there is nothing off-origin in it to load.
 
 **Browsing writes nothing.** Unlike `analyze`, which caches its result beside the rounds, reading
 leaves the store byte-identical, and there is a test that asserts exactly that. Pressing **Sync**
 writes, because that is what it is for: it runs `collect` and then rebuilds the analysis cache, the
-same two things the commands of those names do. Saving under **Settings** writes the rate table, and
-**Import** writes a new project. Those three are the only writes the view can make.
+same two things the commands of those names do. **Rename** rewrites one field of one manifest.
+**Delete** removes one project's directory. Saving under **Settings** writes the rate table, and
+**Import** writes a new project. Those five are the only writes the view can make.
 
-That one button changes what the token protects. Before it, the token and the `Host` check stood
+Those buttons change what the token protects. Before them, the token and the `Host` check stood
 between a page you did not open and *reading* your prompts; now they also stand between it and
-starting a collection on your machine.
+starting a collection on your machine, and between it and deleting what has been recorded.
+
+**Delete is the only thing in probez that destroys data.** It removes one project's directory from
+the store — its rounds, the session copies beside them, the analysis cache and the manifest — and
+there is no undo. Two checks keep it pointed inside the store: the slug from the URL must have the
+shape `slugFor` produces, with no separators and no `..`, and the path it resolves to must be under
+`<data-dir>/projects/`. It never touches the agent's own session files, which probez has only ever
+read, so a collected project comes back with `probez collect` minus whatever the agent has pruned
+since. An imported one does not come back: the file it arrived as is the only other copy that ever
+existed here. The view asks before running it, and says what will go.
+
+**Rename is a label and moves nothing.** The name is stored in the manifest and used for display and
+for matching a project by name on the command line. A project's directory in the store is a hash of
+the path an agent ran in and is not derived from the name, so a rename cannot land one project on top
+of another or anywhere outside the store. Control characters are stripped for the same reason they
+are stripped from an import: `probez projects` prints the name to a terminal, and a terminal obeys
+escape sequences.
 
 **Import is somebody else's data, and probez cannot check any of it.** An export arrives by mail or
 chat: it is a file of arbitrary JSON written by a machine that is not yours, and once imported,

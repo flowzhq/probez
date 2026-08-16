@@ -35,15 +35,37 @@ export function Project({ slug }: { slug: string }): ReactElement {
           <div className={loading ? 'rereading' : undefined}>
             <div className="head">
               <h1>{data.project.project}</h1>
+              {data.project.imported_at === null ? null : (
+                <span className="mark" title="Arrived as a file someone exported">
+                  imported
+                </span>
+              )}
               <span className="muted mono clip">{data.project.path ?? data.project.key}</span>
               <span className="spacer" style={{ flex: 1 }} />
-              {/* An import was never collected here, and saying so would misplace where it came from. */}
-              <span className="muted">
+              {/*
+                Two dates, named apart. The projects list has a "last activity" column, and this page
+                used to answer it with when probez last *read* the sessions — a different number
+                about a different thing, under a name close enough to read as the same one. So the
+                work's own date leads, under the name the list gives it, and when probez went looking
+                follows it as the separate fact it is. An import was never collected here, and saying
+                so would misplace where it came from.
+              */}
+              <span className="muted nowrap">
+                Last activity {ago(data.project.last_ts)} ·{' '}
                 {data.project.imported_at === null
-                  ? `Last collected ${ago(data.project.collected_at)}`
-                  : `Imported ${ago(data.project.imported_at)}`}
+                  ? `collected ${ago(data.project.collected_at)}`
+                  : `imported ${ago(data.project.imported_at)}`}
               </span>
-              <Actions slug={slug} onSynced={() => setRead(read + 1)} />
+              <Actions
+                slug={slug}
+                project={data.project.project}
+                renamed={data.project.renamed}
+                rounds={data.project.rounds}
+                onSynced={() => setRead(read + 1)}
+                onRenamed={() => setRead(read + 1)}
+                // The page is about a project that no longer exists; the list is where to be next.
+                onRemoved={() => go(href.projects())}
+              />
             </div>
             <Facts
               items={[

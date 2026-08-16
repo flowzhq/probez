@@ -358,6 +358,20 @@ tbody tr.row:hover {
   white-space: nowrap;
 }
 
+/*
+ * The same truncation in a page header, where the rule above resolves to a literal nothing.
+ * `max-width: 0` with `width: 100%` is a table trick — a cell shrinks to whatever the columns beside
+ * it left — and a flex item has no such negotiation, so the project page's path has been in the
+ * markup and zero pixels wide. Here it takes its natural width and gives it back under pressure,
+ * which is what the ellipsis was for.
+ */
+.head .clip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: none;
+  width: auto;
+}
+
 /* Chart pieces ------------------------------------------------------------ */
 
 .swatch {
@@ -543,6 +557,84 @@ tbody tr.row:hover {
   margin-top: 1px;
 }
 
+/*
+ * A verb in this menu that destroys something. Coloured rather than merely worded, because the row
+ * above it exports and the one above that collects, and the difference between those and this one
+ * should not have to be read to be seen.
+ */
+.menu button.grave strong {
+  color: var(--bad);
+}
+
+.menu button.grave:hover {
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+}
+
+/*
+ * The panel a verb opens when it needs something first: a name to use, or an answer to a question.
+ * It replaces the list in the same box rather than opening a second layer over it, so what you are
+ * being asked sits where what you pressed was.
+ */
+.menu-form {
+  padding: 10px;
+  max-width: 320px;
+  /* The compact menu hangs off a right-aligned table cell, whose alignment prose should not inherit. */
+  text-align: left;
+}
+
+/* The list's rows are full-width targets; these two are a pair of buttons and are sized as one. */
+.menu-row button {
+  display: inline-block;
+  width: auto;
+}
+
+.menu-form p.menu-note {
+  margin: 6px 0 0;
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.menu-label {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-bottom: 4px;
+}
+
+.menu-field {
+  width: 100%;
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+}
+
+.menu-field:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 1px;
+}
+
+.menu-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* The confirming half of a destructive question, so the button that does it is not the quiet one. */
+button.save.grave {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+button.save.grave:hover {
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+}
+
 .said {
   color: var(--ink-3);
   font-size: 12px;
@@ -714,6 +806,26 @@ tbody tr.row:hover {
   overflow-wrap: anywhere;
   max-height: 320px;
   overflow: auto;
+}
+
+/*
+ * A project that arrived as a file rather than being collected here. Worth one word on the row:
+ * every number beside it was measured on somebody else's machine, and nothing else in the table
+ * says so. Quieter than `.tag`, which labels a value rather than qualifying a name.
+ */
+.mark {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  vertical-align: 1px;
+  white-space: nowrap;
 }
 
 .tag {

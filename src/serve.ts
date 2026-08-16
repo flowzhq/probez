@@ -13,6 +13,8 @@ import {
   pricingPayload,
   projectPayload,
   projectsPayload,
+  removeStored,
+  renameStored,
   roundPayload,
   savePricing,
   sessionPayload,
@@ -38,11 +40,13 @@ import {
  * Reading never writes. `analyze` caches its work as a side effect of being run; every `GET` here
  * refuses to, so browsing leaves the store exactly as it found it.
  *
- * There is exactly one route that writes, `POST .../sync`, and it does what `collect` and `analyze`
- * do because that is what it is for. It is worth being clear about what that costs: before it, the
- * token and the `Host` check stood between a page you did not open and *reading* your prompts;
- * now they also stand between it and running a collection on your machine. Which is why `POST` is
- * accepted on that one path and nowhere else, and why every other method is still refused outright.
+ * Five routes write, and every one of them is a `POST`: `sync` on a project does what `collect` and
+ * `analyze` do, `rename` sets a label, `delete` removes a project and everything recorded for it,
+ * `import` takes in a file, and `pricing` stores rates. It is worth being clear about what that
+ * costs. Before any of them, the token and the `Host` check stood between a page you did not open
+ * and *reading* your prompts; now they also stand between it and collecting, and between it and
+ * deleting. Which is why `POST` is accepted on those paths and nowhere else, why they refuse `GET`
+ * outright rather than merely not answering it, and why every other method is refused everywhere.
  */
 
 const HOST = '127.0.0.1'
@@ -186,9 +190,17 @@ async function serveAsset(res: ServerResponse, pathname: string): Promise<void> 
   send(res, 404, 'text/plain; charset=utf-8', 'not found\n')
 }
 
-/** The one path that accepts a method other than GET *and refuses GET*, matched exactly. */
-function isSyncPath(parts: string[]): boolean {
-  return parts.length === 3 && parts[0] === 'projects' && parts[2] === 'sync'
+/**
+ * The paths under one project that write, matched exactly.
+ *
+ * All three refuse GET as well as accepting POST, which is the part that matters: a URL that
+ * collects, renames or deletes when it is merely visited is a URL that can be put in an `<img>` tag
+ * on any page you happen to open.
+ */
+const PROJECT_WRITES = new Set(['sync', 'rename', 'delete'])
+
+function isProjectWritePath(parts: string[]): boolean {
+  return parts.length === 3 && parts[0] === 'projects' && PROJECT_WRITES.has(parts[2]!)
 }
 
 /** Rates: readable with GET, writable with POST. */
@@ -203,7 +215,7 @@ function isImportPath(parts: string[]): boolean {
 
 /** Every path that accepts a POST. */
 function isWritePath(parts: string[]): boolean {
-  return isSyncPath(parts) || isPricingPath(parts) || isImportPath(parts)
+  return isProjectWritePath(parts) || isPricingPath(parts) || isImportPath(parts)
 }
 
 /**
@@ -248,6 +260,8 @@ async function serveApi(
   // /api/projects/<slug>/tools
   // /api/projects/<slug>/export?format=jsonl|json
   // /api/projects/<slug>/sync                                   POST
+  // /api/projects/<slug>/rename                                 POST
+  // /api/projects/<slug>/delete                                 POST
   // /api/projects/<slug>/sessions/<session>
   // /api/projects/<slug>/sessions/<session>/tasks/<task>
   // /api/projects/<slug>/sessions/<session>/rounds/<round>
@@ -298,6 +312,21 @@ async function serveApi(
   if (kind === 'sync' && id === undefined) {
     // Reachable only as POST; the method check upstream has already refused a GET here.
     sendJson(res, 200, await syncProject(dataDir, options.claudeDir, slug))
+    return
+  }
+  if (kind === 'rename' && id === undefined) {
+    let body: unknown
+    try {
+      body = await readJsonBody(req)
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+      return
+    }
+    sendJson(res, 200, await renameStored(dataDir, slug, body))
+    return
+  }
+  if (kind === 'delete' && id === undefined) {
+    sendJson(res, 200, await removeStored(dataDir, slug))
     return
   }
   if (kind === 'export' && id === undefined) {
@@ -391,9 +420,10 @@ export async function startServer(options: ServeOptions): Promise<Serving> {
       res.end()
       return
     }
-    // Syncing is a write, so it is the one thing a GET must not be able to trigger: a URL that
-    // collects when it is merely visited is a URL that can be put in an <img> tag.
-    if (wanted === 'GET' && isApi && (isSyncPath(parts) || isImportPath(parts))) {
+    // Collecting, renaming and removing are writes, and one of them destroys data. None of them may
+    // be reachable by a GET: a URL that does any of it when merely visited can be put in an <img>
+    // tag on a page you did not write.
+    if (wanted === 'GET' && isApi && (isProjectWritePath(parts) || isImportPath(parts))) {
       res.writeHead(405, { allow: 'POST', 'content-length': 0 })
       res.end()
       return

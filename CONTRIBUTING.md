@@ -60,11 +60,18 @@ Three constraints are not up for negotiation in a PR, because they are the produ
 3. **Only ever read the agent's session files.** probez writes exclusively under its own data
    directory.
 
-   The view has exactly one route that writes, `POST .../sync`, and it writes what `collect` and
-   `analyze` write and nothing else. Every other route is `GET`, and sync refuses `GET` so that
-   visiting a URL can never start a collection. Export is not an exception to this rule: the server
-   hands bytes to the browser and the browser writes them where the person said, which is the only
-   way a page can put a file on disk.
+   The view's routes that write are all `POST`, and there are five: `.../sync` writes what `collect`
+   and `analyze` write, `.../rename` sets one field of a manifest, `.../delete` removes one project's
+   directory, `/import` writes a project that arrived as a file, and `/pricing` stores rates. Every
+   other route is `GET`, and each of these refuses `GET` so that visiting a URL can never collect,
+   rename or delete. Export is not an exception to the rule: the server hands bytes to the browser
+   and the browser writes them where the person said, which is the only way a page can put a file on
+   disk.
+
+   `delete` is the only thing anywhere in probez that destroys data, and it stays inside the same
+   fence: the slug is checked against the shape `slugFor` produces *and* the resolved path is checked
+   to be under `<data-dir>/projects/`, so nothing outside probez's own directory is reachable. The
+   agent's session files are not among the things it removes.
 
 ## Code style
 
@@ -90,10 +97,12 @@ output in `dist/test/`, which is why `npm test` builds first.
 - `test/bash.test.ts` covers reading a shell command into the commands it ran.
 - `test/cli.test.ts` runs the built CLI end to end in a temporary store, so it touches neither
   `~/.claude` nor `~/.probez`.
-- `test/view.test.ts` runs the local server in-process against a temporary store. Three of its
-  cases are the reason it exists: the refusals (no token, wrong `Host`, and the method rules,
-  including that sync refuses `GET`), the assertion that the store is byte-identical after a
-  session of browsing, and the one that a sync without the token writes nothing at all.
+- `test/view.test.ts` runs the local server in-process against a temporary store. The refusals are
+  the reason it exists: no token, wrong `Host`, and the method rules — every write path refuses
+  `GET` and every read path refuses everything but it. Beside them sit the assertion that the store
+  is byte-identical after a session of browsing, and the ones saying that a sync, a rename or a
+  delete without the token writes nothing at all. A new route that writes belongs in all of those
+  lists, and a delete additionally has to be shown unable to point outside `<data-dir>/projects/`.
 
 If you hit a real session that probez parses incorrectly, the most useful contribution is a minimal
 fixture reproducing it. Please strip anything private before attaching it.
