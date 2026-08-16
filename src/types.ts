@@ -132,4 +132,12 @@ export interface Project {
    * Discovery never sets it, and `slugFor` falls back to hashing the path as it always has.
    */
   slug?: string
+  /**
+   * What the store calls this project, when the store is where it was matched.
+   *
+   * A name someone chose lives in the manifest and nowhere else — discovery reads the agent's
+   * directory and has never heard of it — so a project matched through the store carries the name
+   * here rather than being called its basename again by `projectName`.
+   */
+  name?: string
 }

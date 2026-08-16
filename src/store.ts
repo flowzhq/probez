@@ -13,10 +13,11 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { extractSession } from './extract.js'
+import { CONTROL } from './import.js'
 import type { Project, Round, SessionFile } from './types.js'
 
 const SCHEMA_VERSION = 3
@@ -61,7 +62,10 @@ export interface CollectResult extends Summary {
 export interface StoredProject {
   slug: string
   dir: string
+  /** What to call it: the name someone chose, or the one its path gave it. */
   project: string
+  /** Whether that name was chosen here rather than derived, which is what makes it revertible. */
+  renamed: boolean
   path: string | null
   key: string
   source_dir: string | null
@@ -86,6 +90,14 @@ interface Manifest {
   schema_version?: number
   /** Set only on a project that arrived as a file. Absent means it was collected here. */
   imported_at?: string | null
+  /**
+   * The name someone gave this project, which outranks `project`.
+   *
+   * They are two fields rather than one because `project` is derived — every collect recomputes it
+   * from the directory the agent ran in — so a rename written there would last until the next
+   * collect and no longer. Clearing this is what puts the derived name back.
+   */
+  name?: string | null
   project?: string
   path?: string | null
   key?: string
@@ -105,6 +117,21 @@ interface Manifest {
   last_ts?: string | null
 }
 
+/** Longest name a project may be given. A label, not a description. */
+export const MAX_NAME = 80
+
+/**
+ * A name as it will be stored and printed.
+ *
+ * Nothing here decides a path — `slugFor` and `importSlug` already settled where the project lives,
+ * and renaming never moves it — so the only rules are the ones that keep a name printable. Control
+ * characters go for the reason they go on the way in from an import: `probez projects` prints this
+ * straight to a terminal, and a terminal obeys escape sequences.
+ */
+export function cleanName(raw: string): string {
+  return raw.replace(CONTROL, '').replace(/\s+/g, ' ').trim().slice(0, MAX_NAME)
+}
+
 /**
  * A slug names a directory, and it arrives from a URL, so it is checked rather than trusted. Only
  * the shape `slugFor` produces is accepted: no separators, no dots, nothing that could climb out of
@@ -120,10 +147,12 @@ export function storedDir(dataDir: string, slug: string): string {
 
 function asStored(slug: string, dir: string, manifest: Manifest): StoredProject | null {
   if (manifest.schema_version !== SCHEMA_VERSION) return null
+  const chosen = cleanName(manifest.name ?? '')
   return {
     slug,
     dir,
-    project: manifest.project ?? slug,
+    project: chosen === '' ? (manifest.project ?? slug) : chosen,
+    renamed: chosen !== '',
     path: manifest.path ?? null,
     key: manifest.key ?? slug,
     source_dir: manifest.source_dir ?? null,
@@ -523,12 +552,20 @@ export async function collectProject(
   const summary = await summarize(project, dataDir)
   summary.collected_at = new Date().toISOString()
 
+  // `project` is derived from the directory and recomputed here every time, so a name someone chose
+  // has to be carried across or every collect would quietly undo their rename. The manifest keeps
+  // both: the derived name in `project`, so clearing the override has something to fall back to.
+  const named = await readJson<Manifest>(join(dir, 'manifest.json'))
+  const chosen = cleanName(named?.name ?? '')
+  const derived = summary.project
+
   await writeFile(
     join(dir, 'manifest.json'),
     JSON.stringify(
       {
         schema_version: version,
-        project: summary.project,
+        name: chosen === '' ? null : chosen,
+        project: derived,
         path: project.path,
         key: project.key,
         source_dir: project.dir,
@@ -564,6 +601,8 @@ export async function collectProject(
 
   return {
     ...summary,
+    // What to call it on the way out, which is not always what the manifest derives.
+    project: chosen === '' ? derived : chosen,
     new_rounds: newRounds,
     read_sessions: stale.length,
     skipped_sessions: sources.length - stale.length,
@@ -601,7 +640,8 @@ export async function importProject(
 ): Promise<ImportResult> {
   const slug = importSlug(name, source)
   const dir = storedDir(dataDir, slug)
-  const replaced = (await readJson<Manifest>(join(dir, 'manifest.json'))) !== null
+  const before = await readJson<Manifest>(join(dir, 'manifest.json'))
+  const replaced = before !== null
 
   await mkdir(dir, { recursive: true, mode: DIR_MODE })
   for (const path of [dataDir, join(dataDir, 'projects'), dir]) await tighten(path, DIR_MODE)
@@ -650,6 +690,9 @@ export async function importProject(
     JSON.stringify(
       {
         schema_version: SCHEMA_VERSION,
+        // A newer export of a project you have already renamed is still the project you renamed.
+        // The sender's name goes back in `project`; what you called it here survives the replacement.
+        name: cleanName(before?.name ?? '') || null,
         project: name,
         // No path and no source directory: this project was never run on this machine, and
         // recording the sender's would invite something here to go looking for it.
@@ -690,5 +733,94 @@ export async function importProject(
     tasks: tasks.size,
     skipped,
     replaced,
+  }
+}
+
+/* Renaming and removing: the two things done to a project rather than to what is in it. ---------- */
+
+/**
+ * The store directory a slug names, or null when it names nothing this store may touch.
+ *
+ * `isSlug` already refuses anything with a separator in it, so this is the second of two checks
+ * rather than the only one. Both are here because the argument arrives from a URL and the operations
+ * below delete a directory: a path that resolves outside `projects/` is not one probez wrote, and
+ * cheap certainty is worth more than the line it costs.
+ */
+function ownDir(dataDir: string, slug: string): string | null {
+  if (!isSlug(slug)) return null
+  const root = resolve(join(dataDir, 'projects'))
+  const dir = resolve(storedDir(dataDir, slug))
+  return dir.startsWith(root + sep) ? dir : null
+}
+
+/**
+ * Give a project a name of your own.
+ *
+ * The name is a label and nothing else: it does not move the project, does not change its slug, and
+ * is not what any URL or file on disk is addressed by. `slugFor` hashes the path an agent ran in, so
+ * a project that could be renamed into a different directory could also be renamed on top of
+ * another one — this deliberately cannot.
+ *
+ * An empty name is a revert rather than an error: it clears the override and puts back the name the
+ * project's own path gives it.
+ */
+export async function renameProject(
+  dataDir: string,
+  slug: string,
+  name: string,
+): Promise<StoredProject | null> {
+  const dir = ownDir(dataDir, slug)
+  if (dir === null) return null
+  const file = join(dir, 'manifest.json')
+  const manifest = await readJson<Manifest>(file)
+  if (manifest === null) return null
+
+  const chosen = cleanName(name)
+  const next: Manifest = { ...manifest, name: chosen === '' ? null : chosen }
+  // Written beside and moved over, so an interrupted rename cannot leave a project without the
+  // manifest that is the only thing making it readable.
+  const target = `${file}.rename`
+  await writeFile(target, JSON.stringify(next, null, 2) + '\n', {
+    encoding: 'utf8',
+    mode: FILE_MODE,
+  })
+  await rename(target, file)
+  await tighten(file, FILE_MODE)
+  return asStored(slug, dir, next)
+}
+
+export interface RemoveResult {
+  slug: string
+  project: string
+  dir: string
+  /** What went with it, so the report can say what was actually given up. */
+  rounds: number
+  sessions: number
+}
+
+/**
+ * Remove a project from the store, and everything probez recorded for it.
+ *
+ * This is the one operation that destroys data, and there is no undo: `rounds.jsonl`, the session
+ * copies beside it, the analysis cache and the manifest all go. What is *not* touched is the agent's
+ * own session files — probez has only ever read those — so a project removed by mistake comes back
+ * with `probez collect`, minus any session the agent has since pruned. That gap is the reason this
+ * asks before it runs rather than after.
+ */
+export async function removeProject(
+  dataDir: string,
+  slug: string,
+): Promise<RemoveResult | null> {
+  const dir = ownDir(dataDir, slug)
+  if (dir === null) return null
+  const stored = await findStored(dataDir, slug)
+  if (stored === null) return null
+  await rm(dir, { recursive: true, force: true })
+  return {
+    slug,
+    project: stored.project,
+    dir,
+    rounds: stored.rounds,
+    sessions: stored.sessions,
   }
 }

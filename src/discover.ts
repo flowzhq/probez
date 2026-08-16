@@ -126,7 +126,9 @@ export function matchByName(projects: Project[], name: string): Project[] {
   return projects.filter((p) => projectName(p).toLowerCase() === wanted)
 }
 
+/** What to call a project: the name the store was given for it, or the one its path gives it. */
 export function projectName(project: Project): string {
+  if (project.name !== undefined && project.name !== '') return project.name
   return project.path ? basename(project.path) : project.key
 }
 

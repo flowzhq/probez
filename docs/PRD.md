@@ -292,15 +292,34 @@ that is slow to open and stale the moment it is written. A loopback server lazy-
 writes nothing at all. The cost is a socket, which is why `CONTRIBUTING.md` constraint 2 is now
 "no *outbound* network" and why five separate CI checks fence in what the listener may do.
 
-**Four actions, and the line they sit on.** A project can be **synced** — `collect` then `analyze`,
-on that project — and **exported**; the store's rates can be **saved**, and a project someone sent
-you can be **imported**. Sync makes exactly the writes those two commands make, through the same
-`analysisRecords` that builds the cache for `analyze`, so the file cannot come to mean two things
-depending on which wrote it last. Those three writes are all the view has, and each is a `POST` that
-refuses `GET`, because a URL that collects — or imports — when it is merely visited is a URL that can
-be put in an `<img>` tag. Export does not bend constraint 3: the server hands bytes to the browser
-and the browser writes them where the person said, which is also the only way a page can put a file
-on disk.
+**The actions, and the line they sit on.** A project can be **synced** — `collect` then `analyze`,
+on that project — **renamed**, **exported** and **deleted**; the store's rates can be **saved**, and
+a project someone sent you can be **imported**. Sync makes exactly the writes those two commands
+make, through the same `analysisRecords` that builds the cache for `analyze`, so the file cannot come
+to mean two things depending on which wrote it last. Those five writes are all the view has, and each
+is a `POST` that refuses `GET`, because a URL that collects — or imports, or deletes — when it is
+merely visited is a URL that can be put in an `<img>` tag. Export does not bend constraint 3: the
+server hands bytes to the browser and the browser writes them where the person said, which is also
+the only way a page can put a file on disk.
+
+**Rename is a label, and deliberately not a move.** A project's directory in the store is a hash of
+the path an agent ran in, which is what makes a collect idempotent and what keeps two repos sharing a
+basename apart. A name that decided a location would be a name that could be typed on top of another
+project, so the chosen name lives in the manifest beside the derived one rather than replacing it:
+`collect` recomputes `project` from the path every time it runs and carries `name` across, and
+clearing `name` is a revert rather than a project with no name. The CLI reads the same field, so a
+project renamed in the browser is the name `probez analyze <name>` answers to and the name
+`probez projects` prints — a name that meant two things in the two front ends would be worse than no
+rename at all.
+
+**Delete is the only thing in probez that destroys anything**, which is the whole of what makes it
+worth writing down. It is fenced twice — the slug must have the shape `slugFor` produces, and the
+path it resolves to must be under `<data-dir>/projects/` — so it cannot be aimed out of the store,
+and it removes nothing the agent wrote: constraint 3 says probez only ever *reads* the session files,
+and that holds on the way out as well as on the way in. So a collected project comes back with
+`probez collect`, minus whatever the agent has pruned since, and an imported one does not come back
+at all. The view says both of those in the panel that asks, because the difference between them is
+the difference between an inconvenience and a loss.
 
 **Import is the one input probez does not control.** Everything else it reads was written by the
 agent on this machine; an export was written by somebody else's, and arrives by whatever route

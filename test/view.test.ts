@@ -190,7 +190,7 @@ test('a request that arrived by another name is refused', async () => {
   }
 })
 
-test('sync is the only thing that is not a GET, and it cannot be one', async () => {
+test('the routes that write are the only ones that are not GETs, and none of them can be one', async () => {
   const { dataDir, slug } = makeStore()
   const server = await serving(dataDir)
   try {
@@ -200,17 +200,145 @@ test('sync is the only thing that is not a GET, and it cannot be one', async () 
       assert.equal(response.headers.get('allow'), 'GET')
     }
 
-    // Collecting on GET would mean a URL that runs a collection when it is merely visited, which
-    // is a URL that can be put in an <img> tag on any page you happen to open.
-    const asGet = await get(server, `/api/projects/${slug}/sync?t=${server.token}`)
-    assert.equal(asGet.status, 405)
-    assert.equal(asGet.headers.get('allow'), 'POST')
+    // Collecting, renaming or deleting on GET would mean a URL that does it when merely visited,
+    // which is a URL that can be put in an <img> tag on any page you happen to open. Deleting is
+    // the one where that would cost something nobody can put back.
+    for (const verb of ['sync', 'rename', 'delete']) {
+      const asGet = await get(server, `/api/projects/${slug}/${verb}?t=${server.token}`)
+      assert.equal(asGet.status, 405, `GET ${verb}`)
+      assert.equal(asGet.headers.get('allow'), 'POST', `GET ${verb}`)
 
-    for (const method of ['PUT', 'DELETE', 'PATCH']) {
-      const response = await get(server, `/api/projects/${slug}/sync?t=${server.token}`, { method })
-      assert.equal(response.status, 405, `${method} should not sync`)
-      assert.equal(response.headers.get('allow'), 'GET, POST')
+      for (const method of ['PUT', 'DELETE', 'PATCH']) {
+        const response = await get(server, `/api/projects/${slug}/${verb}?t=${server.token}`, {
+          method,
+        })
+        assert.equal(response.status, 405, `${method} should not ${verb}`)
+        assert.equal(response.headers.get('allow'), 'GET, POST')
+      }
     }
+  } finally {
+    await server.close()
+  }
+  // Nothing above was accepted, so the project it was all aimed at is still there.
+  assert.ok(existsSync(join(dataDir, 'projects', slug, 'rounds.jsonl')))
+})
+
+test('renaming and deleting need the token, and without it write nothing', async () => {
+  const { dataDir, slug } = makeStore()
+  const before = snapshot(dataDir)
+  const server = await serving(dataDir)
+  try {
+    const renamed = await get(server, `/api/projects/${slug}/rename`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'not mine to name' }),
+    })
+    assert.equal(renamed.status, 403)
+    const removed = await get(server, `/api/projects/${slug}/delete`, { method: 'POST' })
+    assert.equal(removed.status, 403)
+  } finally {
+    await server.close()
+  }
+  assert.deepEqual(snapshot(dataDir), before, 'a refused rename or delete must not have written')
+})
+
+test('a rename is a label: the project answers to it, and nothing moved', async () => {
+  const { dataDir, claudeDir, slug } = makeStore()
+  const server = await serving(dataDir, claudeDir)
+  const rename = (name: string): Promise<Response> =>
+    get(server, `/api/projects/${slug}/rename`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-probez-token': server.token },
+      body: JSON.stringify({ name }),
+    })
+
+  try {
+    const result = await body(rename('  Someone   elses  '))
+    assert.equal(result.project.project, 'Someone elses')
+    assert.equal(result.project.renamed, true)
+    // The store directory is a hash of the path an agent ran in. A name that moved it would be a
+    // name that could be typed on top of another project.
+    assert.equal(result.project.slug, slug)
+    assert.ok(existsSync(join(dataDir, 'projects', slug, 'rounds.jsonl')))
+
+    const listed = await body(withToken(server, '/api/projects'))
+    assert.equal(listed.projects[0].project, 'Someone elses')
+
+    // `collect` derives the name from the directory every time it runs. A rename that a sync undid
+    // would last until the next time anyone pressed the button beside it.
+    await get(server, `/api/projects/${slug}/sync`, {
+      method: 'POST',
+      headers: { 'x-probez-token': server.token },
+    })
+    const after = await body(withToken(server, `/api/projects/${slug}`))
+    assert.equal(after.project.project, 'Someone elses')
+
+    // Clearing the field is a revert rather than a project with no name.
+    const reverted = await body(rename('   '))
+    assert.equal(reverted.project.renamed, false)
+    assert.notEqual(reverted.project.project, '')
+    assert.equal(reverted.project.project, JSON.parse(
+      readFileSync(join(dataDir, 'projects', slug, 'manifest.json'), 'utf8'),
+    ).project)
+
+    assert.equal((await withToken(server, '/api/projects/nothing-here/rename')).status, 405)
+  } finally {
+    await server.close()
+  }
+})
+
+test('deleting takes the project and everything under it, and nothing else', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const result = await body(
+      get(server, `/api/projects/${slug}/delete`, {
+        method: 'POST',
+        headers: { 'x-probez-token': server.token },
+      }),
+    )
+    // It reports what went, because "deleted" and "deleted 5 rounds" are different sentences and
+    // only the second one lets you notice you deleted the wrong project.
+    assert.equal(result.rounds, 5)
+    assert.equal(result.sessions, 1)
+
+    // The whole directory: rounds, the session copies beside them, the manifest.
+    assert.equal(existsSync(join(dataDir, 'projects', slug)), false)
+    // And the store around it is still a store.
+    assert.equal(existsSync(join(dataDir, 'projects')), true)
+
+    assert.equal((await withToken(server, `/api/projects/${slug}`)).status, 404)
+    const listed = await body(withToken(server, '/api/projects'))
+    assert.equal(listed.projects.length, 0)
+
+    // Deleting what is already gone is a 404, not a second delete.
+    const again = await get(server, `/api/projects/${slug}/delete`, {
+      method: 'POST',
+      headers: { 'x-probez-token': server.token },
+    })
+    assert.equal(again.status, 404)
+  } finally {
+    await server.close()
+  }
+})
+
+test('a delete cannot be aimed out of the store', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    // A slug names a directory and arrives from a URL, so a name that climbs is refused before it
+    // is resolved rather than after. Which refusal it gets depends on where it stops being a path
+    // this server has — `.` and `..` are normalised away by the URL parser and land on no route at
+    // all — so what is asserted is that none of them is served, and that the store is untouched.
+    for (const name of ['..%2f..', '.', '..', '%2e%2e', 'projects', '.probez']) {
+      const response = await get(server, `/api/projects/${name}/delete`, {
+        method: 'POST',
+        headers: { 'x-probez-token': server.token },
+      })
+      assert.notEqual(response.status, 200, name)
+    }
+    assert.ok(existsSync(join(dataDir, 'projects', slug, 'rounds.jsonl')))
+    assert.ok(existsSync(dataDir))
   } finally {
     await server.close()
   }

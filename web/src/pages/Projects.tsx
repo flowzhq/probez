@@ -21,6 +21,8 @@ import type { ReactElement } from 'react'
 export function Projects(): ReactElement {
   const [read, setRead] = useState(0)
   const { data, error, loading } = useData(() => api.projects(), [read])
+  // Syncing, renaming, deleting and importing all change what this list is. One list, one re-read.
+  const reread = (): void => setRead(read + 1)
 
   return (
     <>
@@ -36,7 +38,7 @@ export function Projects(): ReactElement {
               <h1>Projects</h1>
               <span className="muted mono">{data.data_dir}</span>
               <span className="spacer" style={{ flex: 1 }} />
-              <Import onImported={() => setRead(read + 1)} />
+              <Import onImported={reread} />
             </div>
             <Facts
               items={[
@@ -58,7 +60,13 @@ export function Projects(): ReactElement {
                       <th className="r">Tasks</th>
                       <th className="r">Rounds</th>
                       <TokenHeaders />
-                      <th className="r">Last</th>
+                      {/* Named for what it is, because the project page states two dates about a
+                          project and only one of them is this one. The other is when probez last
+                          read the sessions, which is a fact about probez rather than about the
+                          work — this column has always been the work. */}
+                      <th className="r" title="When the most recent round in this project ran">
+                        Last activity
+                      </th>
                       <th />
                     </tr>
                   </thead>
@@ -73,6 +81,13 @@ export function Projects(): ReactElement {
                           <a {...linkProps(href.project(project.slug))}>
                             <strong>{project.project}</strong>
                           </a>
+                          {/* An import was measured on somebody else's machine. The row carries its
+                              numbers with no other sign of that, so the row says it. */}
+                          {project.imported_at === null ? null : (
+                            <span className="mark" title="Arrived as a file someone exported">
+                              imported
+                            </span>
+                          )}
                           <div className="muted mono clip" style={{ fontSize: 11 }}>
                             {project.path ?? project.key}
                           </div>
@@ -91,7 +106,16 @@ export function Projects(): ReactElement {
                         <TokenCells of={project} />
                         <td className="r muted nowrap">{ago(project.last_ts)}</td>
                         <td className="r">
-                          <Actions slug={project.slug} compact onSynced={() => setRead(read + 1)} />
+                          <Actions
+                            slug={project.slug}
+                            project={project.project}
+                            renamed={project.renamed}
+                            rounds={project.rounds}
+                            compact
+                            onSynced={reread}
+                            onRenamed={reread}
+                            onRemoved={reread}
+                          />
                         </td>
                       </tr>
                     ))}

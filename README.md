@@ -84,9 +84,16 @@ Three things worth knowing:
 **Settings** holds the token rates every cost is computed from — one row per model, five rates
 each, at published list prices and yours to change. Stored in `~/.probez/pricing.json`, owner-only.
 
-Each project carries a **⋮** menu: *Sync* runs `collect` then `analyze` for that project, and
-*Export* hands its rounds or a full bundle to your browser to save. **Import** on the projects page
-reads a file someone sent you — which is also why the view opens on an empty store.
+Each project carries a **⋮** menu, on its own page and on every row of the projects list. *Sync*
+runs `collect` then `analyze` for that project. *Rename* gives it a name of your own — a label, on
+this machine, that the CLI answers to as well; nothing moves, since a project's directory in the
+store is a hash of the path an agent ran in, and clearing the field puts the derived name back.
+*Export* hands its rounds or a full bundle to your browser to save. *Delete* removes the project and
+everything probez recorded for it, after asking; the agent's own session files are not touched, so a
+collected project comes back with `probez collect` minus whatever the agent has since pruned, and an
+imported one does not come back at all. **Import** on the projects page reads a file someone sent
+you — which is also why the view opens on an empty store, and why a project that arrived that way is
+marked `imported` in the list.
 
 ## The CLI
 

@@ -96,7 +96,10 @@ export interface Analysis {
 export interface StoredProject {
   slug: string
   dir: string
+  /** What to call it: the name someone chose, or the one its path gave it. */
   project: string
+  /** Whether that name was chosen here, which is what makes the rename revertible. */
+  renamed: boolean
   path: string | null
   key: string
   sessions: number
@@ -353,6 +356,19 @@ export interface ImportResult {
   replaced: boolean
 }
 
+export interface RenameResult {
+  project: StoredProject
+}
+
+/** What was given up, so the report can name it rather than tick. */
+export interface RemoveResult {
+  slug: string
+  project: string
+  dir: string
+  rounds: number
+  sessions: number
+}
+
 export interface SyncResult {
   slug: string
   project: string
@@ -453,6 +469,9 @@ export async function exportProject(
 
 export const api = {
   sync: (slug: string) => post<SyncResult>(`/projects/${slug}/sync`),
+  rename: (slug: string, name: string) =>
+    post<RenameResult>(`/projects/${slug}/rename`, { name }),
+  remove: (slug: string) => post<RemoveResult>(`/projects/${slug}/delete`),
   projects: () => get<ProjectsPayload>('/projects'),
   project: (slug: string) => get<ProjectPayload>(`/projects/${slug}`),
   session: (slug: string, session: string) =>

@@ -6,15 +6,20 @@ import type { ExportFormat } from '../api'
 import { count, tokens } from '../format'
 
 /**
- * The two things you can do to a project rather than read about it.
+ * The things you can do to a project rather than read about it.
  *
- * Both live behind one `⋮`. Neither is what anyone opened the page for — you come to read what the
- * agent did, not to collect — and a menu keeps two irreversible-ish verbs out of the way of that.
+ * All of them live behind one `⋮`. None is what anyone opened the page for — you come to read what
+ * the agent did, not to collect or tidy up — and a menu keeps five verbs, two of them irreversible,
+ * out of the way of that.
  *
- * **Sync** is `collect` then `analyze`, on this project, and it is one of two writes the view can
- * make. It reports what it did in the same words the CLI would — new rounds, sessions read — rather
- * than flashing a tick, because "synced" and "found nothing new" are different outcomes and the
- * second one is the common one.
+ * **Sync** is `collect` then `analyze`, on this project. It reports what it did in the same words
+ * the CLI would — new rounds, sessions read — rather than flashing a tick, because "synced" and
+ * "found nothing new" are different outcomes and the second one is the common one.
+ *
+ * **Rename** sets a label and only a label. A project's directory in the store is a hash of the path
+ * an agent ran in, and renaming deliberately does not move it: a name that decided a location would
+ * be a name that could be typed on top of another project. Clearing the field puts back the name the
+ * path gives it.
  *
  * **Export** hands the data to the browser to save. probez writes only under its own data
  * directory, so it never puts a file in the folder you choose; it gives the bytes to the page and
@@ -24,7 +29,12 @@ import { count, tokens } from '../format'
  *
  * Whatever comes out is unredacted — prompts, file paths, shell commands, exactly as typed.
  *
- * What they *did* is still written out in words: an icon can say "sync" but it cannot say "already
+ * **Delete** is the only thing here that destroys anything, and it destroys the whole of what probez
+ * recorded for one project. It asks first, in a panel that says what goes and what does not: the
+ * agent's own session files are untouched, so a collected project comes back with `probez collect`
+ * minus whatever the agent has since pruned. An imported one does not come back at all.
+ *
+ * What each one *did* is written out in words: an icon can say "sync" but it cannot say "already
  * up to date · 442 rounds", and that sentence is the point of pressing it.
  */
 /** One glyph, drawn the same way as the theme icons so the header reads as one set. */
@@ -53,21 +63,39 @@ function Icon({
   )
 }
 
+/** Which panel the `⋮` is showing: the list of verbs, or the one thing a verb needs before it runs. */
+type Panel = 'menu' | 'rename' | 'remove'
+
 export function Actions({
   slug,
+  project,
+  renamed = false,
+  rounds = null,
   onSynced,
+  onRenamed,
+  onRemoved,
   compact = false,
 }: {
   slug: string
+  /** What it is called now, which is what the rename field starts at. */
+  project: string
+  /** Whether that name was chosen rather than derived, so the panel can offer to put the other back. */
+  renamed?: boolean
+  /** What deleting would cost, when the page knows. */
+  rounds?: number | null
   /** Called after a sync that changed something, so the page behind can re-read. */
   onSynced?: () => void
+  onRenamed?: (name: string) => void
+  onRemoved?: () => void
   compact?: boolean
 }): ReactElement {
-  const [busy, setBusy] = useState<'sync' | ExportFormat | null>(null)
+  const [busy, setBusy] = useState<'sync' | 'rename' | 'remove' | ExportFormat | null>(null)
   const [said, setSaid] = useState<string | null>(null)
   const [bad, setBad] = useState(false)
-  const [menu, setMenu] = useState(false)
+  const [panel, setPanel] = useState<Panel | null>(null)
+  const [name, setName] = useState(project)
   const box = useRef<HTMLDivElement>(null)
+  const field = useRef<HTMLInputElement>(null)
 
   // A message about what just happened is worth reading and not worth keeping.
   useEffect(() => {
@@ -77,13 +105,31 @@ export function Actions({
   }, [said])
 
   useEffect(() => {
-    if (!menu) return
+    if (panel === null) return
     const close = (event: MouseEvent): void => {
-      if (box.current !== null && !box.current.contains(event.target as Node)) setMenu(false)
+      if (box.current !== null && !box.current.contains(event.target as Node)) setPanel(null)
+    }
+    // Escape closes because two of these panels are questions, and a question you opened by accident
+    // should be answerable with the key that means "no" everywhere else.
+    const key = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setPanel(null)
     }
     window.addEventListener('mousedown', close)
-    return () => window.removeEventListener('mousedown', close)
-  }, [menu])
+    window.addEventListener('keydown', key)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', key)
+    }
+  }, [panel])
+
+  // Opening the field on a name that is not the project's current one would be a rename waiting to
+  // happen, so it is reset every time rather than kept between openings.
+  useEffect(() => {
+    if (panel !== 'rename') return
+    setName(project)
+    field.current?.focus()
+    field.current?.select()
+  }, [panel, project])
 
   const report = (message: string, failed = false): void => {
     setBad(failed)
@@ -115,7 +161,7 @@ export function Actions({
   }
 
   const save = async (format: ExportFormat): Promise<void> => {
-    setMenu(false)
+    setPanel(null)
     setBusy(format)
     setSaid(null)
     try {
@@ -132,8 +178,43 @@ export function Actions({
     }
   }
 
+  const rename = async (wanted: string): Promise<void> => {
+    setPanel(null)
+    setBusy('rename')
+    setSaid(null)
+    try {
+      const result = await api.rename(slug, wanted)
+      report(
+        result.project.renamed
+          ? `renamed to ${result.project.project}`
+          : `name cleared · back to ${result.project.project}`,
+      )
+      onRenamed?.(result.project.project)
+    } catch (problem) {
+      report((problem as Error).message, true)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const remove = async (): Promise<void> => {
+    setPanel(null)
+    setBusy('remove')
+    setSaid(null)
+    try {
+      const result = await api.remove(slug)
+      report(`deleted ${result.project} · ${count(result.rounds)} rounds gone`)
+      onRemoved?.()
+    } catch (problem) {
+      report((problem as Error).message, true)
+      setBusy(null)
+    }
+    // Deliberately not cleared on success: the row this sits in is about to be taken away, and a
+    // button that becomes pressable again in the meantime is a second delete waiting to be sent.
+  }
+
   const stop = (event: { stopPropagation: () => void }): void => event.stopPropagation()
-  const exporting = busy === 'jsonl' || busy === 'json'
+  const show = (next: Panel): void => setPanel(panel === next ? null : next)
 
   return (
     <div
@@ -145,9 +226,9 @@ export function Actions({
       <div className="menu-anchor">
         <button
           className="action icon"
-          onClick={() => setMenu(!menu)}
+          onClick={() => show('menu')}
           disabled={busy !== null}
-          aria-expanded={menu}
+          aria-expanded={panel !== null}
           aria-haspopup="menu"
           aria-label={busy === null ? 'Actions for this project' : 'Working'}
         >
@@ -166,17 +247,21 @@ export function Actions({
             )}
           </Icon>
         </button>
-        {menu ? (
+        {panel === 'menu' ? (
           <div className="menu" role="menu">
             <button
               role="menuitem"
               onClick={() => {
-                setMenu(false)
+                setPanel(null)
                 void sync()
               }}
             >
               <strong>Sync</strong>
               <span className="menu-note">collect anything new, then re-analyse</span>
+            </button>
+            <button role="menuitem" onClick={() => setPanel('rename')}>
+              <strong>Rename…</strong>
+              <span className="menu-note">what to call it here; nothing moves</span>
             </button>
             <div className="menu-rule" role="separator" />
             <button role="menuitem" onClick={() => void save('jsonl')}>
@@ -187,6 +272,71 @@ export function Actions({
               <strong>Export bundle</strong> <span className="mono muted">.json</span>
               <span className="menu-note">manifest, analysis and rounds in one document</span>
             </button>
+            <div className="menu-rule" role="separator" />
+            <button className="grave" role="menuitem" onClick={() => setPanel('remove')}>
+              <strong>Delete…</strong>
+              <span className="menu-note">remove this project from the store</span>
+            </button>
+          </div>
+        ) : null}
+
+        {panel === 'rename' ? (
+          <form
+            className="menu menu-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void rename(name)
+            }}
+          >
+            <label className="menu-label" htmlFor={`rename-${slug}`}>
+              Call this project
+            </label>
+            <input
+              id={`rename-${slug}`}
+              ref={field}
+              className="menu-field"
+              value={name}
+              maxLength={80}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => setName(event.target.value)}
+            />
+            <p className="menu-note">
+              {renamed
+                ? 'A name of your own. Clear it to go back to the one its path gives it.'
+                : 'A label for this machine. The store directory and every link keep their names.'}
+            </p>
+            <div className="menu-row">
+              <button type="button" className="ghost" onClick={() => setPanel(null)}>
+                Cancel
+              </button>
+              <button type="submit" className="save" disabled={name.trim() === project}>
+                Rename
+              </button>
+            </div>
+          </form>
+        ) : null}
+
+        {panel === 'remove' ? (
+          <div className="menu menu-form" role="dialog" aria-label={`Delete ${project}`}>
+            <strong>Delete {project}?</strong>
+            <p className="menu-note">
+              {rounds === null ? 'Every round' : `All ${count(rounds)} rounds`} probez recorded for
+              it, the session copies beside them and the analysis go. There is no undo.
+            </p>
+            <p className="menu-note">
+              The agent's own session files are not touched — probez has only ever read those — so{' '}
+              <span className="mono">probez collect</span> brings back whatever the agent still has.
+              An import does not come back: the file it arrived as is the only other copy.
+            </p>
+            <div className="menu-row">
+              <button type="button" className="ghost" onClick={() => setPanel(null)}>
+                Cancel
+              </button>
+              <button type="button" className="save grave" onClick={() => void remove()}>
+                Delete
+              </button>
+            </div>
           </div>
         ) : null}
       </div>
