@@ -13,9 +13,10 @@ import {
 } from '../src/classify.js'
 import type { CallContext, Label } from '../src/classify.js'
 import type { Round, ToolCall } from '../src/types.js'
+import { ROUND_DEFAULTS, TOOL_DEFAULTS } from './support.js'
 
 function tool(name: string, input: unknown, extra: Partial<ToolCall> = {}): ToolCall {
-  return { name, input, result_chars: 0, is_error: false, ms: 0, ...extra }
+  return { ...TOOL_DEFAULTS, name, input, result_chars: 0, is_error: false, ms: 0, ...extra }
 }
 
 function bash(command: string): ToolCall {
@@ -23,21 +24,7 @@ function bash(command: string): ToolCall {
 }
 
 function round(partial: Partial<Round> & { session: string; round: number }): Round {
-  return {
-    task: 1,
-    agent: 'main',
-    id: `msg_${partial.round}`,
-    ts: null,
-    ms: null,
-    model: null,
-    in_tokens: 0,
-    out_tokens: 0,
-    user_text: '',
-    text: '',
-    thinking_chars: 0,
-    tools: [],
-    ...partial,
-  }
+  return { ...ROUND_DEFAULTS, id: `msg_${partial.round}`, ...partial }
 }
 
 /** `category/sub` for each label, which is what the tables show. */

@@ -322,7 +322,12 @@ function RoundCell({
               : `${round.dominant.short} ${percent(round.dominant.share)}`}
             <br />
             <span className="tip-key">cost </span>
-            {duration(round.ms)} · {tokens(round.in_tokens)} in · {tokens(round.out_tokens)} out
+            {duration(workOf(round))} · {tokens(round.in_tokens)} in · {tokens(round.out_tokens)} out
+            <br />
+            <span className="tip-key">of that input </span>
+            {round.in_tokens === 0
+              ? 'none'
+              : `${percent(round.in_cache_read / round.in_tokens, 0)} reused from cache`}
             <br />
             <span className="tip-key">tools </span>
             {round.tools === 0 ? 'none' : round.tools}
@@ -464,11 +469,16 @@ function positions(
     return { x: (at) => at * cell, w: () => cell, domain: [0, visible.length] }
   }
 
-  const starts = visible.map((round) => (round.ts === null ? NaN : Date.parse(round.ts)))
+  // A round runs from the input that prompted it to its last output. `ts` is the first record it
+  // wrote, and `ms` spans only those records, so the prompt sits `gen_ms - ms` *before* `ts`. Laying
+  // the bar out from there is what makes these widths add up to the working time printed above them.
+  const starts = visible.map((round) =>
+    round.ts === null ? NaN : Date.parse(round.ts) + (round.ms ?? 0) - workOf(round),
+  )
   const first = Math.min(...starts.filter((value) => !Number.isNaN(value)))
   const lastAt = starts.length - 1
   const last = Math.max(
-    ...starts.map((value, at) => (Number.isNaN(value) ? -Infinity : value + (visible[at]!.ms ?? 0))),
+    ...starts.map((value, at) => (Number.isNaN(value) ? -Infinity : value + workOf(visible[at]!))),
   )
   const span = Math.max(1, last - first)
   const scale = scaleLinear({ domain: [first, last], range: [0, width] })
@@ -480,10 +490,18 @@ function positions(
     w: (at) => {
       const start = starts[at]
       if (Number.isNaN(start ?? NaN)) return 2
-      return Math.max(2, scale(start! + (visible[at]!.ms ?? 0)) - scale(start!))
+      return Math.max(2, scale(start! + workOf(visible[at]!)) - scale(start!))
     },
     domain: [first, first + span],
   }
+}
+
+/**
+ * How long a round worked: the model's own time, falling back to the span of its records when the
+ * round had no input event to measure from. This is the same number `span.active_ms` totals.
+ */
+function workOf(round: TraceRound): number {
+  return round.gen_ms ?? round.ms ?? 0
 }
 
 /** The runs overlapping a visible range, clipped to it. */

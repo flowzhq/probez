@@ -10,6 +10,7 @@ import type { MouseEvent } from 'react'
  */
 export type Route =
   | { name: 'projects' }
+  | { name: 'settings' }
   | { name: 'project'; slug: string }
   | { name: 'session'; slug: string; session: string }
   | { name: 'task'; slug: string; session: string; task: number; round: number | null }
@@ -18,6 +19,7 @@ export type Route =
 export function parse(pathname: string, search: string): Route {
   const parts = pathname.split('/').filter((part) => part !== '')
   if (parts.length === 0) return { name: 'projects' }
+  if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
 
   const [p, slug, s, session, t, task] = parts
   if (p !== 'p' || slug === undefined) return { name: 'missing', path: pathname }
@@ -41,6 +43,7 @@ export function parse(pathname: string, search: string): Route {
 
 export const href = {
   projects: () => '/',
+  settings: () => '/settings',
   project: (slug: string) => `/p/${slug}`,
   session: (slug: string, session: string) => `/p/${slug}/s/${session}`,
   task: (slug: string, session: string, task: number, round?: number) =>

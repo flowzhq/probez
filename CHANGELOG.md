@@ -6,7 +6,127 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
-## [Unreleased]
+## [0.3.0] - 2026-08-16
+
+The record. 0.2 said what the work was; this says what it cost, how long it really took, and when it
+failed without saying so.
+
+### Added
+
+- **Input tokens are kept as three numbers, not one.** `in_uncached`, `in_cache_write` and
+  `in_cache_read` sit beside `in_tokens`, which still holds their sum. They are priced roughly 1×,
+  1.25× and 0.1×, and on a store of 25,136 rounds 98.2% of what probez called "input" was cache
+  reads — the figure weighting every percentage `analyze` prints was dominated by its cheapest
+  component. `collect` and the round inspector now show the split.
+- **`gen_ms` and `wait_ms` separate the model's time from the person's.** `ms` spans the records a
+  round wrote, which misses the wait before the model said anything; `gen_ms` runs from the input
+  that prompted the round. On one 442-round project the two are 0.66h and 1.82h. `wait_ms` is the
+  time a round spent waiting on a person, and is null unless one was waited on.
+- **`events[]`, the round's moments in file order** — `user_message`, `tool_result`, `reasoning`,
+  `text`, `tool_call`, each with a timestamp, and the tool ones carrying the call id. This is what
+  makes `gen_ms` re-derivable and a new timing question answerable without re-collecting.
+- **What a tool actually did, beside what the harness said.** `is_error` reports that a call was
+  accepted, not that it worked — a Bash call whose suite fails comes back `false`. `stderr_chars`
+  and `interrupted` come from the raw result, and surface 471 failed calls across this machine's
+  store that were recorded as successes. There is no exit code in the source records at all; these
+  two are the whole of the real signal, which corrects an assumption in the v0.2 write-up.
+- **`tools[].patch`** — the files, lines added and lines removed of an edit, folded from the result's
+  structured patch. This is what a later version needs to attribute work to the files it changed
+  rather than to the directory the agent was launched in.
+- **`tools[].id`, `emitted_at`, `result_at` and `input_chars`.** A call now carries the id its result
+  is matched on, both ends of its wall time, and the size it was before truncation, so a cut input
+  still says how large it really was.
+- **`mcp_server`, `mcp_tool` and `skill`**, read from the harness's own attribution. These name work
+  a built-in tool table cannot place: on this machine they cover 17% of rounds, which is most of the
+  16% of weight 0.2 reported as unclassified. The taxonomy does not spend them yet.
+
+- **The view spends all of it.** Every level now carries the token split: a project, session and
+  task each say how much of their input was reused from cache, with the exact three-way breakdown on
+  hover, and the round inspector says it per round. "Where agent work goes" gains an **In** column,
+  so a category that reads as a small share of rounds but a large share of context is visible as
+  one; input is charged to work the same way rounds are, splitting across what a round did. Sessions
+  and tasks gain **In** and **Lines**, and a task says how long it spent waiting on a person when it
+  waited at all. The tools table gains a **Quiet** column — calls that wrote to stderr or were cut
+  short while the harness reported no error. On one project Bash shows 4 errors against 15 quiet.
+- **Every table breaks tokens out five ways** — Input, Write 5m, Write 1h, Read, Output — under the
+  same names the Settings screen prices them by, so a column and a rate are visibly the same thing.
+  It replaces the single `In` column, and it makes the shape of agent traffic hard to miss: on one
+  project the work table reads 800 input against 63.4M read.
+- **Sync and Export fold into one `⋮`**, on the project page and in the projects list alike — nobody
+  opens either to sync, they open them to read what the agent did. The menu keeps the sentence that
+  says what happened: an icon can say "sync", but only words can say *already up to date · 442
+  rounds*. In a table row that sentence floats under the button rather than wrapping inside the
+  cell, which used to re-flow every column while you were reading it.
+- **Settings is a gear** in the header, beside the theme controls and sized like them — eight square
+  teeth on a ring, deliberately not the rays-from-a-dot shape the light theme uses two controls
+  along.
+- **Cost in the header, and a mark on the words that need one.** A project, session and task each
+  say what they cost — the whole span, not just the rounds that called a tool, so it is larger than
+  the figure the shares divide and the coverage line still says which is which. `reused` and `cost`
+  carry an ⓘ, because "reused" is a share of prompt-cache reads and nobody should be expected to
+  infer that from six letters; a tooltip nothing points at is a tooltip nobody finds. It uses the
+  same tooltip the charts do rather than the browser's `title`, which waits about a second, shows a
+  bare `?` cursor in the meantime, and never appears at all for a keyboard user.
+
+- **Token pricing, and a Settings screen to set it.** `probez view` gains **Settings**: one row per
+  model, five rates each, in dollars per million tokens. They ship at the published list prices and
+  are editable, because list prices move, negotiated rates exist, and a model probez has never heard
+  of should not be silently free. Saved to `~/.probez/pricing.json`, owner-only, never sent
+  anywhere; `POST /api/pricing` is the second and last route the view can write with, and every
+  field is checked as a non-negative number before anything is stored.
+- **Five rates, not four, because a cache write has two prices.** A 5-minute cache entry is billed
+  at 1.25× the input rate and a 1-hour entry at 2×. That is not a rounding difference: on this
+  machine's store 99.9% of cache writes are the 1-hour kind, so pricing them all at 1.25× would
+  understate the cache-write bill by more than a third. `in_cache_write` now splits into
+  `in_cache_write_5m` and `in_cache_write_1h`, read from `usage.cache_creation`.
+
+- **Send a project to someone, and read one they sent you.** `probez export <project>` writes the
+  store's rounds — `--bundle` for the one-document `.json` with the manifest and analysis, plain
+  `.jsonl` otherwise — to stdout or to `--out`. `probez import <file>` reads either back, and so
+  does **Import** on the projects page, which is also why `probez view` no longer refuses to open on
+  an empty store: importing is how a store with nothing in it gets its first project. An import is
+  someone else's work and is treated as such — nothing in it is executed, every field is checked and
+  bounded, control characters are stripped from anything that reaches a terminal, the token totals
+  are recomputed from their parts rather than believed, and where it lands is a hash of the sender's
+  project identity rather than anything the file says. Re-importing replaces; the same project name
+  from a different sender sits beside yours instead of over it. An export written before the token
+  split is refused rather than priced at zero. See SECURITY.md.
+
+### Changed
+
+- **A share is now a share of money, not of rounds**, under "where agent work goes" in the view and
+  in `probez analyze` alike. `ROUNDS` still says how much of the work a category was; `SHARE` says
+  how much of the bill, and a new `COST` column says the amount. The two disagree, which is the
+  point — a round of reconstruction reading a large file and a round of implementation writing one
+  line are one round each and nothing like one dollar each. Cost is computed per round from its own
+  model's rates and split across that round's work on the same weights as the rounds themselves.
+  The coverage line names the denominator (`Shares are of the $57.90 they cost`) and names what
+  sits outside it, now including any round whose model has no rate — reported rather than counted
+  as free.
+- **"Working" now means the time the model spent generating**, in the view and the CLI alike. It
+  was the span of the records a round wrote, which misses the wait before the model said anything —
+  most of a round. The trace's by-time lane lays each round out from the input that prompted it for
+  the same reason, so the bars finally add up to the total printed above them. Tool execution is
+  outside both, since a tool's result arrives as the next round's input. Task times move a long way:
+  one task in the README goes from 863ms to 5.0s, another from 4.9m to 16.3m.
+- **A store from an older schema is rebuilt on the next `collect`.** It could not be repaired by
+  appending: the rounds already in the file are the old shape and the `session+id` filter dropped
+  every replacement as a duplicate, so `--full` left a store exactly as it found it. The rebuild
+  reads the session copies the store already keeps, including sessions the agent has since pruned,
+  writes through a temporary file so an interrupted run leaves the old store intact, and drops the
+  `analysis.jsonl` computed from the rounds it replaced. Nothing leaves the machine and no round is
+  lost, but on a large store it is not instant.
+- **A project name can be a directory anywhere it is a name.** `probez export ~/Dev/app` and
+  `probez analyze ~/Dev/app` resolve the same way `probez collect` always has, matching the path the
+  store recorded. And a machine with no agent directory at all is no longer a dead end: if the store
+  has projects in it, the read commands work — which is the machine of somebody who was sent a file
+  and has never run an agent.
+- **The README is half its old length**, view first and CLI second, with real screenshots of a
+  project and a session in place of the ASCII sketch of the trace. Badges are centred under the
+  logo. Every `$ probez` block in it is still verbatim output.
+- `rounds.jsonl` is about 60% larger for the fields above, measured by rebuilding a 22-project,
+  14,000-round store: 20.3 MB to 32.4 MB. It remains roughly a tenth of the session copies beside
+  it, which are unchanged.
 
 ## [0.2.0] - 2026-08-15
 
@@ -194,7 +314,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/flowzhq/probez/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/flowzhq/probez/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/flowzhq/probez/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/flowzhq/probez/commits/v0.1.0

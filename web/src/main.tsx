@@ -6,6 +6,7 @@ import { Chrome, Problem } from './components/Chrome'
 import { Project } from './pages/Project'
 import { Projects } from './pages/Projects'
 import { Session } from './pages/Session'
+import { Settings } from './pages/Settings'
 import { Task } from './pages/Task'
 import { useRoute } from './router'
 import './theme.css'
@@ -19,6 +20,8 @@ function App(): ReactElement {
       <Defs />
       {route.name === 'projects' ? (
         <Projects />
+      ) : route.name === 'settings' ? (
+        <Settings />
       ) : route.name === 'project' ? (
         <Project key={route.slug} slug={route.slug} />
       ) : route.name === 'session' ? (

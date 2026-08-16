@@ -15,8 +15,26 @@ import {
   workIndex,
 } from './inspect.js'
 import type { Analysis, Dominant, RoundLabel, SessionRow, TaskRow, ToolRow, Trace } from './inspect.js'
-import { collectProject, findStored, listStored, readRoundsIn, slugFor, writeAnalysis } from './store.js'
-import type { CollectResult, StoredProject } from './store.js'
+import {
+  collectProject,
+  findStored,
+  importProject,
+  listStored,
+  readRoundsIn,
+  slugFor,
+  writeAnalysis,
+} from './store.js'
+import type { CollectResult, ImportResult, StoredProject } from './store.js'
+import { CONTROL, ImportError, parseExport } from './import.js'
+import {
+  costOf,
+  defaultPricing,
+  PRICING_VERSION,
+  pricingFile,
+  readPricing,
+  writePricing,
+} from './pricing.js'
+import type { Pricing, Rates } from './pricing.js'
 import type { Round } from './types.js'
 
 /**
@@ -36,7 +54,7 @@ export interface ViewSession extends SessionRow {
   model: string | null
   /** Wall clock across the session, gaps included. */
   elapsed_ms: number
-  /** Time the rounds themselves took. */
+  /** Time the model itself was generating, which `ms` undercounts badly. */
   active_ms: number
   work: Dominant | null
 }
@@ -64,6 +82,15 @@ export interface ProjectPayload {
   project: StoredProject
   tool_calls: number
   errors: number
+  /**
+   * What the whole project cost, every round of it. Larger than `analysis.coverage.cost`, which
+   * counts only the rounds that called a tool — that is the denominator of the shares, this is the
+   * bill. Computed at read time, because rates change and a figure baked into the manifest at
+   * collect time would be quietly wrong the moment one did.
+   */
+  cost: number
+  /** Rounds whose model has no rate, and so are missing from `cost`. */
+  unpriced: number
   analysis: Analysis
   sessions: ViewSession[]
 }
@@ -132,10 +159,16 @@ async function roundsOf(dir: string): Promise<Round[]> {
 /** A project is missing when it was never collected, or when the slug names nothing. */
 export class NotFound extends Error {}
 
-async function open(dataDir: string, slug: string): Promise<{ stored: StoredProject; rounds: Round[] }> {
+/** Something the caller sent is wrong, as opposed to something here being broken. */
+export class BadRequest extends Error {}
+
+async function open(
+  dataDir: string,
+  slug: string,
+): Promise<{ stored: StoredProject; rounds: Round[]; pricing: Pricing }> {
   const stored = await findStored(dataDir, slug)
   if (stored === null) throw new NotFound(`no project ${slug} in this store`)
-  return { stored, rounds: await roundsOf(stored.dir) }
+  return { stored, rounds: await roundsOf(stored.dir), pricing: await readPricing(dataDir) }
 }
 
 /**
@@ -205,10 +238,11 @@ function callsIn(rounds: Round[]): { tool_calls: number; errors: number } {
  */
 export async function projectsPayload(dataDir: string): Promise<ProjectsPayload> {
   const stored = await listStored(dataDir)
+  const pricing = await readPricing(dataDir)
   const projects = []
   for (const project of stored) {
     const rounds = await roundsOf(project.dir)
-    const analysis = categoryTally(rounds)
+    const analysis = categoryTally(rounds, pricing)
     const all: RoundLabel[] = []
     for (const labels of labelRounds(rounds).values()) all.push(...labels)
     projects.push({ ...project, work: dominant(all), mix: mixOf(analysis) })
@@ -217,7 +251,7 @@ export async function projectsPayload(dataDir: string): Promise<ProjectsPayload>
 }
 
 export async function projectPayload(dataDir: string, slug: string): Promise<ProjectPayload> {
-  const { stored, rounds } = await open(dataDir, slug)
+  const { stored, rounds, pricing } = await open(dataDir, slug)
   const work = workIndex(rounds)
   const bySession = new Map<string, Round[]>()
   for (const round of rounds) {
@@ -226,21 +260,31 @@ export async function projectPayload(dataDir: string, slug: string): Promise<Pro
     else found.push(round)
   }
 
-  const sessions: ViewSession[] = sessionRows(rounds).map((row) => {
+  const sessions: ViewSession[] = sessionRows(rounds, pricing).map((row) => {
     const mine = bySession.get(row.session) ?? []
     return {
       ...row,
       model: modelOf(mine),
       elapsed_ms: elapsedOf(mine),
-      active_ms: mine.reduce((sum, round) => sum + (round.ms ?? 0), 0),
+      active_ms: mine.reduce((sum, round) => sum + (round.gen_ms ?? round.ms ?? 0), 0),
       work: work.session(row.session),
     }
   })
 
+  let cost = 0
+  let unpriced = 0
+  for (const round of rounds) {
+    const spent = costOf(round, pricing)
+    if (spent === null) unpriced += 1
+    else cost += spent
+  }
+
   return {
     project: stored,
+    cost,
+    unpriced,
     ...callsIn(rounds),
-    analysis: categoryTally(rounds),
+    analysis: categoryTally(rounds, pricing),
     // Newest first: the view is for looking at what just happened.
     sessions: sessions.reverse(),
   }
@@ -251,7 +295,7 @@ export async function sessionPayload(
   slug: string,
   session: string,
 ): Promise<SessionPayload> {
-  const { stored, rounds } = await open(dataDir, slug)
+  const { stored, rounds, pricing } = await open(dataDir, slug)
   const mine = rounds.filter((round) => round.session === session)
   if (mine.length === 0) throw new NotFound(`no session ${session} in ${slug}`)
 
@@ -263,8 +307,8 @@ export async function sessionPayload(
     else found.push(round)
   }
 
-  const row = sessionRows(mine)[0]!
-  const tasks: ViewTask[] = taskRows(mine).map((task) => {
+  const row = sessionRows(mine, pricing)[0]!
+  const tasks: ViewTask[] = taskRows(mine, pricing).map((task) => {
     const rows = byTask.get(task.task) ?? []
     return {
       ...task,
@@ -280,10 +324,10 @@ export async function sessionPayload(
       ...row,
       model: modelOf(mine),
       elapsed_ms: elapsedOf(mine),
-      active_ms: mine.reduce((sum, round) => sum + (round.ms ?? 0), 0),
+      active_ms: mine.reduce((sum, round) => sum + (round.gen_ms ?? round.ms ?? 0), 0),
       work: work.session(session),
     },
-    analysis: categoryTally(mine),
+    analysis: categoryTally(mine, pricing),
     tasks,
     trace: traceOf(mine),
   }
@@ -295,7 +339,7 @@ export async function taskPayload(
   session: string,
   task: number,
 ): Promise<TaskPayload> {
-  const { stored, rounds } = await open(dataDir, slug)
+  const { stored, rounds, pricing } = await open(dataDir, slug)
   let mine: Round[]
   try {
     mine = findTask(rounds, `${session}#${task}`)
@@ -304,7 +348,7 @@ export async function taskPayload(
   }
 
   const work = workIndex(rounds)
-  const row = taskRows(mine)[0]!
+  const row = taskRows(mine, pricing)[0]!
   return {
     project: stored,
     session: mine[0]!.session,
@@ -314,7 +358,7 @@ export async function taskPayload(
       elapsed_ms: elapsedOf(mine),
       work: work.task(mine[0]!.session, task),
     },
-    analysis: categoryTally(mine),
+    analysis: categoryTally(mine, pricing),
     trace: traceOf(mine),
   }
 }
@@ -325,7 +369,7 @@ export async function roundPayload(
   session: string,
   round: number,
 ): Promise<RoundPayload> {
-  const { stored, rounds } = await open(dataDir, slug)
+  const { stored, rounds, pricing } = await open(dataDir, slug)
   // Labels depend on what came before in the task, so the whole project is labelled and this one
   // looked up. Classifying a round on its own would give a different answer.
   const labelled = labelRounds(rounds)
@@ -337,7 +381,7 @@ export async function roundPayload(
 }
 
 export async function toolsPayload(dataDir: string, slug: string): Promise<ToolsPayload> {
-  const { stored, rounds } = await open(dataDir, slug)
+  const { stored, rounds, pricing } = await open(dataDir, slug)
   return { project: stored, tools: toolTally(rounds, 'command'), kinds: toolTally(rounds, 'kind') }
 }
 
@@ -400,7 +444,7 @@ export async function syncProject(
     // Whatever collect did or did not add, the cache is rebuilt from what is on disk now.
     cache.delete(stored.dir)
     const rounds = await roundsOf(stored.dir)
-    const analysis = categoryTally(rounds)
+    const analysis = categoryTally(rounds, await readPricing(dataDir))
     await writeAnalysis(
       join(stored.dir, 'analysis.jsonl'),
       { rounds: rounds.length, toolless: analysis.coverage.toolless },
@@ -468,7 +512,7 @@ export async function exportProject(
   }
 
   const rounds = await roundsOf(stored.dir)
-  const analysis = categoryTally(rounds)
+  const analysis = categoryTally(rounds, await readPricing(dataDir))
   return {
     filename: `${stored.slug}.json`,
     type: 'application/json; charset=utf-8',
@@ -487,4 +531,135 @@ export async function exportProject(
       2,
     ),
   }
+}
+
+/**
+ * Take in a project someone exported, from the browser.
+ *
+ * The same path the CLI takes, so a file that imports in one imports in the other. The body is a
+ * string of the file's bytes: the browser reads the file the person picked, and nothing here ever
+ * learns or uses the path it came from.
+ */
+/** A ".jsonl" of rounds carries no name of its own, so the file it arrived as is the next best one. */
+function fileName(from: unknown): string {
+  if (typeof from !== 'string') return ''
+  return (from.split(/[/\\]/).pop() ?? '')
+    .replace(/\.(jsonl|json|txt)$/i, '')
+    .replace(/-rounds$/i, '')
+    .replace(/-[0-9a-f]{8}$/i, '')
+}
+
+export async function importExport(
+  dataDir: string,
+  body: unknown,
+): Promise<ImportResult & { name: string }> {
+  const text = (body as { text?: unknown } | null)?.text
+  if (typeof text !== 'string' || text === '') throw new BadRequest('no file contents were sent')
+  const as = (body as { as?: unknown }).as
+  // What the browser called the file. Only a fallback: a bundle names itself, and a name the sender
+  // chose beats whatever the download ended up saved as.
+  const from = (body as { from?: unknown }).from
+
+  let parsed
+  try {
+    parsed = parseExport(text)
+  } catch (error) {
+    if (error instanceof ImportError) throw new BadRequest(error.message)
+    throw error
+  }
+
+  const named = typeof as === 'string' ? as : (parsed.name ?? fileName(from))
+  const chosen = named.replace(CONTROL, '').trim()
+  const name = chosen.slice(0, 80) || 'imported'
+  const result = await importProject(dataDir, name, parsed.source ?? name, parsed.rounds, parsed.skipped)
+  // The rounds cache is keyed on the file's size and mtime, both of which just changed.
+  cache.delete(result.dir)
+  return { ...result, name }
+}
+
+/** A model the store has rounds for, and what it is charged. */
+export interface PricedModel {
+  model: string
+  rounds: number
+  /** Null when nothing has set a rate for it, which is what the settings screen is for. */
+  rates: Rates | null
+  /** Whether the rate in force is the published one or something this machine typed. */
+  custom: boolean
+}
+
+export interface PricingPayload {
+  file: string
+  models: PricedModel[]
+  /** The published rates, so the screen can offer to put one back. */
+  defaults: Record<string, Rates>
+}
+
+/**
+ * The rates, and every model the store would apply them to.
+ *
+ * Models are read from the rounds rather than from the rate table, so a model that has been used
+ * but never priced appears in the list with nothing beside it. A settings screen that only lists
+ * what it already knows about cannot tell you what it is missing.
+ */
+export async function pricingPayload(dataDir: string): Promise<PricingPayload> {
+  const pricing = await readPricing(dataDir)
+  const defaults = defaultPricing().models
+  const seen = new Map<string, number>()
+  for (const project of await listStored(dataDir)) {
+    for (const round of await roundsOf(project.dir)) {
+      if (round.model === null) continue
+      seen.set(round.model, (seen.get(round.model) ?? 0) + 1)
+    }
+  }
+  // Three sources, unioned: models the store has rounds for, models the rate file names, and models
+  // with a published price. The last is what keeps the screen usable after a save — the file is
+  // authoritative, so without it every model nobody had used yet would disappear the first time
+  // anything was saved, and there would be no row left to type a rate into.
+  for (const model of Object.keys(pricing.models)) if (!seen.has(model)) seen.set(model, 0)
+  for (const model of Object.keys(defaults)) if (!seen.has(model)) seen.set(model, 0)
+
+  const models: PricedModel[] = [...seen.entries()]
+    .map(([model, rounds]) => {
+      const rates = pricing.models[model] ?? null
+      const fallback = defaults[model]
+      const custom =
+        rates !== null && (fallback === undefined || JSON.stringify(rates) !== JSON.stringify(fallback))
+      return { model, rounds, rates, custom }
+    })
+    .sort((a, b) => b.rounds - a.rounds || a.model.localeCompare(b.model))
+
+  return { file: pricingFile(dataDir), models, defaults }
+}
+
+/**
+ * Replace the rates.
+ *
+ * Every field of every model is checked before anything is written: a rate table is arithmetic that
+ * silently changes every share on every page, and a string where a number belongs would turn those
+ * into `NaN` rather than into an error anybody sees.
+ */
+export async function savePricing(dataDir: string, body: unknown): Promise<PricingPayload> {
+  const models = (body as { models?: unknown } | null)?.models
+  if (!models || typeof models !== 'object' || Array.isArray(models)) {
+    throw new BadRequest('expected { models: { "<model>": { in, cache_write_5m, cache_write_1h, cache_read, out } } }')
+  }
+  const fields = ['in', 'cache_write_5m', 'cache_write_1h', 'cache_read', 'out'] as const
+  const checked: Record<string, Rates> = {}
+  for (const [model, value] of Object.entries(models as Record<string, unknown>)) {
+    if (model === '' || model.length > 200) throw new BadRequest(`"${model}" is not a model name`)
+    if (!value || typeof value !== 'object') throw new BadRequest(`${model} has no rates`)
+    const raw = value as Record<string, unknown>
+    const rates: Record<string, number> = {}
+    for (const field of fields) {
+      const rate = raw[field]
+      if (typeof rate !== 'number' || !Number.isFinite(rate) || rate < 0) {
+        throw new BadRequest(`${model}.${field} must be a number of dollars per million tokens`)
+      }
+      rates[field] = rate
+    }
+    checked[model] = rates as unknown as Rates
+  }
+
+  await writePricing(dataDir, { schema_version: PRICING_VERSION, models: checked })
+  return pricingPayload(dataDir)
 }

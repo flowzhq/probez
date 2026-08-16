@@ -7,6 +7,8 @@ import {
   mkdir,
   readdir,
   readFile,
+  rename,
+  rm,
   stat,
   writeFile,
 } from 'node:fs/promises'
@@ -15,9 +17,9 @@ import { basename, dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { extractSession } from './extract.js'
-import type { Project, Round } from './types.js'
+import type { Project, Round, SessionFile } from './types.js'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 3
 
 export interface Summary {
   project: string
@@ -28,6 +30,11 @@ export interface Summary {
   rounds: number
   tasks: number
   in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
+  in_cache_read: number
   out_tokens: number
   first_ts: string | null
   last_ts: string | null
@@ -39,6 +46,8 @@ export interface CollectResult extends Summary {
   new_rounds: number
   read_sessions: number
   skipped_sessions: number
+  /** Whether the store was written from scratch because it predated the current schema. */
+  rebuilt: boolean
 }
 
 /**
@@ -60,14 +69,23 @@ export interface StoredProject {
   rounds: number
   tasks: number
   in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
+  in_cache_read: number
   out_tokens: number
   first_ts: string | null
   last_ts: string | null
   collected_at: string | null
+  /** When this arrived as an export, or null when it was collected on this machine. */
+  imported_at: string | null
 }
 
 interface Manifest {
   schema_version?: number
+  /** Set only on a project that arrived as a file. Absent means it was collected here. */
+  imported_at?: string | null
   project?: string
   path?: string | null
   key?: string
@@ -77,6 +95,11 @@ interface Manifest {
   rounds?: number
   tasks?: number
   in_tokens?: number
+  in_uncached?: number
+  in_cache_write?: number
+  in_cache_write_5m?: number
+  in_cache_write_1h?: number
+  in_cache_read?: number
   out_tokens?: number
   first_ts?: string | null
   last_ts?: string | null
@@ -108,10 +131,16 @@ function asStored(slug: string, dir: string, manifest: Manifest): StoredProject 
     rounds: manifest.rounds ?? 0,
     tasks: manifest.tasks ?? 0,
     in_tokens: manifest.in_tokens ?? 0,
+    in_uncached: manifest.in_uncached ?? 0,
+    in_cache_write: manifest.in_cache_write ?? 0,
+    in_cache_write_5m: manifest.in_cache_write_5m ?? 0,
+    in_cache_write_1h: manifest.in_cache_write_1h ?? 0,
+    in_cache_read: manifest.in_cache_read ?? 0,
     out_tokens: manifest.out_tokens ?? 0,
     first_ts: manifest.first_ts ?? null,
     last_ts: manifest.last_ts ?? null,
     collected_at: manifest.collected_at ?? null,
+    imported_at: manifest.imported_at ?? null,
   }
 }
 
@@ -160,10 +189,28 @@ export function defaultDataDir(): string {
  * same project always lands in the same place and two repos sharing a basename never collide.
  */
 export function slugFor(project: Project): string {
+  // A project read back out of the store already knows where it lives; only a discovered one has
+  // to be hashed into a name.
+  if (project.slug !== undefined) return project.slug
   const source = project.path ?? project.key
   const hash = createHash('sha256').update(source).digest('hex').slice(0, 8)
   const name = (project.path ? basename(project.path) : project.key).replace(/[^A-Za-z0-9._-]/g, '-')
   return `${name || 'project'}-${hash}`
+}
+
+/**
+ * Where an imported project lives.
+ *
+ * Deliberately not `slugFor`. That hashes the directory an agent ran in, so importing a colleague's
+ * copy of a repo you also have — same name, same path — would land on your own store and overwrite
+ * it. Hashing the sender's identity for it under a separate namespace means an import can never
+ * collide with something collected here, and re-importing a newer export of the same project
+ * replaces it rather than making a second copy.
+ */
+export function importSlug(name: string, source: string): string {
+  const hash = createHash('sha256').update(`probez-import\u0000${source}`).digest('hex').slice(0, 8)
+  const safe = name.replace(/[^A-Za-z0-9._-]/g, '-').replace(/^[.-]+/, '').slice(0, 40)
+  return `${safe || 'imported'}-${hash}`
 }
 
 export function projectDir(dataDir: string, project: Project): string {
@@ -293,6 +340,11 @@ export async function summarize(project: Project, dataDir: string): Promise<Summ
   const toolCalls = new Map<string, number>()
   let rounds = 0
   let inTokens = 0
+  let uncached = 0
+  let cacheWrite = 0
+  let write5m = 0
+  let write1h = 0
+  let cacheRead = 0
   let outTokens = 0
   let first: string | null = null
   let last: string | null = null
@@ -301,6 +353,11 @@ export async function summarize(project: Project, dataDir: string): Promise<Summ
     rounds += 1
     sessions.add(round.session)
     inTokens += round.in_tokens || 0
+    uncached += round.in_uncached || 0
+    cacheWrite += round.in_cache_write || 0
+    write5m += round.in_cache_write_5m || 0
+    write1h += round.in_cache_write_1h || 0
+    cacheRead += round.in_cache_read || 0
     outTokens += round.out_tokens || 0
     let tasks = tasksBySession.get(round.session)
     if (tasks === undefined) {
@@ -331,6 +388,11 @@ export async function summarize(project: Project, dataDir: string): Promise<Summ
     rounds,
     tasks,
     in_tokens: inTokens,
+    in_uncached: uncached,
+    in_cache_write: cacheWrite,
+    in_cache_write_5m: write5m,
+    in_cache_write_1h: write1h,
+    in_cache_read: cacheRead,
     out_tokens: outTokens,
     first_ts: first,
     last_ts: last,
@@ -343,12 +405,37 @@ export async function summarize(project: Project, dataDir: string): Promise<Summ
 }
 
 /**
+ * The sessions a rebuild has to read: the ones still in the agent's directory, plus the ones only
+ * this store still has.
+ *
+ * Agents prune old sessions, which is the whole reason `sessions/` exists. Rebuilding from the
+ * agent's directory alone would quietly drop every round belonging to a session that has since been
+ * pruned — the store would come back smaller than it went in.
+ */
+async function withArchived(live: SessionFile[], sessionsDir: string): Promise<SessionFile[]> {
+  const out = [...live]
+  const known = new Set(live.map((session) => session.id))
+  for (const name of await readdir(sessionsDir).catch(() => [] as string[])) {
+    if (!name.endsWith('.jsonl')) continue
+    const id = name.slice(0, -'.jsonl'.length)
+    if (known.has(id)) continue
+    const file = join(sessionsDir, name)
+    const info = await stat(file).catch(() => null)
+    if (info === null) continue
+    out.push({ id, file, size: info.size, mtimeMs: info.mtimeMs })
+  }
+  return out
+}
+
+/**
  * Normalize a project's sessions into its store.
  *
  * Session files are append-only, so an unchanged size and mtime means there is nothing new to read.
  * Anything that did change is re-parsed whole and appended through a `session+id` filter, which
  * costs milliseconds, drops what is already recorded, and makes the whole command idempotent. That
  * is also why `--full` repairs a store rather than duplicating it.
+ *
+ * A store from an older schema is the one case appending cannot serve, and is rebuilt instead.
  */
 export async function collectProject(
   project: Project,
@@ -364,24 +451,41 @@ export async function collectProject(
     await tighten(path, DIR_MODE)
   }
 
+  const stored = await readJson<State>(join(dir, 'state.json'))
+  // A store written against an older schema cannot be brought forward by appending. The rounds
+  // already in the file are the old shape, and the `session+id` filter below would drop every
+  // replacement as a duplicate of the record it was meant to replace. So the file is rebuilt.
+  const outdated = stored !== null && stored.schema_version !== SCHEMA_VERSION
+  const sources = outdated ? await withArchived(project.sessions, sessionsDir) : project.sessions
+  // Rebuilding needs something to rebuild from. Discovery never yields a project with no sessions,
+  // so this only guards a caller that built a `Project` by hand: with nothing to read, the old
+  // rounds are all there is, and keeping them at the version they were written for beats replacing
+  // them with nothing.
+  const rebuild = outdated && sources.length > 0
+  const version = outdated && !rebuild ? (stored?.schema_version ?? SCHEMA_VERSION) : SCHEMA_VERSION
   const state =
-    (options.full ? null : await readJson<State>(join(dir, 'state.json'))) ??
-    ({ schema_version: SCHEMA_VERSION, sessions: {} } as State)
+    (options.full || rebuild ? null : stored) ??
+    ({ schema_version: version, sessions: {} } as State)
 
-  const stale = project.sessions.filter((session) => {
+  const stale = sources.filter((session) => {
     const seen = state.sessions[session.id]
     return seen === undefined || seen.size !== session.size || seen.mtimeMs !== session.mtimeMs
   })
 
   // Only the sessions being re-read need de-duplication keys, so this stays proportional to what
-  // changed rather than to the whole history.
+  // changed rather than to the whole history. A rebuild writes a new file, so it starts with none.
   const staleIds = new Set(stale.map((session) => session.id))
   const seenKeys = new Set<string>()
-  if (stale.length > 0) {
+  if (stale.length > 0 && !rebuild) {
     await eachRound(roundsFile, (round) => {
       if (staleIds.has(round.session)) seenKeys.add(`${round.session}\u0000${round.id}`)
     })
   }
+
+  // Written beside the real file and moved over it at the end, so an interrupted rebuild leaves the
+  // old store intact rather than half of a new one.
+  const target = rebuild ? `${roundsFile}.rebuild` : roundsFile
+  if (rebuild) await rm(target, { force: true })
 
   let newRounds = 0
   for (const session of stale) {
@@ -394,15 +498,23 @@ export async function collectProject(
       lines.push(JSON.stringify(round))
     }
     if (lines.length > 0) {
-      await appendFile(roundsFile, lines.join('\n') + '\n', { encoding: 'utf8', mode: FILE_MODE })
+      await appendFile(target, lines.join('\n') + '\n', { encoding: 'utf8', mode: FILE_MODE })
       newRounds += lines.length
     }
-    // The raw copy is what keeps every field probez does not normalize re-derivable locally.
-    await copyFile(session.file, join(sessionsDir, `${session.id}.jsonl`))
+    // The raw copy is what keeps every field probez does not normalize re-derivable locally. A
+    // rebuild may be reading that copy already, in which case there is nothing to copy.
+    const archived = join(sessionsDir, `${session.id}.jsonl`)
+    if (session.file !== archived) await copyFile(session.file, archived)
     state.sessions[session.id] = { size: session.size, mtimeMs: session.mtimeMs }
   }
 
-  state.schema_version = SCHEMA_VERSION
+  if (rebuild) {
+    await rename(target, roundsFile)
+    // The analysis beside it was computed from rounds that no longer exist in this shape.
+    await rm(join(dir, 'analysis.jsonl'), { force: true })
+  }
+
+  state.schema_version = version
   await writeFile(join(dir, 'state.json'), JSON.stringify(state, null, 2) + '\n', {
     encoding: 'utf8',
     mode: FILE_MODE,
@@ -415,7 +527,7 @@ export async function collectProject(
     join(dir, 'manifest.json'),
     JSON.stringify(
       {
-        schema_version: SCHEMA_VERSION,
+        schema_version: version,
         project: summary.project,
         path: project.path,
         key: project.key,
@@ -425,6 +537,11 @@ export async function collectProject(
         rounds: summary.rounds,
         tasks: summary.tasks,
         in_tokens: summary.in_tokens,
+        in_uncached: summary.in_uncached,
+        in_cache_write: summary.in_cache_write,
+        in_cache_write_5m: summary.in_cache_write_5m,
+        in_cache_write_1h: summary.in_cache_write_1h,
+        in_cache_read: summary.in_cache_read,
         out_tokens: summary.out_tokens,
         first_ts: summary.first_ts,
         last_ts: summary.last_ts,
@@ -449,6 +566,129 @@ export async function collectProject(
     ...summary,
     new_rounds: newRounds,
     read_sessions: stale.length,
-    skipped_sessions: project.sessions.length - stale.length,
+    skipped_sessions: sources.length - stale.length,
+    rebuilt: rebuild,
+  }
+}
+
+export interface ImportResult {
+  slug: string
+  dir: string
+  project: string
+  rounds: number
+  sessions: number
+  tasks: number
+  /** Records in the file that were not rounds, so a partly-wrong file says so. */
+  skipped: number
+  /** Whether this replaced a project of the same origin rather than adding one. */
+  replaced: boolean
+}
+
+/**
+ * Write a project that arrived as a file.
+ *
+ * The rounds are re-serialised from the normalised objects rather than copied through, so whatever
+ * the file contained, what lands on disk is this schema and nothing else. The store keeps no
+ * session copies for an import — there were none to send — which is why a later schema change
+ * leaves an imported project at its own version rather than rebuilding it from nothing.
+ */
+export async function importProject(
+  dataDir: string,
+  name: string,
+  source: string,
+  rounds: Round[],
+  skipped: number,
+): Promise<ImportResult> {
+  const slug = importSlug(name, source)
+  const dir = storedDir(dataDir, slug)
+  const replaced = (await readJson<Manifest>(join(dir, 'manifest.json'))) !== null
+
+  await mkdir(dir, { recursive: true, mode: DIR_MODE })
+  for (const path of [dataDir, join(dataDir, 'projects'), dir]) await tighten(path, DIR_MODE)
+
+  // Written beside and moved over, so an interrupted import cannot leave half a project behind.
+  const target = join(dir, 'rounds.jsonl.import')
+  await rm(target, { force: true })
+  await writeFile(target, rounds.map((round) => JSON.stringify(round)).join('\n') + '\n', {
+    encoding: 'utf8',
+    mode: FILE_MODE,
+  })
+  await rename(target, join(dir, 'rounds.jsonl'))
+  // Any analysis beside it described the rounds this just replaced.
+  await rm(join(dir, 'analysis.jsonl'), { force: true })
+
+  const sessions = new Set<string>()
+  const tasks = new Set<string>()
+  let inTokens = 0
+  let uncached = 0
+  let cacheWrite = 0
+  let write5m = 0
+  let write1h = 0
+  let cacheRead = 0
+  let outTokens = 0
+  let first: string | null = null
+  let last: string | null = null
+  for (const round of rounds) {
+    sessions.add(round.session)
+    tasks.add(`${round.session} ${round.task}`)
+    inTokens += round.in_tokens
+    uncached += round.in_uncached
+    cacheWrite += round.in_cache_write
+    write5m += round.in_cache_write_5m
+    write1h += round.in_cache_write_1h
+    cacheRead += round.in_cache_read
+    outTokens += round.out_tokens
+    if (typeof round.ts === 'string') {
+      if (first === null || round.ts < first) first = round.ts
+      if (last === null || round.ts > last) last = round.ts
+    }
+  }
+
+  const now = new Date().toISOString()
+  await writeFile(
+    join(dir, 'manifest.json'),
+    JSON.stringify(
+      {
+        schema_version: SCHEMA_VERSION,
+        project: name,
+        // No path and no source directory: this project was never run on this machine, and
+        // recording the sender's would invite something here to go looking for it.
+        path: null,
+        key: slug,
+        source_dir: null,
+        collected_at: now,
+        imported_at: now,
+        sessions: sessions.size,
+        rounds: rounds.length,
+        tasks: tasks.size,
+        in_tokens: inTokens,
+        in_uncached: uncached,
+        in_cache_write: cacheWrite,
+        in_cache_write_5m: write5m,
+        in_cache_write_1h: write1h,
+        in_cache_read: cacheRead,
+        out_tokens: outTokens,
+        first_ts: first,
+        last_ts: last,
+      },
+      null,
+      2,
+    ) + '\n',
+    { encoding: 'utf8', mode: FILE_MODE },
+  )
+
+  for (const file of [join(dir, 'rounds.jsonl'), join(dir, 'manifest.json')]) {
+    await tighten(file, FILE_MODE)
+  }
+
+  return {
+    slug,
+    dir,
+    project: name,
+    rounds: rounds.length,
+    sessions: sessions.size,
+    tasks: tasks.size,
+    skipped,
+    replaced,
   }
 }

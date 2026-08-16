@@ -8,7 +8,10 @@ import { count, tokens } from '../format'
 /**
  * The two things you can do to a project rather than read about it.
  *
- * **Sync** is `collect` then `analyze`, on this project, and it is the only write the view can
+ * Both live behind one `⋮`. Neither is what anyone opened the page for — you come to read what the
+ * agent did, not to collect — and a menu keeps two irreversible-ish verbs out of the way of that.
+ *
+ * **Sync** is `collect` then `analyze`, on this project, and it is one of two writes the view can
  * make. It reports what it did in the same words the CLI would — new rounds, sessions read — rather
  * than flashing a tick, because "synced" and "found nothing new" are different outcomes and the
  * second one is the common one.
@@ -20,7 +23,36 @@ import { count, tokens } from '../format'
  * the analysis and the coverage its shares are shares of.
  *
  * Whatever comes out is unredacted — prompts, file paths, shell commands, exactly as typed.
+ *
+ * What they *did* is still written out in words: an icon can say "sync" but it cannot say "already
+ * up to date · 442 rounds", and that sentence is the point of pressing it.
  */
+/** One glyph, drawn the same way as the theme icons so the header reads as one set. */
+function Icon({
+  children,
+  spinning = false,
+}: {
+  children: ReactElement | ReactElement[]
+  spinning?: boolean
+}): ReactElement {
+  return (
+    <svg
+      className={spinning ? 'spin' : undefined}
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {children}
+    </svg>
+  )
+}
+
 export function Actions({
   slug,
   onSynced,
@@ -101,6 +133,7 @@ export function Actions({
   }
 
   const stop = (event: { stopPropagation: () => void }): void => event.stopPropagation()
+  const exporting = busy === 'jsonl' || busy === 'json'
 
   return (
     <div
@@ -109,28 +142,49 @@ export function Actions({
       onClick={stop}
       onMouseDown={stop}
     >
-      <button className="action" onClick={() => void sync()} disabled={busy !== null}>
-        {busy === 'sync' ? 'Syncing…' : 'Sync'}
-      </button>
-
       <div className="menu-anchor">
         <button
-          className="action"
+          className="action icon"
           onClick={() => setMenu(!menu)}
           disabled={busy !== null}
           aria-expanded={menu}
           aria-haspopup="menu"
+          aria-label={busy === null ? 'Actions for this project' : 'Working'}
         >
-          {busy === 'jsonl' || busy === 'json' ? 'Exporting…' : 'Export'} <span aria-hidden>▾</span>
+          <Icon spinning={busy !== null}>
+            {busy === null ? (
+              <>
+                <circle cx="8" cy="3.1" r="0.9" fill="currentColor" stroke="none" />
+                <circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none" />
+                <circle cx="8" cy="12.9" r="0.9" fill="currentColor" stroke="none" />
+              </>
+            ) : (
+              <>
+                <path d="M14 8a6 6 0 0 1-10.2 4.2M2 8a6 6 0 0 1 10.2-4.2" />
+                <path d="M12.2 1.2v2.6h-2.6M3.8 14.8v-2.6h2.6" />
+              </>
+            )}
+          </Icon>
         </button>
         {menu ? (
           <div className="menu" role="menu">
+            <button
+              role="menuitem"
+              onClick={() => {
+                setMenu(false)
+                void sync()
+              }}
+            >
+              <strong>Sync</strong>
+              <span className="menu-note">collect anything new, then re-analyse</span>
+            </button>
+            <div className="menu-rule" role="separator" />
             <button role="menuitem" onClick={() => void save('jsonl')}>
-              <strong>Rounds</strong> <span className="mono muted">.jsonl</span>
+              <strong>Export rounds</strong> <span className="mono muted">.jsonl</span>
               <span className="menu-note">the store's own file, one round per line</span>
             </button>
             <button role="menuitem" onClick={() => void save('json')}>
-              <strong>Bundle</strong> <span className="mono muted">.json</span>
+              <strong>Export bundle</strong> <span className="mono muted">.json</span>
               <span className="menu-note">manifest, analysis and rounds in one document</span>
             </button>
           </div>

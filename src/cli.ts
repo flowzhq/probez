@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile, realpath } from 'node:fs/promises'
+import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
@@ -41,21 +41,29 @@ import type {
   TaskRow,
   ToolRow,
 } from './inspect.js'
+import { CONTROL, ImportError, parseExport } from './import.js'
 import { openInBrowser } from './open.js'
+import { readPricing } from './pricing.js'
 import { DEFAULT_PORT, startServer } from './serve.js'
 import {
   analysisFile,
   collectProject,
   defaultDataDir,
+  findStored,
+  importProject,
   listStored,
   readRounds,
+  slugFor,
   writeAnalysis,
 } from './store.js'
 import type { CollectResult, StoredProject, Summary } from './store.js'
-import type { Project, Round } from './types.js'
+import type { Project, Round, ToolCall } from './types.js'
+import { exportProject } from './viewdata.js'
 
 const COMMANDS = new Set([
   'collect',
+  'export',
+  'import',
   'projects',
   'sessions',
   'session',
@@ -94,6 +102,8 @@ const GLOBAL_FLAGS = new Set([
  */
 const COMMAND_FLAGS: Record<string, string[]> = {
   collect: ['full'],
+  export: ['bundle', 'out'],
+  import: ['as'],
   projects: [],
   sessions: ['limit'],
   session: ['limit'],
@@ -120,11 +130,11 @@ const DEFAULT_SUB_LIMIT = 8
 const HELP = `probez: see what your coding agents actually did.
 
 What is recorded, and what names it
-  project        a directory an agent was started in       its name, or its path
-  └ session      one agent run                             504799b8
-    └ task       a user turn, and everything it led to     504799b8#3
-      └ round    one LLM call                              504799b8#3.12
-        └ tool call                                        shown in full by its round
+  project            a directory an agent was started in    its name, or its path
+  └ session          one agent run                          504799b8
+    └ task           a user turn, and everything it led to  504799b8#3
+      └ round        one LLM call                           504799b8#3.12
+        └ tool call                                         shown in full by its round
 
 Every level has a list and a detail view: \`probez sessions\` then \`probez session <id>\`, and the
 same for tasks and rounds. An id is the path down to the thing it names, so each one extends the
@@ -182,9 +192,10 @@ Analysis
   --task <n>                   Only this task number
   --limit <n>                  How many sub-rows to list under each category
 
-  Shares are of rounds that called at least one tool, weighted so that a round splits across
-  the work it did. Rounds of pure prose carry no label and are reported instead of guessed at,
-  and so is every tool with no entry in the table. Both are on the coverage line.
+  Shares are of what the work cost, at the rates under Settings in \`probez view\`. ROUNDS still
+  says how much of the work it was; the two disagree, which is the point. Rounds of pure prose
+  carry no label and are reported instead of guessed at, and so is every tool with no entry in
+  the table and every model with no rate. All three are on the coverage line.
 
 The view
   probez view                  Open the local profiler in your browser: every project,
@@ -198,10 +209,24 @@ The view
   It listens on 127.0.0.1 and nothing leaves the machine. The URL carries a token that is new
   on every run, without which the data neither answers nor syncs. Reading writes nothing.
 
+Sharing
+  probez export <project>      Write a project out as a file to send someone
+  --bundle                     One .json with the manifest and analysis, not bare .jsonl rounds
+  --out <file>                 Write there instead of to stdout
+  probez import <file>         Read a project someone exported, from .json or .jsonl
+  --as <name>                  Store it under this name instead of the one in the file
+
+  An export carries everything the store holds: prompts, commands, file paths. Read one before
+  you send it. An import is someone else's work, shown as faithfully as your own — probez cannot
+  check what is in it, so open one the way you would any attachment. Nothing is executed.
+
 Collection
   probez collect [project]     Collect one project, or every project under a folder
   probez collect --all         Collect every project on this machine
   --full                       Re-read every session instead of only what changed
+
+  A store collected by an older probez is rebuilt on the next collect, from the session copies
+  it already keeps. Nothing leaves the machine and nothing is lost, but it is not instant.
 
 Options (these work on every command)
   --json                       Machine-readable output
@@ -233,6 +258,12 @@ Naming a session, a task or a round
       probez task 3               probez round 3.12
 `
 
+/** How much of the input was served from cache, which is the part billed at a fraction of the rate. */
+function cacheShare(summary: { in_tokens: number; in_cache_read: number }): string {
+  if (summary.in_tokens <= 0) return ''
+  return `  (${Math.round((summary.in_cache_read / summary.in_tokens) * 100)}% reused)`
+}
+
 function printSummary(summary: Summary, extra?: string): void {
   const title = summary.path ? shorten(summary.path) : summary.project
   console.log('')
@@ -242,6 +273,11 @@ function printSummary(summary: Summary, extra?: string): void {
     `  ${pad('sessions', 11)}${pad(String(summary.sessions), 10)}${pad('rounds', 9)}${pad(String(summary.rounds), 9)}tasks  ${summary.tasks}`,
   )
   console.log(`  ${pad('tokens', 11)}${tokens(summary.in_tokens)} in · ${tokens(summary.out_tokens)} out`)
+  // The three price differently, and cache reads usually dwarf the rest, so the split says what the
+  // total cannot: how much of that input was actually new.
+  console.log(
+    `  ${pad('', 11)}${tokens(summary.in_uncached)} new · ${tokens(summary.in_cache_write)} cached · ${tokens(summary.in_cache_read)} reused${cacheShare(summary)}`,
+  )
   console.log(`  ${pad('span', 11)}${span(summary.first_ts, summary.last_ts)}`)
   if (summary.tools.length > 0) {
     console.log(
@@ -254,7 +290,121 @@ function printSummary(summary: Summary, extra?: string): void {
   console.log('')
 }
 
+/**
+ * Read a project someone else exported.
+ *
+ * Reported the way `collect` reports: what came in, and what did not. A file with records probez
+ * could not read is a common enough thing — a truncated download, two files concatenated — that
+ * the count is worth printing rather than swallowing.
+ */
+async function runImport(
+  dataDir: string,
+  file: string,
+  as: string | undefined,
+  json: boolean,
+): Promise<void> {
+  let text: string
+  try {
+    text = await readFile(file, 'utf8')
+  } catch {
+    fail(`cannot read ${file}`)
+  }
+
+  let parsed
+  try {
+    parsed = parseExport(text)
+  } catch (error) {
+    if (error instanceof ImportError) fail(error.message)
+    throw error
+  }
+
+  // The sender chose this string. It is a label, never a path, and `importSlug` is what decides
+  // where anything lands — but it is also printed, so it loses anything a terminal would obey.
+  const chosen = (as ?? parsed.name ?? nameFromFile(file)).replace(CONTROL, '').trim()
+  const name = chosen.slice(0, 80) || 'imported'
+  // Identity comes from what the sender called it, so re-importing a newer export of the same
+  // project replaces it. With nothing to go on, the name is all there is.
+  const source = parsed.source ?? name
+  const result = await importProject(dataDir, name, source, parsed.rounds, parsed.skipped)
+
+  if (json) {
+    console.log(JSON.stringify(result, null, 2))
+    return
+  }
+
+  console.log('')
+  console.log(`  imported  ${result.project}`)
+  console.log('')
+  console.log(
+    `  ${pad('sessions', 11)}${pad(String(result.sessions), 10)}${pad('rounds', 9)}${pad(String(result.rounds), 9)}tasks  ${result.tasks}`,
+  )
+  if (result.skipped > 0) {
+    console.log(`  ${pad('skipped', 11)}${result.skipped} records that were not rounds`)
+  }
+  console.log('')
+  console.log(
+    result.replaced
+      ? '  replaced the copy already imported from this project'
+      : '  this is somebody else\'s work, kept apart from anything collected here',
+  )
+  console.log(`  → ${shorten(result.dir)}/rounds.jsonl`)
+  console.log(`  probez view ${result.slug}`)
+  console.log('')
+}
+
+/**
+ * Write a project out as a file to send someone.
+ *
+ * The same two formats the view offers, produced by the same function, so a file made here and a
+ * file saved from the browser are the same file. It goes to stdout by default — a share is
+ * usually a pipe or a redirect, and `--out` is for when you want it named.
+ */
+async function runExport(
+  dataDir: string,
+  target: string | undefined,
+  bundle: boolean,
+  out: string | undefined,
+): Promise<void> {
+  if (target === undefined) fail('probez export needs a project: `probez export my-app --out my-app.json`')
+
+  const matched = await storedMatches(dataDir, target)
+  if (matched.length === 0) {
+    fail(`nothing collected for ${target} in ${shorten(dataDir)}. Run \`probez projects\` to see what is`)
+  }
+  if (matched.length > 1) {
+    const names = matched.map((p) => p.slug).join(', ')
+    fail(`${target} matches more than one project — name one of ${names}`)
+  }
+
+  const written = await exportProject(dataDir, matched[0]!.slug!, bundle ? 'json' : 'jsonl')
+  if (out === undefined) {
+    process.stdout.write(written.body)
+    return
+  }
+
+  const file = resolve(out)
+  await writeFile(file, written.body, { mode: 0o600 })
+  const size = Buffer.byteLength(written.body)
+  console.log('')
+  console.log(`  exported  ${matched[0]!.key}  →  ${shorten(file)}`)
+  console.log(`  ${(size / 1024).toFixed(0)} KB · they read it with \`probez import ${basename(file)}\``)
+  console.log('')
+}
+
+/** A name from the file when the file carries none: `flowz-mcp-75ad21ac-rounds.jsonl` is flowz-mcp. */
+function nameFromFile(file: string): string {
+  return basename(file)
+    .replace(/\.(jsonl|json|txt)$/i, '')
+    .replace(/-rounds$/i, '')
+    .replace(/-[0-9a-f]{8}$/i, '')
+}
+
 function collectedLine(result: CollectResult): string {
+  // A rebuild rewrites the file rather than adding to it, so "+N rounds" would be a misreading of
+  // what happened: none of them are new.
+  if (result.rebuilt) {
+    return `rebuilt for the current schema, ${result.read_sessions} sessions re-read, ${result.rounds} rounds`
+  }
   if (result.read_sessions === 0) return `up to date, ${result.skipped_sessions} sessions unchanged`
   const sessions = `${result.read_sessions} session${result.read_sessions === 1 ? '' : 's'} read`
   const skipped = result.skipped_sessions > 0 ? `, ${result.skipped_sessions} unchanged` : ''
@@ -329,8 +479,47 @@ function noMatch(projects: Project[], target: string | undefined): never {
 function projectHeader(project: Project): void {
   const name = projectName(project)
   console.log('')
-  console.log(`  ${name}  ${project.path ? shorten(project.path) : '(path unknown)'}`)
+  // An import has no path here because it was never run here. Saying so beats "(path unknown)",
+  // which reads as something probez failed to work out rather than something that is not its own.
+  const where =
+    project.slug !== undefined
+      ? '(imported)'
+      : project.path
+        ? shorten(project.path)
+        : '(path unknown)'
+  console.log(`  ${name}  ${where}`)
   console.log('')
+}
+
+/**
+ * Projects that exist only in the store, matched by slug or by name.
+ *
+ * Exact slug first, since that is what `import` prints and what a URL carries; then the name, so
+ * `probez analyze their-project` works without anyone copying a hash around.
+ */
+async function storedMatches(dataDir: string, target: string | undefined): Promise<Project[]> {
+  if (target === undefined) return []
+  const stored = await listStored(dataDir)
+  const wanted = target.toLowerCase()
+  // A directory is how you name a project everywhere else, so it names one here too. Resolved
+  // against the shell's cwd, the same way `probez collect .` is.
+  const path = resolve(target)
+  const bySlug = stored.filter((row) => row.slug === target)
+  const byPath = stored.filter((row) => row.path === path)
+  const matched =
+    bySlug.length > 0
+      ? bySlug
+      : byPath.length > 0
+        ? byPath
+        : stored.filter((row) => row.project.toLowerCase() === wanted)
+  return matched.map((row) => ({
+    key: row.project,
+    path: row.path,
+    dir: row.source_dir ?? '',
+    sessions: [],
+    lastActivity: Date.parse(row.last_ts ?? '') || 0,
+    slug: row.slug,
+  }))
 }
 
 function nothingCollected(project: Project): void {
@@ -425,7 +614,7 @@ function printTaskRows(tasks: TaskRow[], width: number, showSession: boolean, wo
   )
   for (const task of tasks) {
     console.log(
-      `  ${pad(taskId(task, showSession), idWidth)}${padStart(String(task.rounds), 6)}  ${padStart(tokens(task.in_tokens), 7)}  ${padStart(tokens(task.out_tokens), 6)}  ${padStart(duration(task.ms), 7)}  ${pad(work.task(task.session, task.task), 11)}${clip(task.asked === '' ? '—' : task.asked, asked)}`,
+      `  ${pad(taskId(task, showSession), idWidth)}${padStart(String(task.rounds), 6)}  ${padStart(tokens(task.in_tokens), 7)}  ${padStart(tokens(task.out_tokens), 6)}  ${padStart(duration(task.gen_ms), 7)}  ${pad(work.task(task.session, task.task), 11)}${clip(task.asked === '' ? '—' : task.asked, asked)}`,
     )
   }
 }
@@ -453,7 +642,7 @@ function printTask(
   const tools = toolTally(rounds)
   const errors = tools.reduce((sum, tool) => sum + tool.errors, 0)
   console.log(
-    `  task ${row.task} of session ${row.session.slice(0, 8)}  ·  ${rounds.length} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out · ${duration(row.ms)}`,
+    `  task ${row.task} of session ${row.session.slice(0, 8)}  ·  ${rounds.length} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out · ${duration(row.gen_ms)} working`,
   )
 
   if (row.asked !== '') {
@@ -552,6 +741,20 @@ function printToolInput(input: unknown, width: number): void {
   }
 }
 
+/**
+ * What the call did, beyond whether the harness accepted it.
+ *
+ * `is_error` is the harness flag, so a command that ran and failed shows nothing there. Anything
+ * written to stderr, a call cut short, or lines changed on disk are the parts worth saying.
+ */
+function outcome(tool: ToolCall): string {
+  const parts: string[] = []
+  if (tool.interrupted === true) parts.push('interrupted')
+  if (tool.stderr_chars !== null && tool.stderr_chars > 0) parts.push(`${tokens(tool.stderr_chars)} stderr`)
+  if (tool.patch !== null) parts.push(`+${tool.patch.added} −${tool.patch.removed}`)
+  return parts.length === 0 ? '' : ` · ${parts.join(' · ')}`
+}
+
 function printRound(round: Round, width: number): void {
   console.log('')
   console.log(
@@ -560,6 +763,17 @@ function printRound(round: Round, width: number): void {
   console.log(
     `  ${tokens(round.in_tokens)} in · ${tokens(round.out_tokens)} out · ${duration(round.ms)} · ${round.thinking_chars} thinking chars`,
   )
+  console.log(
+    `  ${tokens(round.in_uncached)} new · ${tokens(round.in_cache_write)} cached · ${tokens(round.in_cache_read)} reused`,
+  )
+  // `ms` spans the round's own records; `gen_ms` also covers the wait before the model said
+  // anything, which is most of what the round actually took.
+  const waited = round.wait_ms === null ? '' : ` · waited ${duration(round.wait_ms)}`
+  console.log(`  generated in ${duration(round.gen_ms)}${waited}`)
+  const attributed = [round.mcp_server && `mcp ${round.mcp_server}`, round.skill && `skill ${round.skill}`]
+    .filter((part): part is string => typeof part === 'string')
+    .join(' · ')
+  if (attributed !== '') console.log(`  ${attributed}`)
   console.log(`  session ${round.session}${round.ts ? ` · ${round.ts}` : ''}`)
 
   if (round.user_text !== '') {
@@ -592,7 +806,7 @@ function printRound(round: Round, width: number): void {
       .map((label) => `${label.category}/${label.sub}${label.target === 'unknown' ? '' : ` × ${label.target}`}`)
       .join(' · ')
     console.log(
-      `    ${padStart(String(index + 1), 2)}  ${tool.is_error === true ? '✗' : ' '} ${pad(tool.name ?? '?', 14)}${padStart(duration(tool.ms), 7)}  ${chars}`,
+      `    ${padStart(String(index + 1), 2)}  ${tool.is_error === true ? '✗' : ' '} ${pad(tool.name ?? '?', 14)}${padStart(duration(tool.ms), 7)}  ${chars}${outcome(tool)}`,
     )
     console.log(`       ${clip(work, width - 8)}`)
     printToolInput(tool.input, width - 8)
@@ -652,23 +866,44 @@ function amount(value: number): string {
   return value >= 100 ? value.toFixed(0) : value.toFixed(1)
 }
 
+/**
+ * A share is a share of money, not of rounds.
+ *
+ * The two disagree, and the disagreement is the point: a round of reconstruction reading a large
+ * file and a round of implementation writing one line are one round each, and nothing like one
+ * dollar each. `ROUNDS` still says how much of the work it was.
+ */
 function categoryLine(name: string, indent: number, row: CategoryRow, whole: number): string {
   const width = 22 - indent
-  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(amount(row.rounds), 8)}  ${padStart(percent(row.rounds, whole), 7)}  ${padStart(row.errors >= 0.5 ? amount(row.errors) : '·', 6)}  ${padStart(duration(row.ms), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}`
+  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(amount(row.rounds), 8)}  ${padStart(percent(row.cost, whole), 7)}  ${padStart(money(row.cost), 8)}  ${padStart(row.errors >= 0.5 ? amount(row.errors) : '·', 6)}  ${padStart(duration(row.ms), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}`
+}
+
+/**
+ * Dollars, at a precision that survives being small.
+ *
+ * A category can cost fractions of a cent on a short task and hundreds of dollars on a long one, so
+ * the number of decimals moves with the size rather than rounding the small ones away to `$0.00`.
+ */
+export function money(value: number): string {
+  if (value === 0) return '·'
+  if (value < 0.01) return `$${value.toFixed(4)}`
+  if (value < 1000) return `$${value.toFixed(2)}`
+  return `$${Math.round(value).toLocaleString('en-US')}`
 }
 
 /**
  * The distribution, with each category's second level indented under it.
  *
- * The coverage line is not a footnote. A share here is a share of rounds that called a tool, and
- * two things sit outside that: rounds of pure prose, and calls no table can name. Printing the
- * percentages without them would invite the reader to assume they are not there.
+ * The coverage line is not a footnote. A share here is a share of what the rounds that called a
+ * tool cost, and three things sit outside that: rounds of pure prose, calls no table can name, and
+ * models with no rate. Printing the percentages without them would invite the reader to assume they
+ * are not there.
  */
 function printAnalysis(analysis: Analysis, subLimit: number, axis: string): void {
   const { coverage } = analysis
-  const whole = coverage.weight
+  const whole = coverage.cost
   console.log(
-    `  ${pad('WORK', 20)}${padStart('ROUNDS', 8)}  ${padStart('SHARE', 7)}  ${padStart('ERRORS', 6)}  ${padStart('TIME', 8)}  ${padStart('OUT', 7)}`,
+    `  ${pad('WORK', 20)}${padStart('ROUNDS', 8)}  ${padStart('SHARE', 7)}  ${padStart('COST', 8)}  ${padStart('ERRORS', 6)}  ${padStart('TIME', 8)}  ${padStart('OUT', 7)}`,
   )
   for (const row of analysis.rows) {
     console.log(categoryLine(row.label, 2, row, whole))
@@ -680,8 +915,14 @@ function printAnalysis(analysis: Analysis, subLimit: number, axis: string): void
     }
   }
   console.log('')
+  // With nothing priced there is no denominator, and "shares are of the · they cost" would be a
+  // sentence about a symbol. The line says what is actually true instead.
+  const of =
+    coverage.cost > 0
+      ? `Shares are of the ${money(coverage.cost)} they cost`
+      : 'None of them has a priced model, so there is no cost to divide'
   console.log(
-    `  ${coverage.classified} round${coverage.classified === 1 ? '' : 's'} did something a tool can see, out of ${coverage.rounds}. Shares are of those`,
+    `  ${coverage.classified} round${coverage.classified === 1 ? '' : 's'} did something a tool can see, out of ${coverage.rounds}. ${of}`,
   )
   const holes: string[] = []
   if (coverage.toolless > 0) {
@@ -690,10 +931,18 @@ function printAnalysis(analysis: Analysis, subLimit: number, axis: string): void
     )
   }
   if (coverage.unclassified > 0) {
-    holes.push(`${percent(coverage.unclassified, whole)} unclassified`)
+    holes.push(`${percent(coverage.unclassified, coverage.weight)} unclassified`)
   }
-  holes.push(`${percent(coverage.targeted, whole)} of work has a known target`)
+  holes.push(`${percent(coverage.targeted, coverage.weight)} of work has a known target`)
   console.log(`  ${holes.join(' · ')}`)
+  // A model with no rate costs nothing here and something in reality, so it is named rather than
+  // left to sink the shares by an amount the reader cannot see.
+  if (coverage.unpriced > 0) {
+    const models = analysis.unpriced.slice(0, 3).map((row) => row.model).join(', ')
+    console.log(
+      `  ${coverage.unpriced} round${coverage.unpriced === 1 ? '' : 's'} are outside that: no rate for ${models}. Set one in \`probez view\` → Settings`,
+    )
+  }
   if (axis === 'sub' && analysis.unknown.length > 0) {
     const top = analysis.unknown.slice(0, 3).map((row) => row.name).join(', ')
     console.log(`  Unclassified is mostly ${top}. --unclassified lists it`)
@@ -767,7 +1016,9 @@ async function runView(
   if (port !== undefined && port > 65535) fail(`--port takes a number under 65536, got ${port}`)
 
   const stored = await listStored(dataDir)
-  if (stored.length === 0) {
+  // An empty store is no longer a dead end: importing a file someone sent is done from this page,
+  // and refusing to open it would mean the one way in required a store to already exist.
+  if (stored.length === 0 && target !== undefined) {
     console.error(
       `probez: nothing collected yet in ${shorten(dataDir)}. Run \`probez collect\` first`,
     )
@@ -852,6 +1103,9 @@ async function main(): Promise<void> {
         errors: { type: 'boolean', default: false },
         limit: { type: 'string' },
         port: { type: 'string' },
+        as: { type: 'string' },
+        bundle: { type: 'boolean', default: false },
+        out: { type: 'string' },
         'no-open': { type: 'boolean', default: false },
         version: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
@@ -913,6 +1167,19 @@ async function main(): Promise<void> {
 
   const claudeDir = values['claude-dir'] ? resolve(values['claude-dir']) : defaultClaudeDir()
 
+  // Import reads a file and writes the store, and never looks at the agent's directory at all.
+  if (command === 'import') {
+    if (target === undefined) fail('probez import needs a file: `probez import their-project.json`')
+    await runImport(dataDir, target, values.as, values.json === true)
+    return
+  }
+
+  // Export reads the store and writes a file of its own; the agent's directory has no part in it.
+  if (command === 'export') {
+    await runExport(dataDir, target, values.bundle === true, values.out)
+    return
+  }
+
   // `view` reads the store, so it runs before the agent's directory is required to exist. What has
   // been collected stays browsable whether or not the sessions it came from still do; the agent's
   // directory is consulted only when you press Sync, and only then can it be missing.
@@ -927,21 +1194,38 @@ async function main(): Promise<void> {
 
   const projects = await discoverProjects(claudeDir)
 
-  if (projects.length === 0) {
+  // An empty agent directory is only a dead end if the store is empty too. Someone who was sent an
+  // export and has never run an agent has nothing to discover and a project to read all the same.
+  if (projects.length === 0 && (await listStored(dataDir)).length === 0) {
     console.error(`probez: no agent sessions found in ${shorten(claudeDir)}`)
     process.exit(1)
   }
 
   if (command === 'projects') {
     // Scratch projects are mostly noise in a listing for the same reason --all skips them.
-    const listed = values['include-temp'] ? projects : projects.filter((p) => !isEphemeral(p))
-    const skippedTemp = projects.length - listed.length
+    const own = values['include-temp'] ? projects : projects.filter((p) => !isEphemeral(p))
+    // Imports are in the store and nowhere else, so a listing built only from the agent's
+    // directory would leave out projects this machine can plainly read.
+    const imported = (await listStored(dataDir))
+      .filter((row) => row.imported_at !== null)
+      .map((row) => ({
+        key: row.project,
+        path: null,
+        dir: '',
+        sessions: [],
+        lastActivity: Date.parse(row.imported_at ?? row.last_ts ?? '') || 0,
+        slug: row.slug,
+      }))
+    const listed = [...own, ...imported]
+    const skippedTemp = projects.length - own.length
     if (values.json) {
       console.log(
         JSON.stringify(
           listed.map((p) => ({
             key: p.key,
             path: p.path,
+            slug: p.slug,
+            imported: p.slug !== undefined,
             sessions: p.sessions.length,
             last_activity: new Date(p.lastActivity).toISOString(),
           })),
@@ -955,8 +1239,15 @@ async function main(): Promise<void> {
     for (const project of listed) {
       const name = project.path ? project.path.split('/').pop()! : project.key
       const count = project.sessions.length
+      const where =
+        project.slug !== undefined
+          ? `(imported)  ${project.slug}`
+          : project.path
+            ? shorten(project.path)
+            : '(path unknown)'
+      const sessions = project.slug === undefined ? `${count} session${count === 1 ? '' : 's'}` : ''
       console.log(
-        `  ${pad(name, 28)}${pad(`${count} session${count === 1 ? '' : 's'}`, 14)}${pad(ago(project.lastActivity), 13)}${project.path ? shorten(project.path) : '(path unknown)'}`,
+        `  ${pad(name, 28)}${pad(sessions, 14)}${pad(ago(project.lastActivity), 13)}${where}`,
       )
     }
     console.log(`\n  ${listed.length} projects`)
@@ -974,7 +1265,18 @@ async function main(): Promise<void> {
 
   const READ_COMMANDS = ['sessions', 'session', 'tasks', 'task', 'rounds', 'round', 'tools', 'analyze']
   if (READ_COMMANDS.includes(command)) {
-    const { projects: matched } = await resolveTargets(projects, target, targeting)
+    const { projects: found } = await resolveTargets(projects, target, targeting)
+    // An imported project is in the store and nowhere else: the agent never ran it here, so
+    // discovery cannot see it. Matching a name against the store as well is what makes one
+    // readable — and if you have imported someone's copy of a project you also work in, both
+    // answer to the name, which is the truth. A detail view then asks you to say which.
+    const collected: Project[] = []
+    for (const project of found) {
+      if ((await findStored(dataDir, slugFor(project))) !== null) collected.push(project)
+    }
+    const stored = await storedMatches(dataDir, target)
+    const extra = stored.filter((row) => !collected.some((p) => slugFor(p) === row.slug))
+    const matched = collected.length + extra.length > 0 ? [...collected, ...extra] : found
     if (matched.length === 0) noMatch(projects, target)
 
     const width = Math.max(60, Math.min(process.stdout.columns ?? 100, 120)) - 8
@@ -1037,9 +1339,12 @@ async function main(): Promise<void> {
       // Labels depend on what came before in a task, so they are worked out over the whole project
       // once and looked up by every table, rather than recomputed per page.
       const work = printableWork(rounds)
+      // Rates are read once per project rather than per table, so every share on the page is a
+      // share of the same money.
+      const pricing = await readPricing(dataDir)
 
       if (command === 'sessions') {
-        const rows = sessionRows(rounds)
+        const rows = sessionRows(rounds, pricing)
         if (values.json) {
           output.push(matched.length > 1 ? { project: projectName(project), path: project.path, sessions: rows } : rows)
           continue
@@ -1075,11 +1380,11 @@ async function main(): Promise<void> {
 
         const analyses = groups.map((group) => ({
           name: group.name,
-          analysis: categoryTally(group.rounds, axis),
+          analysis: categoryTally(group.rounds, pricing, axis),
         }))
 
         // The cache always describes the whole project, whatever slice was asked to be printed.
-        const whole = values.by === undefined && scope === rounds ? analyses[0]!.analysis : categoryTally(rounds, axis)
+        const whole = values.by === undefined && scope === rounds ? analyses[0]!.analysis : categoryTally(rounds, pricing, axis)
         await writeAnalysis(
           analysisFile(dataDir, project),
           { rounds: rounds.length, toolless: whole.coverage.toolless },
@@ -1133,7 +1438,7 @@ async function main(): Promise<void> {
       if (command === 'tasks') {
         // `--session` narrows to one session, the same way it does on `rounds`.
         const mine = session === undefined ? rounds : rounds.filter((r) => r.session === session)
-        const rows = taskRows(mine)
+        const rows = taskRows(mine, pricing)
         if (values.json) {
           output.push(matched.length > 1 ? { project: projectName(project), path: project.path, tasks: rows } : rows)
           continue
@@ -1152,8 +1457,8 @@ async function main(): Promise<void> {
           throw error
         }
         const mine = rounds.filter((round) => round.session === id)
-        const row = sessionRows(mine)[0]!
-        const tasks = taskRows(mine)
+        const row = sessionRows(mine, pricing)[0]!
+        const tasks = taskRows(mine, pricing)
         if (values.json) {
           // The session's own row, except that `tasks` carries the tasks rather than counting
           // them: the count is the length, and a second key for it would be the same fact twice.
@@ -1173,7 +1478,7 @@ async function main(): Promise<void> {
           if (error instanceof SelectorError) fail(error.message)
           throw error
         }
-        const row = taskRows(mine)[0]!
+        const row = taskRows(mine, pricing)[0]!
         if (values.json) {
           // As with `session`, the detail view's own key carries the things rather than counting
           // them: `rounds` is the rounds, and the count is its length.
@@ -1256,16 +1561,22 @@ async function main(): Promise<void> {
   console.log('')
   let rounds = 0
   let added = 0
+  let rebuilt = 0
   for (const result of results) {
     rounds += result.rounds
-    added += result.new_rounds
+    // A rebuild rewrites rounds that were already there, so counting them as new would overstate
+    // what the run found by the size of the whole store.
+    if (result.rebuilt) rebuilt += 1
+    else added += result.new_rounds
+    const change = result.rebuilt ? 'rebuilt' : result.new_rounds > 0 ? `+${result.new_rounds}` : '·'
     // The path, not the name, is what identifies a project, since several can share a basename.
     console.log(
-      `  ${pad(result.project, 24)}${pad(`${result.rounds} rounds`, 13)}${pad(result.new_rounds > 0 ? `+${result.new_rounds}` : '·', 9)}${result.path ? shorten(result.path) : '(path unknown)'}`,
+      `  ${pad(result.project, 24)}${pad(`${result.rounds} rounds`, 13)}${pad(change, 9)}${result.path ? shorten(result.path) : '(path unknown)'}`,
     )
   }
   console.log('')
-  console.log(`  ${results.length} projects · ${rounds} rounds · +${added} new`)
+  const note = rebuilt > 0 ? ` · ${rebuilt} rebuilt for the current schema` : ''
+  console.log(`  ${results.length} projects · ${rounds} rounds · +${added} new${note}`)
   console.log(`  → ${shorten(dataDir)}/projects`)
   console.log('')
   if (skippedTemp > 0) {
@@ -1276,6 +1587,13 @@ async function main(): Promise<void> {
   console.log('  `probez <path>` shows one project, including where its rounds.jsonl is.')
   console.log('')
 }
+
+// `probez export big-project | head` closes the pipe while output is still being written, which is
+// a normal thing to do and not an error to report. Anything else on stdout still is.
+process.stdout.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code === 'EPIPE') process.exit(0)
+  throw error
+})
 
 main().catch((error: unknown) => {
   console.error(`probez: ${error instanceof Error ? error.message : String(error)}`)

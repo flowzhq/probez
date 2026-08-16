@@ -63,7 +63,13 @@ export interface CategoryRow {
   rounds: number
   errors: number
   ms: number
+  in_tokens: number
+  in_uncached: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
+  in_cache_read: number
   out_tokens: number
+  cost: number
   sub?: CategoryRow[]
 }
 
@@ -74,12 +80,17 @@ export interface Coverage {
   weight: number
   unclassified: number
   targeted: number
+  /** Dollars across the classified rounds — the denominator for every share. */
+  cost: number
+  /** Classified rounds whose model has no rate, and so are outside `cost`. */
+  unpriced: number
 }
 
 export interface Analysis {
   rows: CategoryRow[]
   coverage: Coverage
   unknown: Array<{ name: string; weight: number }>
+  unpriced: Array<{ model: string; rounds: number }>
 }
 
 export interface StoredProject {
@@ -92,10 +103,17 @@ export interface StoredProject {
   rounds: number
   tasks: number
   in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
+  in_cache_read: number
   out_tokens: number
   first_ts: string | null
   last_ts: string | null
   collected_at: string | null
+  /** When this arrived as an export, or null when it was collected on this machine. */
+  imported_at: string | null
 }
 
 export interface TraceRound {
@@ -106,7 +124,9 @@ export interface TraceRound {
   ref: string
   ts: string | null
   ms: number | null
+  gen_ms: number | null
   in_tokens: number
+  in_cache_read: number
   out_tokens: number
   thinking_chars: number
   tools: number
@@ -131,14 +151,28 @@ export interface Trace {
   span: { first: string | null; last: string | null; elapsed_ms: number; active_ms: number }
 }
 
-export interface ViewSession {
+/** What a span of rounds cost and changed. Mirrors `Totals` in src/inspect.ts. */
+export interface Totals {
+  in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
+  in_cache_read: number
+  out_tokens: number
+  cost: number
+  gen_ms: number
+  wait_ms: number
+  added: number
+  removed: number
+}
+
+export interface ViewSession extends Totals {
   session: string
   rounds: number
   tasks: number
   tool_calls: number
   errors: number
-  in_tokens: number
-  out_tokens: number
   first_ts: string | null
   last_ts: string | null
   model: string | null
@@ -147,12 +181,10 @@ export interface ViewSession {
   work: Dominant | null
 }
 
-export interface ViewTask {
+export interface ViewTask extends Totals {
   session: string
   task: number
   rounds: number
-  in_tokens: number
-  out_tokens: number
   ms: number
   first_ts: string | null
   asked: string
@@ -166,18 +198,61 @@ export interface ToolRow {
   name: string
   calls: number
   errors: number
+  /** Calls that failed without the harness saying so: stderr, or cut short. */
+  quiet: number
   result_chars: number
   ms: number
   kind?: string
   sub?: ToolRow[]
 }
 
+export interface Patch {
+  files: number
+  added: number
+  removed: number
+}
+
 export interface ToolCall {
   name: string | null
+  id: string | null
   input: unknown
+  input_chars: number
   result_chars: number | null
   is_error: boolean | null
+  stderr_chars: number | null
+  interrupted: boolean | null
+  patch: Patch | null
+  emitted_at: string | null
+  result_at: string | null
   ms: number | null
+}
+
+export interface RoundEvent {
+  type: 'user_message' | 'tool_result' | 'reasoning' | 'text' | 'tool_call'
+  ts: string
+  chars?: number
+  tool_call_id?: string
+}
+
+export interface Rates {
+  in: number
+  cache_write_5m: number
+  cache_write_1h: number
+  cache_read: number
+  out: number
+}
+
+export interface PricedModel {
+  model: string
+  rounds: number
+  rates: Rates | null
+  custom: boolean
+}
+
+export interface PricingPayload {
+  file: string
+  models: PricedModel[]
+  defaults: Record<string, Rates>
 }
 
 export interface Round {
@@ -188,13 +263,25 @@ export interface Round {
   id: string
   ts: string | null
   ms: number | null
+  gen_ms: number | null
+  wait_ms: number | null
+  first_input: 'user_message' | 'tool_result' | null
   model: string | null
   in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
+  in_cache_read: number
   out_tokens: number
+  mcp_server: string | null
+  mcp_tool: string | null
+  skill: string | null
   user_text: string
   text: string
   thinking_chars: number
   tools: ToolCall[]
+  events: RoundEvent[]
 }
 
 export interface Label {
@@ -220,6 +307,8 @@ export interface ProjectPayload {
   project: StoredProject
   tool_calls: number
   errors: number
+  cost: number
+  unpriced: number
   analysis: Analysis
   sessions: ViewSession[]
 }
@@ -252,6 +341,18 @@ export interface ToolsPayload {
   kinds: ToolRow[]
 }
 
+export interface ImportResult {
+  slug: string
+  dir: string
+  project: string
+  name: string
+  rounds: number
+  sessions: number
+  tasks: number
+  skipped: number
+  replaced: boolean
+}
+
 export interface SyncResult {
   slug: string
   project: string
@@ -266,10 +367,14 @@ export interface SyncResult {
   collected_at: string | null
 }
 
-async function post<T>(path: string): Promise<T> {
+async function post<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method: 'POST',
-    headers: token === null ? {} : { 'x-probez-token': token },
+    headers: {
+      ...(token === null ? {} : { 'x-probez-token': token }),
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
     cache: 'no-store',
   })
   if (!response.ok) {
@@ -357,4 +462,7 @@ export const api = {
   round: (slug: string, session: string, round: number) =>
     get<RoundPayload>(`/projects/${slug}/sessions/${session}/rounds/${round}`),
   tools: (slug: string) => get<ToolsPayload>(`/projects/${slug}/tools`),
+  pricing: () => get<PricingPayload>('/pricing'),
+  savePricing: (models: Record<string, Rates>) => post<PricingPayload>('/pricing', { models }),
+  import: (text: string, from: string) => post<ImportResult>('/import', { text, from }),
 }

@@ -459,6 +459,53 @@ tbody tr.row:hover {
   font-size: 11px;
 }
 
+/*
+ * Sync and Export are icons. Both keep a real hit area — 24px is the smallest square a pointer
+ * finds reliably — rather than shrinking to the glyph.
+ */
+.action.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 5px;
+}
+
+.actions-compact .action.icon {
+  min-width: 24px;
+  height: 20px;
+}
+
+.action .caret {
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+/* A spin says "still going" where the label used to say "Syncing…". */
+@keyframes probez-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.action .spin {
+  transform-origin: 50% 50%;
+  animation: probez-spin 1.1s linear infinite;
+}
+
+/*
+ * Anyone who has asked for less motion gets none: the button is already disabled while it works,
+ * and the sentence that appears afterwards is the real report either way.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .action .spin {
+    animation: none;
+  }
+}
+
 .menu-anchor {
   position: relative;
 }
@@ -504,6 +551,63 @@ tbody tr.row:hover {
 
 .said.bad {
   color: var(--bad);
+}
+
+/* A floated report still reads as a failure when it is one — these sit after the box rules. */
+.actions-float .said.bad,
+.actions-compact .said.bad {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+/*
+ * Same reasoning in a page header: the sentence is wider than the button, and letting it sit in the
+ * flow wraps the whole control onto its own line — so the button you just pressed moves out from
+ * under the pointer. It reports underneath instead, and nothing shifts.
+ */
+.actions-float {
+  position: relative;
+}
+
+.actions-float .said {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 25;
+  max-width: 60vw;
+  padding: 3px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-2);
+  background: var(--raised);
+  border: 1px solid var(--ring);
+  border-radius: 3px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+
+/*
+ * In a table row there is no width to report into: letting the sentence wrap re-flows every column
+ * and makes the row jump while you read it. So it floats under the button instead, the same way the
+ * menu above it does, and the table underneath does not move at all.
+ */
+.actions-compact {
+  position: relative;
+}
+
+.actions-compact .said {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 25;
+  max-width: 60vw;
+  padding: 3px 8px;
+  white-space: nowrap;
+  color: var(--ink-2);
+  background: var(--raised);
+  border: 1px solid var(--ring);
+  border-radius: 3px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
 }
 
 /* Trace ------------------------------------------------------------------- */
@@ -685,4 +789,109 @@ tbody tr.row:hover {
   padding: 14px 16px;
   max-width: 620px;
   margin: 48px auto;
+}
+
+/* Settings ---------------------------------------------------------------- */
+
+/*
+ * A rate is a number you compare down a column, so the inputs are right-aligned and tabular: a
+ * misplaced decimal point is visible as a ragged column before it is visible as a wrong total.
+ */
+.rate {
+  width: 78px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+}
+
+.rate:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 1px;
+}
+
+.rate::placeholder {
+  color: var(--ink-3);
+}
+
+button.save,
+button.ghost {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+}
+
+button.ghost {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+button.ghost:hover {
+  color: var(--ink);
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/*
+ * The mark that says a label has an explanation behind it. Deliberately quiet — it sits beside a
+ * number and must not compete with it — but focusable, so the explanation is reachable without a
+ * mouse even though the tooltip itself is the browser's.
+ */
+.info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  margin-left: 4px;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  font-size: 9px;
+  font-style: italic;
+  line-height: 1;
+  color: var(--ink-3);
+  cursor: default;
+  vertical-align: 1px;
+}
+
+.info:hover,
+.info:focus-visible {
+  color: var(--ink);
+  border-color: var(--axis);
+}
+
+/* A hairline between what a menu does to the store and what it hands to your browser. */
+.menu-rule {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--rule);
+}
+
+/* Settings, as a gear. Sized and treated like the theme controls beside it, so the header reads
+   as one row of icons rather than a link that happens to sit next to some buttons. */
+.gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border-radius: 3px;
+  color: var(--ink-3);
+}
+
+.gear:hover,
+.gear:focus-visible {
+  color: var(--ink);
+  background: var(--wash);
 }
