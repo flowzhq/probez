@@ -74,7 +74,7 @@ export function Project({ slug }: { slug: string }): ReactElement {
                 ['rounds', count(data.project.rounds)],
                 ['tool calls', count(data.tool_calls)],
                 ['in', <InTokens of={data.project} />],
-                ['reused', <Reused of={data.project} />, "Share of this project's input tokens that were served from the prompt cache rather than processed fresh. Agents resend the whole conversation every round, so almost all of it is a repeat — and a cache read is billed at about a tenth of the input rate, which is why a huge 'in' figure can still be cheap."],
+                ['reused', <Reused of={data.project} />, "Share of this project's input tokens that were served from the prompt cache rather than processed fresh. Agents resend the whole conversation every round, so almost all of it is a repeat — and a cache read is billed at about a tenth of the input rate, which is why a huge 'read' figure can still be cheap."],
                 ['out', tokens(data.project.out_tokens)],
                 ['cost', money(data.cost), "What this cost at the rates under Settings, worked out per round from its own model's prices and summed. Rounds whose model has no rate are left out."],
               ]}
