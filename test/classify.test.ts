@@ -114,6 +114,27 @@ test('a redirect inside a quoted string or a heredoc body is data, not a redirec
   assert.equal(writesToFile('git commit -m "redirect output > report.md"'), null)
 })
 
+test('a greater-than in a heredoc body is a comparison, not a redirect', () => {
+  // Both of these read a store and print what they found. The `>` is Python comparing a length,
+  // and reading it as a redirect filed a script that inspects the project as one that changed it.
+  const truncating =
+    "python3 - <<'EOF'\nimport json\nd=json.loads(open('rounds.jsonl').readline())\n" +
+    "def trunc(o):\n    if isinstance(o,str) and len(o)>120: return o[:120]\n    return o\n" +
+    'print(json.dumps(trunc(d),indent=2))\nEOF'
+  assert.equal(writesToFile(truncating), null)
+  assert.equal(cell(bash(truncating)), 'reconstruction/inspect')
+
+  const filtering =
+    "python3 - <<'EOF'\nfor t in tools:\n    val=t.get('content') or ''\n" +
+    "    if len(str(val))>200:\n        print(t['name'], len(str(val)))\nEOF"
+  assert.equal(writesToFile(filtering), null)
+  assert.equal(cell(bash(filtering)), 'reconstruction/inspect')
+
+  // A destination that names a file still reads as a write, which is what the rule is for. The
+  // body names no quoted path, so the write is reported with the target left unresolved.
+  assert.equal(writesToFile("bash <<'EOF'\ndate > docs/log.md\nEOF"), '')
+})
+
 test('sed in place is left to the command parser, which already reads the flag', () => {
   // `bash.ts` calls this `edit`; the write-sniff must not claim it a second time.
   assert.equal(writesToFile("sed -i '' 's/a/b/' notes.md"), null)

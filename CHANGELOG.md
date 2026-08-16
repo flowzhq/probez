@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [Unreleased]
+
+### Fixed
+
+- **A `>` inside a heredoc is a comparison, not a redirect.** The write-sniff that decides whether
+  `python3 - <<'EOF'` changed a file or reported on one read Python's greater-than as a shell
+  redirect: a body containing `if len(o)>120:` or `if len(str(val))>200:` was filed as
+  `implementation/modify` with no target, when the script only read a store and printed what it
+  found. The redirect now has to name a file — a `.` or a `/` in the destination — which is the
+  question the non-heredoc redirect scan already asked. Scripts that filter on a length or a count
+  land in `reconstruction/inspect` where they belong.
+
 ## [0.3.2] - 2026-08-16
 
 The classifier, taken apart. It did two jobs in one pass — working out what a call mechanically did,

@@ -315,9 +315,17 @@ const SCRATCH = /^(\/dev\/null|\/tmp\/|\/private\/tmp\/|\/var\/folders\/|\$TMPDI
  * The last alternative is a shell redirect inside the body, and it has to be anchored to a position
  * a command could start from with no quote in between. Unanchored, it matches the `>` in
  * `print("wrote > notes.md")` and files a line that reports on a file as one that wrote it.
+ *
+ * The anchor is not enough on its own, because the body is usually Python and `>` is also how
+ * Python compares. `if len(o)>120:` starts a line, carries no quote before the `>`, and used to
+ * read as a redirect — which made every script that filters on a length or a count arrive as
+ * `implementation/modify` with no target, the commonest false positive in a real store. So the
+ * destination has to look like a file: a `.` or a `/` in the token, which a comparison against a
+ * number or a bare name does not have. That is the same question the `REDIRECT` scan below asks by
+ * running its match through `targetOf`, and a bare `> Makefile` inside a heredoc is the price.
  */
 const WRITE_VERB =
-  /open\s*\([^)]*,\s*['"][wa]|write_text|writeFileSync|appendFileSync|\.write\s*\(|\bdump\s*\(|(^|[;&|])[^'"\n]*>>?\s*['"]?[\w./-]/m
+  /open\s*\([^)]*,\s*['"][wa]|write_text|writeFileSync|appendFileSync|\.write\s*\(|\bdump\s*\(|(^|[;&|])[^'"\n]*>>?\s*['"]?[\w-]*[./][\w./-]/m
 
 const REDIRECT = /(^|[^0-9&>])>>?\s*(['"]?)([^\s'"|;&<>]+)\2/g
 
