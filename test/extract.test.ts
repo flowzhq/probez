@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
-import { extractSession, truncateInput } from '../src/extract.js'
+import { extractSession, foldPatch, truncateInput } from '../src/extract.js'
 import type { Round } from '../src/types.js'
 
 // Compiled output lives at dist/test/, so the fixture is two levels up from here.
@@ -53,6 +53,60 @@ test('input tokens sum the uncached and cached halves', () => {
   assert.equal(r.out_tokens, 20)
 })
 
+test('the three input classes are kept apart, and still sum to the total', () => {
+  const r = round('msg_b')
+  assert.equal(r.in_uncached, 2)
+  assert.equal(r.in_cache_write, 0)
+  assert.equal(r.in_cache_read, 200)
+  assert.equal(r.in_uncached + r.in_cache_write + r.in_cache_read, r.in_tokens)
+
+  // The snapshot that wins for the total wins for the split too, rather than the two disagreeing.
+  const a = round('msg_a')
+  assert.equal(a.in_uncached, 5)
+  assert.equal(a.in_cache_write, 100)
+  assert.equal(a.in_cache_read, 0)
+  assert.equal(a.in_uncached + a.in_cache_write + a.in_cache_read, a.in_tokens)
+})
+
+test('a round records its moments in file order', () => {
+  assert.deepEqual(
+    round('msg_a').events.map((e) => e.type),
+    ['user_message', 'reasoning', 'text', 'tool_call'],
+  )
+  // The result that prompted the round precedes it in the file and belongs to it here.
+  assert.deepEqual(
+    round('msg_b').events.map((e) => e.type),
+    ['tool_result', 'text', 'tool_call'],
+  )
+  const call = round('msg_a').events.find((e) => e.type === 'tool_call')
+  assert.equal(call?.tool_call_id, 'tu_1')
+})
+
+test('generation time spans the wait before the model spoke, which ms does not', () => {
+  // msg_b is prompted at 00:00:04 and answers at 00:00:05, all in one record: ms sees none of it.
+  const b = round('msg_b')
+  assert.equal(b.ms, 0)
+  assert.equal(b.gen_ms, 1000)
+  assert.equal(b.first_input, 'tool_result')
+})
+
+test('waiting on a person is measured, and only when there was a person to wait for', () => {
+  // msg_b's round was driven by a tool result, so nobody was waited on.
+  assert.equal(round('msg_b').wait_ms, null)
+  // Nothing had been said before msg_a, so its user message waited on nothing.
+  assert.equal(round('msg_a').wait_ms, null)
+  // msg_b last spoke at 00:00:05; the prompt behind msg_c arrived at 00:00:08.
+  assert.equal(round('msg_c').wait_ms, 3000)
+})
+
+test('work the harness attributed to a server or a skill says so', () => {
+  const r = round('msg_c')
+  assert.equal(r.mcp_server, 'figma')
+  assert.equal(r.mcp_tool, 'get_screenshot')
+  assert.equal(r.skill, 'dataviz')
+  assert.equal(round('msg_a').mcp_server, null)
+})
+
 test('user text attaches to the round it prompted', () => {
   assert.equal(round('msg_a').user_text, 'add retries to the fetch loop')
   // Driven by a tool result, not a user turn.
@@ -100,6 +154,50 @@ test('long tool inputs are truncated but paths survive', () => {
   assert.equal(input.file_path, '/tmp/demo/loop.ts')
   assert.equal(input.new_string, 'z')
   assert.equal(input.old_string, `${'y'.repeat(200)}…(2500 chars)`)
+})
+
+test('a truncated input still says how large it was', () => {
+  const edit = round('msg_b').tools[0]!
+  // The kept value is far shorter than what was passed, and the size is what says so.
+  assert.ok(edit.input_chars > 2500)
+  assert.ok(JSON.stringify(edit.input).length < edit.input_chars)
+})
+
+test('a call carries its id and both ends of its wall time', () => {
+  const read = round('msg_a').tools[0]!
+  assert.equal(read.id, 'tu_1')
+  assert.equal(read.emitted_at, '2026-01-01T00:00:03.000Z')
+  assert.equal(read.result_at, '2026-01-01T00:00:04.000Z')
+})
+
+test('a command that failed while the harness reported success is still visible', () => {
+  const bash = round('msg_c').tools[0]!
+  // This is the gap the harness flag leaves: it says the call was accepted, not that it worked.
+  assert.equal(bash.is_error, false)
+  assert.equal(bash.stderr_chars, 9)
+  assert.equal(bash.interrupted, true)
+})
+
+test('an edit records the lines it changed', () => {
+  const edit = round('msg_b').tools[0]!
+  assert.deepEqual(edit.patch, { files: 1, added: 2, removed: 1 })
+  // A tool that does not patch files says so by having none, not by reporting zeroes.
+  assert.equal(round('msg_a').tools[0]!.patch, null)
+})
+
+test('a new file counts as lines added, not as a change of nothing', () => {
+  // A create has nothing to diff against, so it arrives with an empty patch and its content.
+  assert.deepEqual(
+    foldPatch({ type: 'create', filePath: '/tmp/demo/new.ts', structuredPatch: [], content: 'a\nb\nc' }),
+    { files: 1, added: 3, removed: 0 },
+  )
+  // An empty write really did add nothing, and a result with no patch at all is not an edit.
+  assert.deepEqual(foldPatch({ filePath: '/tmp/demo/new.ts', structuredPatch: [], content: '' }), {
+    files: 1,
+    added: 0,
+    removed: 0,
+  })
+  assert.equal(foldPatch({ stdout: 'hi' }), null)
 })
 
 test('truncateInput leaves short values alone and recurses', () => {

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { api } from '../api'
 import { Actions } from '../components/Actions'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
+import { InTokens } from '../components/Tokens'
 import { MixBar } from '../components/WorkBars'
 import { ago, count, percent, tokens } from '../format'
 import { go, href, linkProps } from '../router'
@@ -83,7 +84,9 @@ export function Projects(): ReactElement {
                       <td className="r num">{project.sessions}</td>
                       <td className="r num">{project.tasks}</td>
                       <td className="r num">{count(project.rounds)}</td>
-                      <td className="r num dim">{tokens(project.in_tokens)}</td>
+                      <td className="r num dim">
+                        <InTokens of={project} />
+                      </td>
                       <td className="r num dim">{tokens(project.out_tokens)}</td>
                       <td className="r muted nowrap">{ago(project.last_ts)}</td>
                       <td className="r">

@@ -26,6 +26,7 @@ probez  flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   sessions   5         rounds   442      tasks  17
   tokens     67.5M in · 504.8K out
+             825 new · 1.4M cached · 66.1M reused  (98% reused)
   span       Aug 11 – Aug 12, 2026
   top tools  Bash 171 · Edit 101 · Write 78 · Read 58 · ToolSearch 4
 
@@ -140,9 +141,9 @@ $ probez sessions flowz-mcp
   SESSION    ROUNDS  TASKS  TOOLS           IN      OUT  WORK       LAST
   0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 40%   4 days ago
   0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   4 days ago
-  51cced08      134      4  131          24.3M   138.1K  Impl 41%   3 days ago
-  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 68%  3 days ago
-  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 41%  3 days ago
+  51cced08      134      4  131          24.3M   138.1K  Impl 41%   4 days ago
+  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 68%  4 days ago
+  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 41%  4 days ago
 
   5 sessions · 442 rounds
   `probez session <id>` shows one of them, task by task.
@@ -158,10 +159,10 @@ $ probez session flowz-mcp 0b2cc149
   session 0b2cc149  ·  4 tasks · 87 rounds · 10.1M in · 97.6K out · 2 tool errors · Aug 11, 2026
 
   TASK         ROUNDS       IN     OUT     TIME  WORK       ASKED
-  0b2cc149#1        6   227.8K    1.2K     3.0s  Recon 100% did we implemented T001?
-  0b2cc149#2        2    81.4K     233    863ms  Recon 50%  start with T-003 first
-  0b2cc149#3       46     4.4M   73.2K     4.9m  Impl 35%   Execute task spec `$1`. 1. Read `…
-  0b2cc149#4       33     5.4M   23.0K     1.2m  Impl 49%   continue
+  0b2cc149#1        6   227.8K    1.2K    27.7s  Recon 100% did we implemented T001?
+  0b2cc149#2        2    81.4K     233     5.0s  Recon 50%  start with T-003 first
+  0b2cc149#3       46     4.4M   73.2K    16.3m  Impl 35%   Execute task spec `$1`. 1. Read `…
+  0b2cc149#4       33     5.4M   23.0K     5.2m  Impl 49%   continue
 
   4 tasks · 87 rounds. `probez task 0b2cc149#1` shows one in full
 ```
@@ -174,7 +175,7 @@ $ probez task flowz-mcp 0b2cc149#2
 
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
-  task 2 of session 0b2cc149  ·  2 rounds · 81.4K in · 233 out · 863ms
+  task 2 of session 0b2cc149  ·  2 rounds · 81.4K in · 233 out · 5.0s working
 
   asked
     start with T-003 first
@@ -195,6 +196,8 @@ $ probez round flowz-mcp 0bfa7fe3#1.36
 
   round 0bfa7fe3#1.36 · main · opus-5
   124.0K in · 121 out · 825ms · 0 thinking chars
+  2 new · 10.3K cached · 113.8K reused
+  generated in 3.4s
   session 0bfa7fe3-f9c1-448f-bbac-a4c58b85e5bf · 2026-08-11T18:08:24.141Z
 
   assistant
@@ -436,7 +439,8 @@ poor one for reading: the slowest round in a session can be four minutes and the
 milliseconds, so on a time axis most of the rounds collapse into slivers you cannot click. Switch to
 it when you want to see where the wait actually was — including the gaps where it was your turn.
 The header carries both totals either way, and they are different numbers: `working` is the time the
-rounds took, `elapsed` is how long you sat there.
+model spent generating, `elapsed` is how long you sat there. The gap between them is the tools it
+waited on and the turns where it was waiting on you.
 
 **Phases are smoothed, and the page says so.** Real work alternates round to round — read a file,
 edit it, read the next — so collapsing the raw per-round category gives a band every round or two.
@@ -488,24 +492,51 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 
 ```json
 {
-  "session": "0b2cc149-f9c1-448f-bbac-a4c58b85e5bf",
-  "round": 12, "task": 5, "agent": "main",
-  "id": "msg_011CdwVKHe1jaMmvqeWS3tZp",
-  "ts": "2026-08-11T19:09:53.830Z", "ms": 8420,
-  "model": "claude-opus-5", "in_tokens": 36028, "out_tokens": 132,
-  "user_text": "why does the sync loop drop events?",
-  "text": "Let me trace how EventLoop.flush calls into...",
-  "thinking_chars": 1841,
+  "session": "0bfa7fe3-f9c1-448f-bbac-a4c58b85e5bf",
+  "round": 87, "task": 3, "agent": "main",
+  "id": "msg_011CdwSqg3tdZwYQ7vw69XdB",
+  "ts": "2026-08-11T18:37:28.976Z", "ms": 12571, "gen_ms": 16407, "wait_ms": null,
+  "first_input": "tool_result",
+  "model": "claude-opus-5",
+  "in_tokens": 208130, "in_uncached": 1, "in_cache_write": 1109, "in_cache_read": 207020,
+  "out_tokens": 1307,
+  "mcp_server": null, "mcp_tool": null, "skill": null,
+  "user_text": "",
+  "text": "Now the composer becomes a merger rather than the sole producer:",
+  "thinking_chars": 0,
   "tools": [
-    {"name": "Read", "input": {"file_path": "src/loop.ts"}, "result_chars": 8123, "is_error": false, "ms": 42}
+    {"name": "Edit", "id": "toolu_01JSLS17DXQPPbbA1Qj1W5vS",
+     "input": {"file_path": "internal/compose/composer.go", "old_string": "func hasUnresolved…"},
+     "input_chars": 3045, "result_chars": 175,
+     "is_error": false, "stderr_chars": null, "interrupted": null,
+     "patch": {"files": 1, "added": 76, "removed": 0},
+     "emitted_at": "2026-08-11T18:37:41.547Z", "result_at": "2026-08-11T18:37:41.647Z", "ms": 100}
+  ],
+  "events": [
+    {"type": "tool_result", "ts": "2026-08-11T18:37:25.140Z", "chars": 315,
+     "tool_call_id": "toolu_01RvZYdDLoxC9ybqoKZ4RSjD"},
+    {"type": "text", "ts": "2026-08-11T18:37:28.976Z", "chars": 64},
+    {"type": "tool_call", "ts": "2026-08-11T18:37:41.547Z",
+     "tool_call_id": "toolu_01JSLS17DXQPPbbA1Qj1W5vS"}
   ]
 }
 ```
 
+Two of those repay a second look. **`in_tokens` is the sum of the three fields after it**, and the
+last of them is usually almost all of it — cache reads are billed at a fraction of the rate, so the
+total on its own is a poor guide to what a round cost. And **`ms` is not how long the round took**:
+it spans the records the round wrote, while `gen_ms` starts from the input that prompted it and so
+includes the wait before the model said anything. Across this project the two are 0.66h and 1.82h.
+
+`is_error` is the harness's flag, meaning the call was accepted — a `Bash` call whose test suite
+fails still comes back `false`. `stderr_chars` and `interrupted` are what actually happened.
+
 A verbatim copy of each original session file is kept alongside it, so nothing is lost if you later
 want a field probez does not normalize. Those copies are most of the disk footprint. Collecting
-every project on a machine with a year of history took about 300 MB, of which the normalized rounds
-were 19 MB.
+every project on a machine with a year of history took about 305 MB, of which the session copies
+were 284 MB and the normalized rounds 30 MB. They are also what a schema change rebuilds from: when
+`collect` meets a store from an older probez it rewrites it from those copies, including sessions
+the agent has since pruned.
 
 ## Privacy
 

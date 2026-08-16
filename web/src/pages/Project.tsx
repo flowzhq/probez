@@ -4,6 +4,7 @@ import { api } from '../api'
 import type { ToolRow } from '../api'
 import { Actions } from '../components/Actions'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
+import { InTokens, Reused } from '../components/Tokens'
 import { WorkBars } from '../components/WorkBars'
 import { ago, count, duration, percent, shortId, shortModel, tokens, when } from '../format'
 import { go, href, linkProps } from '../router'
@@ -45,7 +46,8 @@ export function Project({ slug }: { slug: string }): ReactElement {
                 ['tasks', data.project.tasks],
                 ['rounds', count(data.project.rounds)],
                 ['tool calls', count(data.tool_calls)],
-                ['in', tokens(data.project.in_tokens)],
+                ['in', <InTokens of={data.project} />],
+                ['reused', <Reused of={data.project} />],
                 ['out', tokens(data.project.out_tokens)],
               ]}
             />
@@ -80,6 +82,8 @@ export function Project({ slug }: { slug: string }): ReactElement {
                     <th className="r">Rounds</th>
                     <th className="r">Tools</th>
                     <th>Work</th>
+                    <th className="r">In</th>
+                    <th className="r">Working</th>
                     <th className="r">Elapsed</th>
                   </tr>
                 </thead>
@@ -108,6 +112,10 @@ export function Project({ slug }: { slug: string }): ReactElement {
                           ? '—'
                           : `${session.work.short} ${percent(session.work.share)}`}
                       </td>
+                      <td className="r num dim">
+                        <InTokens of={session} />
+                      </td>
+                      <td className="r num dim">{duration(session.active_ms)}</td>
                       <td className="r num dim">{duration(session.elapsed_ms)}</td>
                     </tr>
                   ))}
@@ -132,6 +140,7 @@ function Tools({ slug, read }: { slug: string; read: number }): ReactElement {
   const rows = by === 'command' ? data.tools : data.kinds
   const calls = data.tools.reduce((n, row) => n + row.calls, 0)
   const errors = data.tools.reduce((n, row) => n + row.errors, 0)
+  const quiet = data.tools.reduce((n, row) => n + row.quiet, 0)
 
   return (
     <>
@@ -149,6 +158,9 @@ function Tools({ slug, read }: { slug: string; read: number }): ReactElement {
             <th>Tool</th>
             <th className="r">Calls</th>
             <th className="r">Errors</th>
+            <th className="r" title="Calls that wrote to stderr or were cut short while the harness reported no error.">
+              Quiet
+            </th>
             <th className="r">Result</th>
             <th className="r">Time</th>
           </tr>
@@ -163,14 +175,21 @@ function Tools({ slug, read }: { slug: string; read: number }): ReactElement {
         </tbody>
       </table>
       <p className="note" style={{ marginTop: 12 }}>
-        {rows.length} tools · {count(calls)} calls · {errors} errors. A command is counted once per
-        call it appears in, so <span className="mono">cd repo &amp;&amp; npm test</span> counts for
-        both and the sub-rows add up to more than the row above them. Errors, result size and time
-        belong to the call, which has one result and one duration, so every command in a
-        multi-command call is charged the whole of it.
+        {rows.length} tools · {count(calls)} calls · {errors} errors · {quiet} quiet. A command is
+        counted once per call it appears in, so <span className="mono">cd repo &amp;&amp; npm test</span>{' '}
+        counts for both and the sub-rows add up to more than the row above them. Errors, result size
+        and time belong to the call, which has one result and one duration, so every command in a
+        multi-command call is charged the whole of it. <em>Errors</em> is the harness flag, which
+        says the call was accepted rather than that it worked; <em>quiet</em> is the calls that
+        wrote to stderr or were cut short without it noticing.
       </p>
     </>
   )
+}
+
+function quietTitle(row: ToolRow): string | undefined {
+  if (row.quiet === 0) return undefined
+  return `${row.quiet} of ${row.calls} calls wrote to stderr or were cut short, with no error reported`
 }
 
 function Row({ row, indent }: { row: ToolRow; indent: number }): ReactElement {
@@ -186,6 +205,9 @@ function Row({ row, indent }: { row: ToolRow; indent: number }): ReactElement {
       <td className="r num">{count(row.calls)}</td>
       <td className={`r num ${row.errors > 0 ? 'bad' : 'muted'}`}>
         {row.errors > 0 ? row.errors : '·'}
+      </td>
+      <td className={`r num ${row.quiet > 0 ? 'bad' : 'muted'}`} title={quietTitle(row)}>
+        {row.quiet > 0 ? row.quiet : '·'}
       </td>
       <td className="r num dim">{tokens(row.result_chars)}</td>
       <td className="r num dim">{duration(row.ms)}</td>

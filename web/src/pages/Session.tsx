@@ -2,12 +2,15 @@ import { useState } from 'react'
 
 import { api } from '../api'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
+import { InTokens, Lines, Reused } from '../components/Tokens'
 import { Trace } from '../components/Trace'
 import { WorkBars } from '../components/WorkBars'
 import { clip, count, duration, percent, shortId, shortModel, tokens, when } from '../format'
 import { go, href, linkProps } from '../router'
 import { useData } from '../useData'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
+
+type Fact = [string, ReactNode]
 
 /**
  * One session: the run, its shape, and the turns it was made of.
@@ -47,8 +50,20 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                 ['tool calls', data.session.tool_calls],
                 ['working', duration(data.session.active_ms)],
                 ['elapsed', duration(data.session.elapsed_ms)],
-                ['in', tokens(data.session.in_tokens)],
+                ...(data.session.wait_ms > 0
+                  ? [['waiting on you', duration(data.session.wait_ms)] as Fact]
+                  : []),
+                ['in', <InTokens of={data.session} />],
+                ['reused', <Reused of={data.session} />],
                 ['out', tokens(data.session.out_tokens)],
+                ...(data.session.added + data.session.removed > 0
+                  ? [
+                      [
+                        'lines',
+                        <Lines added={data.session.added} removed={data.session.removed} />,
+                      ] as Fact,
+                    ]
+                  : []),
               ]}
             />
 
@@ -77,6 +92,8 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                     <th className="r">Rounds</th>
                     <th className="r">Tools</th>
                     <th>Work</th>
+                    <th className="r">In</th>
+                    <th className="r">Lines</th>
                     <th className="r">Working</th>
                     <th className="r">Elapsed</th>
                   </tr>
@@ -102,7 +119,17 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                       <td className="dim nowrap">
                         {task.work === null ? '—' : `${task.work.short} ${percent(task.work.share)}`}
                       </td>
-                      <td className="r num dim">{duration(task.ms)}</td>
+                      <td className="r num dim">
+                        <InTokens of={task} />
+                      </td>
+                      <td className="r num dim nowrap">
+                        {task.added + task.removed > 0 ? (
+                          <Lines added={task.added} removed={task.removed} />
+                        ) : (
+                          <span className="muted">·</span>
+                        )}
+                      </td>
+                      <td className="r num dim">{duration(task.gen_ms)}</td>
                       <td className="r num dim">{duration(task.elapsed_ms)}</td>
                     </tr>
                   ))}
@@ -110,8 +137,10 @@ export function Session({ slug, session }: { slug: string; session: string }): R
               </table>
               <p className="note" style={{ marginTop: 12 }}>
                 {count(data.tasks.length)} tasks. A task is one user turn and everything the agent
-                did about it, subagents included. <em>Working</em> is the time the rounds took;{' '}
-                <em>elapsed</em> includes every gap where it was your turn.
+                did about it, subagents included. <em>Working</em> is the time the model spent
+                generating; <em>elapsed</em> adds the tools it waited on and every gap where it was
+                your turn. <em>In</em> counts the whole context each round was given, most of which
+                is usually the same prompt read from cache again — hover for the split.
               </p>
             </section>
           </>

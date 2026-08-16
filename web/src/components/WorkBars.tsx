@@ -6,6 +6,7 @@ import type { Analysis, CategoryRow } from '../api'
 import { fillOf, orderOf, styleOf } from '../categories'
 import { duration, percent, tokens } from '../format'
 import { Tip, useTip } from './Tip'
+import { InTokens } from './Tokens'
 import type { ReactElement } from 'react'
 
 /**
@@ -61,7 +62,7 @@ export function WorkBars({
         <thead>
           <tr>
             <th style={{ width: 170 }}>Work</th>
-            <th style={{ width: '46%' }} />
+            <th style={{ width: '36%' }} />
             <th className="r" style={{ width: 66 }}>
               Share
             </th>
@@ -70,6 +71,9 @@ export function WorkBars({
             </th>
             <th className="r" style={{ width: 66 }}>
               Time
+            </th>
+            <th className="r" style={{ width: 66 }} title="Input this work was charged, split across the work each round did.">
+              In
             </th>
             <th className="r" style={{ width: 66 }}>
               Out
@@ -102,6 +106,12 @@ export function WorkBars({
                       <br />
                       <span className="tip-key">weighted rounds </span>
                       {row.rounds.toFixed(1)}
+                      <br />
+                      <span className="tip-key">in </span>
+                      {tokens(row.in_tokens)}
+                      {row.in_tokens > 0 ? (
+                        <>, {percent(row.in_cache_read / row.in_tokens, 0)} of it reused from cache</>
+                      ) : null}
                     </>,
                   )
                 }
@@ -118,6 +128,9 @@ export function WorkBars({
                 <td className="r num">{percent(row.rounds / total, 1)}</td>
                 <td className="r num dim">{row.rounds.toFixed(1)}</td>
                 <td className="r num dim">{duration(row.ms)}</td>
+                <td className="r num dim">
+                  <InTokens of={row} />
+                </td>
                 <td className="r num dim">{tokens(row.out_tokens)}</td>
                 <td className={`r num ${row.errors > 0 ? 'bad' : 'muted'}`}>
                   {row.errors > 0 ? row.errors : '·'}
@@ -133,6 +146,9 @@ export function WorkBars({
                       <td className="r num dim">{percent(child.rounds / total, 1)}</td>
                       <td className="r num muted">{child.rounds.toFixed(1)}</td>
                       <td className="r num muted">{duration(child.ms)}</td>
+                      <td className="r num muted">
+                        <InTokens of={child} />
+                      </td>
                       <td className="r num muted">{tokens(child.out_tokens)}</td>
                       <td className="r num muted">{child.errors > 0 ? child.errors : '·'}</td>
                     </tr>

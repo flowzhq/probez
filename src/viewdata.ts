@@ -36,7 +36,7 @@ export interface ViewSession extends SessionRow {
   model: string | null
   /** Wall clock across the session, gaps included. */
   elapsed_ms: number
-  /** Time the rounds themselves took. */
+  /** Time the model itself was generating, which `ms` undercounts badly. */
   active_ms: number
   work: Dominant | null
 }
@@ -232,7 +232,7 @@ export async function projectPayload(dataDir: string, slug: string): Promise<Pro
       ...row,
       model: modelOf(mine),
       elapsed_ms: elapsedOf(mine),
-      active_ms: mine.reduce((sum, round) => sum + (round.ms ?? 0), 0),
+      active_ms: mine.reduce((sum, round) => sum + (round.gen_ms ?? round.ms ?? 0), 0),
       work: work.session(row.session),
     }
   })
@@ -280,7 +280,7 @@ export async function sessionPayload(
       ...row,
       model: modelOf(mine),
       elapsed_ms: elapsedOf(mine),
-      active_ms: mine.reduce((sum, round) => sum + (round.ms ?? 0), 0),
+      active_ms: mine.reduce((sum, round) => sum + (round.gen_ms ?? round.ms ?? 0), 0),
       work: work.session(session),
     },
     analysis: categoryTally(mine),

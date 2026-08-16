@@ -2,11 +2,13 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -267,4 +269,92 @@ test('a flag belonging to analyze is refused elsewhere, and says where it belong
   assert.equal(wrong.status, 2)
   assert.match(wrong.stderr, /--split/)
   assert.match(wrong.stderr, /analyze/)
+})
+
+/**
+ * Age a store back to the schema before this one: the version markers say v1, and the rounds carry
+ * only the fields v1 knew about. This is what a store collected by an earlier probez looks like.
+ */
+function ageStore(env: ReturnType<typeof makeSource>): string {
+  const dir = readdirSync(join(env.dataDir, 'projects'))[0]!
+  const store = join(env.dataDir, 'projects', dir)
+  for (const name of ['state.json', 'manifest.json']) {
+    const path = join(store, name)
+    const json = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    json.schema_version = 1
+    writeFileSync(path, JSON.stringify(json, null, 2) + '\n')
+  }
+  const rounds = join(store, 'rounds.jsonl')
+  const aged = readFileSync(rounds, 'utf8')
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => {
+      const round = JSON.parse(line) as Record<string, unknown>
+      for (const key of ['in_uncached', 'in_cache_write', 'in_cache_read', 'gen_ms', 'wait_ms', 'first_input', 'events', 'mcp_server', 'mcp_tool', 'skill']) {
+        delete round[key]
+      }
+      return JSON.stringify(round)
+    })
+  writeFileSync(rounds, aged.join('\n') + '\n')
+  return store
+}
+
+function storedRounds(store: string): Array<Record<string, unknown>> {
+  return readFileSync(join(store, 'rounds.jsonl'), 'utf8')
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+test('a store from an older schema is rebuilt, not appended to', () => {
+  const env = makeSource(2)
+  assert.equal(collect(env).status, 0)
+  const store = ageStore(env)
+  const before = storedRounds(store).length
+
+  const again = collect(env)
+  assert.equal(again.status, 0)
+  assert.match(again.stdout, /rebuilt for the current schema/)
+
+  const after = storedRounds(store)
+  // Appending would have doubled the file, since the old rounds are never removed and the new ones
+  // are not duplicates of anything the filter recognises.
+  assert.equal(after.length, before, 'a rebuild replaces the rounds rather than adding to them')
+  assert.ok(after.every((round) => Array.isArray(round.events)), 'every round is the new shape')
+  assert.ok(after.every((round) => typeof round.in_cache_read === 'number'))
+})
+
+test('a rebuild keeps rounds whose session the agent has since pruned', () => {
+  const env = makeSource(2)
+  assert.equal(collect(env).status, 0)
+  const store = ageStore(env)
+  const before = storedRounds(store)
+
+  // The agent prunes old sessions; the store's own copy is what survives that.
+  const sourceDir = join(env.claudeDir, 'encoded-project-name')
+  const pruned = readdirSync(sourceDir)[0]!
+  rmSync(join(sourceDir, pruned))
+
+  assert.equal(collect(env).status, 0)
+
+  const after = storedRounds(store)
+  assert.equal(after.length, before.length, 'the pruned session is rebuilt from the archived copy')
+  const sessions = new Set(after.map((round) => round.session))
+  assert.equal(sessions.size, 2)
+  assert.ok(after.every((round) => Array.isArray(round.events)))
+})
+
+test('a rebuild drops the analysis computed from the rounds it replaced', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+  assert.equal(read(env, ['analyze']).status, 0)
+  const store = ageStore(env)
+  assert.ok(existsSync(join(store, 'analysis.jsonl')))
+
+  assert.equal(collect(env).status, 0)
+  assert.equal(
+    existsSync(join(store, 'analysis.jsonl')),
+    false,
+    'the cache described rounds that no longer exist in that shape',
+  )
 })

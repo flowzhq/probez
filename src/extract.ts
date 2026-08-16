@@ -1,7 +1,7 @@
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
-import type { Round, ToolCall } from './types.js'
+import type { Patch, Round, RoundEvent, ToolCall } from './types.js'
 
 /** Strings longer than this in a tool's input are truncated. */
 const MAX_INPUT_STRING = 2000
@@ -71,6 +71,84 @@ function asInt(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
+function asText(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? value : null
+}
+
+/**
+ * Size of a tool's arguments, as compact JSON.
+ *
+ * Not `contentChars`, which follows a `content` key down to the string inside it: that is the right
+ * reading for a message body and the wrong one for a `Write` call, where `content` is one argument
+ * among several. What is wanted here is how big the whole call was before truncation.
+ */
+function inputChars(value: unknown): number {
+  if (value === undefined) return 0
+  try {
+    return JSON.stringify(value)?.length ?? 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Fold a result's structured patch into three counts.
+ *
+ * The patch arrives as unified-diff hunks, each carrying the file it applies to and its lines with
+ * the usual `+`/`-`/` ` prefixes. Keeping the lines themselves would be keeping the diff, which is
+ * the result body this store does not record; the counts are what says how large an edit was.
+ *
+ * A new file has no hunks to diff against, so it arrives with an empty patch and its whole content
+ * instead. Folding that to zero would report the largest writes as the ones that changed nothing.
+ */
+export function foldPatch(result: unknown): Patch | null {
+  if (!result || typeof result !== 'object') return null
+  const r = result as Json
+  const hunks = r.structuredPatch
+  if (!Array.isArray(hunks)) return null
+
+  const files = new Set<string>()
+  const path = asText(r.filePath)
+  if (path !== null) files.add(path)
+
+  let added = 0
+  let removed = 0
+  for (const raw of hunks) {
+    if (!raw || typeof raw !== 'object') continue
+    const hunk = raw as Json
+    const own = asText(hunk.filePath)
+    if (own !== null) files.add(own)
+    if (!Array.isArray(hunk.lines)) continue
+    for (const line of hunk.lines) {
+      if (typeof line !== 'string') continue
+      if (line.startsWith('+')) added += 1
+      else if (line.startsWith('-')) removed += 1
+    }
+  }
+
+  if (hunks.length === 0 && typeof r.content === 'string' && r.content !== '') {
+    added = r.content.split('\n').length
+  }
+
+  return { files: files.size, added, removed }
+}
+
+/**
+ * The failure signal the harness flag misses.
+ *
+ * `is_error` is set by the harness, so a command that ran and failed comes back false. The raw
+ * result carries what actually happened. There is no exit code anywhere in the record — `stderr`
+ * and `interrupted` are the whole of it.
+ */
+function resultSignal(result: unknown): { stderr_chars: number | null; interrupted: boolean | null } {
+  if (!result || typeof result !== 'object') return { stderr_chars: null, interrupted: null }
+  const r = result as Json
+  return {
+    stderr_chars: typeof r.stderr === 'string' ? r.stderr.length : null,
+    interrupted: typeof r.interrupted === 'boolean' ? r.interrupted : null,
+  }
+}
+
 /** Usage snapshot quality, compared lexicographically. Higher is more complete. */
 type UsageScore = [number, number, number]
 
@@ -90,6 +168,14 @@ interface Builder {
   textParts: string[]
 }
 
+/** The input events waiting for the round they prompted. */
+interface Pending {
+  events: RoundEvent[]
+  text: string[]
+  /** Time the person took, measured when their message arrived rather than when the round is built. */
+  wait: number | null
+}
+
 /**
  * Assemble rounds from one session file.
  *
@@ -104,6 +190,9 @@ interface Builder {
  *   appears *before* it, so it buffers until the round it belongs to shows up.
  * - A tool's result frequently lands in a later round than the call, so calls are tracked for the
  *   whole session rather than per round.
+ * - The input events that prompted a round precede it too, and buffer alongside that text. Handing
+ *   them to the round they prompted is what lets `gen_ms` span the wait before the model spoke,
+ *   which `ms` — the span of the round's own records — cannot see.
  */
 export async function extractSession(file: string, sessionId: string): Promise<Round[]> {
   const rounds: Round[] = []
@@ -111,7 +200,9 @@ export async function extractSession(file: string, sessionId: string): Promise<R
   const byMsgId = new Map<string, Builder>()
   const toolById = new Map<string, { tool: ToolCall; emittedTs: number | null }>()
 
-  let pendingText: string[] = []
+  let pending: Pending = { events: [], text: [], wait: null }
+  /** When the previous round last produced output, which is what a user message waits on. */
+  let lastOutputTs: number | null = null
   let task = 0
   let taskUsed = false
 
@@ -153,20 +244,30 @@ export async function extractSession(file: string, sessionId: string): Promise<R
             id,
             ts: timestamp,
             ms: null,
+            gen_ms: null,
+            wait_ms: pending.wait,
+            first_input: null,
             model: typeof msg.model === 'string' ? msg.model : null,
             in_tokens: 0,
+            in_uncached: 0,
+            in_cache_write: 0,
+            in_cache_read: 0,
             out_tokens: 0,
-            user_text: pendingText.join('\n'),
+            mcp_server: null,
+            mcp_tool: null,
+            skill: null,
+            user_text: pending.text.join('\n'),
             text: '',
             thinking_chars: 0,
             tools: [],
+            events: pending.events,
           },
           usage: null,
           firstTs: ts,
           lastTs: ts,
           textParts: [],
         }
-        pendingText = []
+        pending = { events: [], text: [], wait: null }
         taskUsed = true
         byMsgId.set(id, builder)
         builders.push(builder)
@@ -183,29 +284,55 @@ export async function extractSession(file: string, sessionId: string): Promise<R
 
       applyUsage(builder, msg)
 
+      // Attribution sits on the record rather than on the message, and only some records of a
+      // round carry it, so the first one that names a server or skill wins.
+      builder.round.mcp_server ??= asText(record.attributionMcpServer)
+      builder.round.mcp_tool ??= asText(record.attributionMcpTool)
+      builder.round.skill ??= asText(record.attributionSkill)
+
       const content = msg.content
       if (!Array.isArray(content)) continue
       for (const raw of content) {
         if (!raw || typeof raw !== 'object') continue
         const block = raw as Json
         if (block.type === 'thinking') {
-          builder.round.thinking_chars += contentChars(block.thinking)
+          const chars = contentChars(block.thinking)
+          builder.round.thinking_chars += chars
+          if (timestamp !== null) {
+            builder.round.events.push({ type: 'reasoning', ts: timestamp, chars })
+          }
         } else if (block.type === 'text') {
           const text = toText(block.text)
           if (text !== '') builder.textParts.push(text)
+          if (timestamp !== null) {
+            builder.round.events.push({ type: 'text', ts: timestamp, chars: contentChars(block.text) })
+          }
         } else if (block.type === 'tool_use') {
           const toolId = block.id
           if (typeof toolId !== 'string' || toolById.has(toolId)) continue
           const tool: ToolCall = {
             name: typeof block.name === 'string' ? block.name : null,
+            id: toolId,
             input: truncateInput(block.input),
+            input_chars: inputChars(block.input),
             result_chars: null,
             is_error: null,
+            stderr_chars: null,
+            interrupted: null,
+            patch: null,
+            emitted_at: timestamp,
+            result_at: null,
             ms: null,
           }
           builder.round.tools.push(tool)
           toolById.set(toolId, { tool, emittedTs: ts })
+          if (timestamp !== null) {
+            builder.round.events.push({ type: 'tool_call', ts: timestamp, tool_call_id: toolId })
+          }
+        } else {
+          continue
         }
+        if (ts !== null && (lastOutputTs === null || ts > lastOutputTs)) lastOutputTs = ts
       }
       continue
     }
@@ -222,11 +349,23 @@ export async function extractSession(file: string, sessionId: string): Promise<R
     for (const block of results) {
       const toolId = block.tool_use_id
       if (typeof toolId !== 'string') continue
+      const chars = contentChars(block.content)
+      if (timestamp !== null) {
+        pending.events.push({ type: 'tool_result', ts: timestamp, chars, tool_call_id: toolId })
+      }
       const entry = toolById.get(toolId)
       if (entry === undefined) continue
-      entry.tool.result_chars = contentChars(block.content)
+      entry.tool.result_chars = chars
       entry.tool.is_error = block.is_error === true
+      entry.tool.result_at = timestamp
       entry.tool.ms = entry.emittedTs !== null && ts !== null ? ts - entry.emittedTs : null
+      // The harness flag says whether the call was accepted, not whether it worked. What the tool
+      // actually did is on the record beside the block, not in the block itself.
+      const raw = record.toolUseResult
+      const signal = resultSignal(raw)
+      entry.tool.stderr_chars = signal.stderr_chars
+      entry.tool.interrupted = signal.interrupted
+      entry.tool.patch = foldPatch(raw)
     }
 
     if (results.length > 0) continue
@@ -234,7 +373,15 @@ export async function extractSession(file: string, sessionId: string): Promise<R
     // A real user turn. Consecutive user messages with no round between them, such as a
     // caveat followed by the prompt it introduces, belong to the same task.
     const text = toText(content)
-    if (text !== '') pendingText.push(text)
+    if (text !== '') pending.text.push(text)
+    if (timestamp !== null) {
+      pending.events.push({ type: 'user_message', ts: timestamp, chars: contentChars(content) })
+      // Measured here rather than at round-build time, because by then the model has spoken and
+      // `lastOutputTs` has moved on.
+      if (pending.wait === null && lastOutputTs !== null && ts !== null) {
+        pending.wait = ts - lastOutputTs
+      }
+    }
     if (!sidechain && (task === 0 || taskUsed)) {
       task += 1
       taskUsed = false
@@ -247,9 +394,36 @@ export async function extractSession(file: string, sessionId: string): Promise<R
     builder.round.text = builder.textParts.join('\n')
     builder.round.ms =
       builder.firstTs !== null && builder.lastTs !== null ? builder.lastTs - builder.firstTs : null
+    applyTiming(builder.round)
   }
 
   return rounds
+}
+
+/** Events are file-ordered, so the input ones sit ahead of the output ones. */
+const INPUT_EVENTS = new Set<RoundEvent['type']>(['user_message', 'tool_result'])
+
+/**
+ * Fill in what the event stream says about the round's timing.
+ *
+ * `gen_ms` runs from the last thing that prompted the round to the last thing it produced, so it
+ * covers the wait before the model said anything. That wait is the bulk of a round and sits outside
+ * `ms`, which spans only the records the round itself wrote.
+ */
+function applyTiming(round: Round): void {
+  let lastInput: number | null = null
+  let lastOutput: number | null = null
+  for (const event of round.events) {
+    const at = parseTs(event.ts)
+    if (at === null) continue
+    if (INPUT_EVENTS.has(event.type)) {
+      if (round.first_input === null) round.first_input = event.type as 'user_message' | 'tool_result'
+      if (lastInput === null || at > lastInput) lastInput = at
+    } else if (lastOutput === null || at > lastOutput) {
+      lastOutput = at
+    }
+  }
+  if (lastInput !== null && lastOutput !== null) round.gen_ms = lastOutput - lastInput
 }
 
 function applyUsage(builder: Builder, msg: Json): void {
@@ -261,12 +435,20 @@ function applyUsage(builder: Builder, msg: Json): void {
   )
   if (!hasTokens) return
 
-  const input = asInt(u.input_tokens) + asInt(u.cache_creation_input_tokens) + asInt(u.cache_read_input_tokens)
+  const uncached = asInt(u.input_tokens)
+  const cacheWrite = asInt(u.cache_creation_input_tokens)
+  const cacheRead = asInt(u.cache_read_input_tokens)
+  const input = uncached + cacheWrite + cacheRead
   const output = asInt(u.output_tokens)
   const score: UsageScore = [output, input, msg.stop_reason != null ? 1 : 0]
   if (!betterUsage(score, builder.usage)) return
 
   builder.usage = score
   builder.round.in_tokens = input
+  // The three are priced differently, and cache reads dominate the total by an order of magnitude,
+  // so the sum on its own says almost nothing about what a round cost.
+  builder.round.in_uncached = uncached
+  builder.round.in_cache_write = cacheWrite
+  builder.round.in_cache_read = cacheRead
   builder.round.out_tokens = output
 }

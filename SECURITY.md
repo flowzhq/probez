@@ -63,13 +63,21 @@ only ever read.
 which include file paths and shell commands. Prompts and assistant text are stored in full; in a
 tool input, individual strings over 2,000 characters are cut to the first 200 plus a length marker,
 which a command line essentially never reaches. Tool *outputs* and reasoning text are recorded as
-character counts only.
+character counts only. What probez keeps about a result stays counts: how many characters it
+returned, how many it wrote to stderr, whether it was cut short, and how many lines and files an
+edit changed. No output body, no diff text, and no file path from a result is stored.
 
 **But the store holds more than that.** A verbatim copy of each original session file is kept next
 to `rounds.jsonl`, and that copy does contain the full reasoning text and the full tool outputs the
 round record leaves out, and it is the larger part of the store by far. "Character counts only"
 describes `rounds.jsonl`, not `~/.probez`. Note also that agents prune their own old sessions while
-these copies are permanent: probez never deletes anything.
+these copies are permanent.
+
+**What probez removes.** Only two things, both its own derived files. When `collect` meets a store
+written by an older probez it rebuilds `rounds.jsonl` from the session copies — writing a temporary
+file and moving it into place, so an interrupted run leaves the old one intact — and deletes the
+`analysis.jsonl` computed from the rounds it replaced. The session copies are never touched, so the
+rebuild reads from data it cannot lose. Nothing outside the data directory is ever removed.
 
 **The store is owner-only.** Directories are created `0700` and files `0600`, matching the mode the
 agent already uses for the session files probez reads. `collect` also tightens anything under the

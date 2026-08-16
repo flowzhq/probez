@@ -4,26 +4,44 @@ import { advance, CATEGORIES, categoryInfo, classifyCall, newContext } from './c
 import type { Category, Label } from './classify.js'
 import type { Round, ToolCall } from './types.js'
 
+/**
+ * What a span of rounds cost and changed, beyond the round count.
+ *
+ * Carried by sessions and tasks alike, because the questions are the same at both sizes: how much
+ * of the input was new rather than reused, how much of the time was the model's rather than the
+ * person's, and how much code came out the other end.
+ */
+export interface Totals {
+  in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_read: number
+  out_tokens: number
+  /** Time from each round's prompt to its last output, which `ms` does not cover. */
+  gen_ms: number
+  /** Time spent waiting on a person. */
+  wait_ms: number
+  /** Lines a file-editing tool added and removed. */
+  added: number
+  removed: number
+}
+
 /** One session as recorded in the store, not as it exists on disk under ~/.claude. */
-export interface SessionRow {
+export interface SessionRow extends Totals {
   session: string
   rounds: number
   tasks: number
   tool_calls: number
   errors: number
-  in_tokens: number
-  out_tokens: number
   first_ts: string | null
   last_ts: string | null
 }
 
 /** One task within a session: a user turn and everything the agent did about it. */
-export interface TaskRow {
+export interface TaskRow extends Totals {
   session: string
   task: number
   rounds: number
-  in_tokens: number
-  out_tokens: number
   ms: number
   first_ts: string | null
   /** What was asked to start this task: the first user text in it. */
@@ -34,12 +52,48 @@ export interface ToolRow {
   name: string
   calls: number
   errors: number
+  /**
+   * Calls that wrote to stderr or were cut short while the harness reported no error. These are
+   * failures `errors` cannot see, and on a real store they outnumber the ones it can.
+   */
+  quiet: number
   result_chars: number
   ms: number
   /** The kind of work, on rows that stand for a command rather than a tool. */
   kind?: string
   /** A finer level under this tool, when its calls decompose into something worth counting. */
   sub?: ToolRow[]
+}
+
+/** Zeroes for every field of `Totals`, so a row starts complete rather than being filled in twice. */
+function noTotals(): Totals {
+  return {
+    in_tokens: 0,
+    in_uncached: 0,
+    in_cache_write: 0,
+    in_cache_read: 0,
+    out_tokens: 0,
+    gen_ms: 0,
+    wait_ms: 0,
+    added: 0,
+    removed: 0,
+  }
+}
+
+/** Fold one round's cost and changes into a running total. */
+function addTotals(row: Totals, round: Round): void {
+  row.in_tokens += round.in_tokens || 0
+  row.in_uncached += round.in_uncached || 0
+  row.in_cache_write += round.in_cache_write || 0
+  row.in_cache_read += round.in_cache_read || 0
+  row.out_tokens += round.out_tokens || 0
+  row.gen_ms += round.gen_ms || 0
+  row.wait_ms += round.wait_ms || 0
+  for (const tool of round.tools ?? []) {
+    if (tool.patch === null || tool.patch === undefined) continue
+    row.added += tool.patch.added
+    row.removed += tool.patch.removed
+  }
 }
 
 export interface RoundFilter {
@@ -61,6 +115,9 @@ export interface CategoryRow {
   rounds: number
   errors: number
   ms: number
+  /** Input the category was charged, split the same way a round's is. */
+  in_tokens: number
+  in_cache_read: number
   out_tokens: number
   sub?: CategoryRow[]
 }
@@ -133,8 +190,7 @@ export function sessionRows(rounds: Round[]): SessionRow[] {
           tasks: 0,
           tool_calls: 0,
           errors: 0,
-          in_tokens: 0,
-          out_tokens: 0,
+          ...noTotals(),
           first_ts: null,
           last_ts: null,
         },
@@ -145,8 +201,7 @@ export function sessionRows(rounds: Round[]): SessionRow[] {
     const { row, tasks } = entry
     row.rounds += 1
     tasks.add(round.task)
-    row.in_tokens += round.in_tokens || 0
-    row.out_tokens += round.out_tokens || 0
+    addTotals(row, round)
     for (const tool of round.tools ?? []) {
       row.tool_calls += 1
       if (tool.is_error === true) row.errors += 1
@@ -201,8 +256,7 @@ export function taskRows(rounds: Round[]): TaskRow[] {
         session: round.session,
         task: round.task,
         rounds: 0,
-        in_tokens: 0,
-        out_tokens: 0,
+        ...noTotals(),
         ms: 0,
         first_ts: null,
         asked: '',
@@ -210,8 +264,7 @@ export function taskRows(rounds: Round[]): TaskRow[] {
       byTask.set(key, row)
     }
     row.rounds += 1
-    row.in_tokens += round.in_tokens || 0
-    row.out_tokens += round.out_tokens || 0
+    addTotals(row, round)
     if (typeof round.ms === 'number') row.ms += round.ms
     if (typeof round.ts === 'string' && (row.first_ts === null || round.ts < row.first_ts)) {
       row.first_ts = round.ts
@@ -227,8 +280,19 @@ export function taskRows(rounds: Round[]): TaskRow[] {
 function add(row: ToolRow, tool: ToolCall): void {
   row.calls += 1
   if (tool.is_error === true) row.errors += 1
+  else if (quietlyFailed(tool)) row.quiet += 1
   if (typeof tool.result_chars === 'number') row.result_chars += tool.result_chars
   if (typeof tool.ms === 'number') row.ms += tool.ms
+}
+
+/**
+ * A call that went wrong without the harness saying so.
+ *
+ * `is_error` reports that the call was accepted, so a command that ran and failed comes back false.
+ * Counted only when `is_error` is not already true, so the two columns never describe the same call.
+ */
+export function quietlyFailed(tool: ToolCall): boolean {
+  return tool.interrupted === true || (tool.stderr_chars ?? 0) > 0
 }
 
 const byCalls = (a: ToolRow, b: ToolRow): number => b.calls - a.calls || a.name.localeCompare(b.name)
@@ -256,7 +320,7 @@ export function toolTally(rounds: Round[], sub?: 'command' | 'kind'): ToolRow[] 
       if (typeof tool.name !== 'string' || tool.name === '') continue
       let row = byName.get(tool.name)
       if (row === undefined) {
-        row = { name: tool.name, calls: 0, errors: 0, result_chars: 0, ms: 0 }
+        row = { name: tool.name, calls: 0, errors: 0, quiet: 0, result_chars: 0, ms: 0 }
         byName.set(tool.name, row)
       }
       add(row, tool)
@@ -277,7 +341,7 @@ export function toolTally(rounds: Round[], sub?: 'command' | 'kind'): ToolRow[] 
         seen.add(key)
         let entry = group.get(key)
         if (entry === undefined) {
-          entry = { name: key, calls: 0, errors: 0, result_chars: 0, ms: 0 }
+          entry = { name: key, calls: 0, errors: 0, quiet: 0, result_chars: 0, ms: 0 }
           if (sub === 'command') entry.kind = command.kind
           group.set(key, entry)
         }
@@ -375,7 +439,7 @@ export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): A
       const info = categoryInfo(label.category)
       let row = byCategory.get(label.category)
       if (row === undefined) {
-        row = { name: label.category, label: info.label, rounds: 0, errors: 0, ms: 0, out_tokens: 0 }
+        row = { name: label.category, label: info.label, rounds: 0, errors: 0, ms: 0, in_tokens: 0, in_cache_read: 0, out_tokens: 0 }
         byCategory.set(label.category, row)
       }
       addWeighted(row, label, round)
@@ -388,7 +452,7 @@ export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): A
       }
       let entry = group.get(key)
       if (entry === undefined) {
-        entry = { name: key, label: key, rounds: 0, errors: 0, ms: 0, out_tokens: 0 }
+        entry = { name: key, label: key, rounds: 0, errors: 0, ms: 0, in_tokens: 0, in_cache_read: 0, out_tokens: 0 }
         group.set(key, entry)
       }
       addWeighted(entry, label, round)
@@ -540,8 +604,12 @@ export interface TraceRound {
   /** How to ask for this round: `<task>.<round>`, the selector `probez round` takes. */
   ref: string
   ts: string | null
+  /** Span of the round's own records. `ts` is the first of them. */
   ms: number | null
+  /** From the input that prompted the round to its last output, so it precedes `ts`. */
+  gen_ms: number | null
   in_tokens: number
+  in_cache_read: number
   out_tokens: number
   thinking_chars: number
   tools: number
@@ -582,7 +650,7 @@ export interface Trace {
     last: string | null
     /** Wall clock from the first round starting to the last one finishing, gaps included. */
     elapsed_ms: number
-    /** Time the rounds themselves took. Always the smaller number, often by a lot. */
+    /** Time the model was generating. Always the smaller number, often by a lot. */
     active_ms: number
   }
 }
@@ -590,8 +658,8 @@ export interface Trace {
 /**
  * A span of rounds as a timeline: every round in order, and the phases they fall into.
  *
- * The two numbers in `span` are deliberately both kept. `active_ms` is what `TaskRow.ms` reports,
- * the time the agent was working; `elapsed_ms` is how long you waited, which includes every gap
+ * The two numbers in `span` are deliberately both kept. `active_ms` is the time the model spent
+ * generating; `elapsed_ms` is how long you waited, which includes tool execution and every gap
  * where it was your turn. Reporting one as the other is the easiest lie this data tells.
  *
  * Runs are the phase ribbon: consecutive rounds sharing a category, collapsed. What they collapse
@@ -634,7 +702,9 @@ export function traceOf(rounds: Round[], options: { window?: number } = {}): Tra
       ref: `${round.task}.${round.round}`,
       ts: round.ts,
       ms: round.ms,
+      gen_ms: round.gen_ms ?? null,
       in_tokens: round.in_tokens || 0,
+      in_cache_read: round.in_cache_read || 0,
       out_tokens: round.out_tokens || 0,
       thinking_chars: round.thinking_chars || 0,
       tools: tools.length,
@@ -672,7 +742,10 @@ export function traceOf(rounds: Round[], options: { window?: number } = {}): Tra
   let end = -Infinity
   let active = 0
   for (const round of traced) {
-    active += round.ms ?? 0
+    // `gen_ms` runs from the input that prompted the round to its last output, so it covers the
+    // wait before the model spoke; `ms` spans only the records the round wrote and misses most of
+    // it. Tool execution is outside both, since a result arrives as the next round's input.
+    active += round.gen_ms ?? round.ms ?? 0
     if (round.ts === null) continue
     if (first === null || round.ts < first) first = round.ts
     if (last === null || round.ts > last) last = round.ts
@@ -703,6 +776,10 @@ export function traceOf(rounds: Round[], options: { window?: number } = {}): Tra
 function addWeighted(row: CategoryRow, label: RoundLabel, round: Round): void {
   row.rounds += label.weight
   row.ms += (round.ms ?? 0) * label.weight
+  // Input is charged to the work the round did, on the same split as the round count. A round that
+  // read two files and ran a test charges each of those a third of the context it was given.
+  row.in_tokens += (round.in_tokens || 0) * label.weight
+  row.in_cache_read += (round.in_cache_read || 0) * label.weight
   row.out_tokens += round.out_tokens * label.weight
   if (label.errored) row.errors += 1
 }

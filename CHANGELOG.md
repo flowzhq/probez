@@ -8,6 +8,65 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+The record. 0.2 said what the work was; this says what it cost, how long it really took, and when it
+failed without saying so.
+
+### Added
+
+- **Input tokens are kept as three numbers, not one.** `in_uncached`, `in_cache_write` and
+  `in_cache_read` sit beside `in_tokens`, which still holds their sum. They are priced roughly 1×,
+  1.25× and 0.1×, and on a store of 25,136 rounds 98.2% of what probez called "input" was cache
+  reads — the figure weighting every percentage `analyze` prints was dominated by its cheapest
+  component. `collect` and the round inspector now show the split.
+- **`gen_ms` and `wait_ms` separate the model's time from the person's.** `ms` spans the records a
+  round wrote, which misses the wait before the model said anything; `gen_ms` runs from the input
+  that prompted the round. On one 442-round project the two are 0.66h and 1.82h. `wait_ms` is the
+  time a round spent waiting on a person, and is null unless one was waited on.
+- **`events[]`, the round's moments in file order** — `user_message`, `tool_result`, `reasoning`,
+  `text`, `tool_call`, each with a timestamp, and the tool ones carrying the call id. This is what
+  makes `gen_ms` re-derivable and a new timing question answerable without re-collecting.
+- **What a tool actually did, beside what the harness said.** `is_error` reports that a call was
+  accepted, not that it worked — a Bash call whose suite fails comes back `false`. `stderr_chars`
+  and `interrupted` come from the raw result, and surface 471 failed calls across this machine's
+  store that were recorded as successes. There is no exit code in the source records at all; these
+  two are the whole of the real signal, which corrects an assumption in the v0.2 write-up.
+- **`tools[].patch`** — the files, lines added and lines removed of an edit, folded from the result's
+  structured patch. This is what a later version needs to attribute work to the files it changed
+  rather than to the directory the agent was launched in.
+- **`tools[].id`, `emitted_at`, `result_at` and `input_chars`.** A call now carries the id its result
+  is matched on, both ends of its wall time, and the size it was before truncation, so a cut input
+  still says how large it really was.
+- **`mcp_server`, `mcp_tool` and `skill`**, read from the harness's own attribution. These name work
+  a built-in tool table cannot place: on this machine they cover 17% of rounds, which is most of the
+  16% of weight 0.2 reported as unclassified. The taxonomy does not spend them yet.
+
+- **The view spends all of it.** Every level now carries the token split: a project, session and
+  task each say how much of their input was reused from cache, with the exact three-way breakdown on
+  hover, and the round inspector says it per round. "Where agent work goes" gains an **In** column,
+  so a category that reads as a small share of rounds but a large share of context is visible as
+  one; input is charged to work the same way rounds are, splitting across what a round did. Sessions
+  and tasks gain **In** and **Lines**, and a task says how long it spent waiting on a person when it
+  waited at all. The tools table gains a **Quiet** column — calls that wrote to stderr or were cut
+  short while the harness reported no error. On one project Bash shows 4 errors against 15 quiet.
+
+### Changed
+
+- **"Working" now means the time the model spent generating**, in the view and the CLI alike. It
+  was the span of the records a round wrote, which misses the wait before the model said anything —
+  most of a round. The trace's by-time lane lays each round out from the input that prompted it for
+  the same reason, so the bars finally add up to the total printed above them. Tool execution is
+  outside both, since a tool's result arrives as the next round's input. Task times move a long way:
+  one task in the README goes from 863ms to 5.0s, another from 4.9m to 16.3m.
+- **A store from an older schema is rebuilt on the next `collect`.** It could not be repaired by
+  appending: the rounds already in the file are the old shape and the `session+id` filter dropped
+  every replacement as a duplicate, so `--full` left a store exactly as it found it. The rebuild
+  reads the session copies the store already keeps, including sessions the agent has since pruned,
+  writes through a temporary file so an interrupted run leaves the old store intact, and drops the
+  `analysis.jsonl` computed from the rounds it replaced. Nothing leaves the machine and no round is
+  lost, but on a large store it is not instant.
+- `rounds.jsonl` is about 50% larger for the fields above, measured by rebuilding a 22-project,
+  14,000-round store: 20.3 MB to 30.4 MB. It remains a tenth of the session copies beside it.
+
 ## [0.2.0] - 2026-08-15
 
 The analyzer, and the view. `collect` said how much; this says what of, and shows it.

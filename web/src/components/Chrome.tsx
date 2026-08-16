@@ -142,9 +142,12 @@ export function Problem({ message }: { message: string }): ReactElement {
 
 /** One number with its name, for the row under a page title. */
 export function Facts({ items }: { items: Array<[string, ReactNode]> }): ReactElement {
+  // A fact with nothing to report drops out entirely rather than printing a bare label: a project
+  // with no input has no reused share, and "· reused" with a blank in front of it reads as a bug.
+  const shown = items.filter(([, value]) => value !== null && value !== undefined && value !== '')
   return (
     <div className="facts">
-      {items.map(([label, value], at) => (
+      {shown.map(([label, value], at) => (
         <Fragment key={label}>
           {at === 0 ? null : <span className="sep">·</span>}
           <span>

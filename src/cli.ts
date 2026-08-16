@@ -52,7 +52,7 @@ import {
   writeAnalysis,
 } from './store.js'
 import type { CollectResult, StoredProject, Summary } from './store.js'
-import type { Project, Round } from './types.js'
+import type { Project, Round, ToolCall } from './types.js'
 
 const COMMANDS = new Set([
   'collect',
@@ -203,6 +203,9 @@ Collection
   probez collect --all         Collect every project on this machine
   --full                       Re-read every session instead of only what changed
 
+  A store collected by an older probez is rebuilt on the next collect, from the session copies
+  it already keeps. Nothing leaves the machine and nothing is lost, but it is not instant.
+
 Options (these work on every command)
   --json                       Machine-readable output
   --all                        Every project on this machine, not just one
@@ -233,6 +236,12 @@ Naming a session, a task or a round
       probez task 3               probez round 3.12
 `
 
+/** How much of the input was served from cache, which is the part billed at a fraction of the rate. */
+function cacheShare(summary: { in_tokens: number; in_cache_read: number }): string {
+  if (summary.in_tokens <= 0) return ''
+  return `  (${Math.round((summary.in_cache_read / summary.in_tokens) * 100)}% reused)`
+}
+
 function printSummary(summary: Summary, extra?: string): void {
   const title = summary.path ? shorten(summary.path) : summary.project
   console.log('')
@@ -242,6 +251,11 @@ function printSummary(summary: Summary, extra?: string): void {
     `  ${pad('sessions', 11)}${pad(String(summary.sessions), 10)}${pad('rounds', 9)}${pad(String(summary.rounds), 9)}tasks  ${summary.tasks}`,
   )
   console.log(`  ${pad('tokens', 11)}${tokens(summary.in_tokens)} in · ${tokens(summary.out_tokens)} out`)
+  // The three price differently, and cache reads usually dwarf the rest, so the split says what the
+  // total cannot: how much of that input was actually new.
+  console.log(
+    `  ${pad('', 11)}${tokens(summary.in_uncached)} new · ${tokens(summary.in_cache_write)} cached · ${tokens(summary.in_cache_read)} reused${cacheShare(summary)}`,
+  )
   console.log(`  ${pad('span', 11)}${span(summary.first_ts, summary.last_ts)}`)
   if (summary.tools.length > 0) {
     console.log(
@@ -255,6 +269,11 @@ function printSummary(summary: Summary, extra?: string): void {
 }
 
 function collectedLine(result: CollectResult): string {
+  // A rebuild rewrites the file rather than adding to it, so "+N rounds" would be a misreading of
+  // what happened: none of them are new.
+  if (result.rebuilt) {
+    return `rebuilt for the current schema, ${result.read_sessions} sessions re-read, ${result.rounds} rounds`
+  }
   if (result.read_sessions === 0) return `up to date, ${result.skipped_sessions} sessions unchanged`
   const sessions = `${result.read_sessions} session${result.read_sessions === 1 ? '' : 's'} read`
   const skipped = result.skipped_sessions > 0 ? `, ${result.skipped_sessions} unchanged` : ''
@@ -425,7 +444,7 @@ function printTaskRows(tasks: TaskRow[], width: number, showSession: boolean, wo
   )
   for (const task of tasks) {
     console.log(
-      `  ${pad(taskId(task, showSession), idWidth)}${padStart(String(task.rounds), 6)}  ${padStart(tokens(task.in_tokens), 7)}  ${padStart(tokens(task.out_tokens), 6)}  ${padStart(duration(task.ms), 7)}  ${pad(work.task(task.session, task.task), 11)}${clip(task.asked === '' ? '—' : task.asked, asked)}`,
+      `  ${pad(taskId(task, showSession), idWidth)}${padStart(String(task.rounds), 6)}  ${padStart(tokens(task.in_tokens), 7)}  ${padStart(tokens(task.out_tokens), 6)}  ${padStart(duration(task.gen_ms), 7)}  ${pad(work.task(task.session, task.task), 11)}${clip(task.asked === '' ? '—' : task.asked, asked)}`,
     )
   }
 }
@@ -453,7 +472,7 @@ function printTask(
   const tools = toolTally(rounds)
   const errors = tools.reduce((sum, tool) => sum + tool.errors, 0)
   console.log(
-    `  task ${row.task} of session ${row.session.slice(0, 8)}  ·  ${rounds.length} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out · ${duration(row.ms)}`,
+    `  task ${row.task} of session ${row.session.slice(0, 8)}  ·  ${rounds.length} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out · ${duration(row.gen_ms)} working`,
   )
 
   if (row.asked !== '') {
@@ -552,6 +571,20 @@ function printToolInput(input: unknown, width: number): void {
   }
 }
 
+/**
+ * What the call did, beyond whether the harness accepted it.
+ *
+ * `is_error` is the harness flag, so a command that ran and failed shows nothing there. Anything
+ * written to stderr, a call cut short, or lines changed on disk are the parts worth saying.
+ */
+function outcome(tool: ToolCall): string {
+  const parts: string[] = []
+  if (tool.interrupted === true) parts.push('interrupted')
+  if (tool.stderr_chars !== null && tool.stderr_chars > 0) parts.push(`${tokens(tool.stderr_chars)} stderr`)
+  if (tool.patch !== null) parts.push(`+${tool.patch.added} −${tool.patch.removed}`)
+  return parts.length === 0 ? '' : ` · ${parts.join(' · ')}`
+}
+
 function printRound(round: Round, width: number): void {
   console.log('')
   console.log(
@@ -560,6 +593,17 @@ function printRound(round: Round, width: number): void {
   console.log(
     `  ${tokens(round.in_tokens)} in · ${tokens(round.out_tokens)} out · ${duration(round.ms)} · ${round.thinking_chars} thinking chars`,
   )
+  console.log(
+    `  ${tokens(round.in_uncached)} new · ${tokens(round.in_cache_write)} cached · ${tokens(round.in_cache_read)} reused`,
+  )
+  // `ms` spans the round's own records; `gen_ms` also covers the wait before the model said
+  // anything, which is most of what the round actually took.
+  const waited = round.wait_ms === null ? '' : ` · waited ${duration(round.wait_ms)}`
+  console.log(`  generated in ${duration(round.gen_ms)}${waited}`)
+  const attributed = [round.mcp_server && `mcp ${round.mcp_server}`, round.skill && `skill ${round.skill}`]
+    .filter((part): part is string => typeof part === 'string')
+    .join(' · ')
+  if (attributed !== '') console.log(`  ${attributed}`)
   console.log(`  session ${round.session}${round.ts ? ` · ${round.ts}` : ''}`)
 
   if (round.user_text !== '') {
@@ -592,7 +636,7 @@ function printRound(round: Round, width: number): void {
       .map((label) => `${label.category}/${label.sub}${label.target === 'unknown' ? '' : ` × ${label.target}`}`)
       .join(' · ')
     console.log(
-      `    ${padStart(String(index + 1), 2)}  ${tool.is_error === true ? '✗' : ' '} ${pad(tool.name ?? '?', 14)}${padStart(duration(tool.ms), 7)}  ${chars}`,
+      `    ${padStart(String(index + 1), 2)}  ${tool.is_error === true ? '✗' : ' '} ${pad(tool.name ?? '?', 14)}${padStart(duration(tool.ms), 7)}  ${chars}${outcome(tool)}`,
     )
     console.log(`       ${clip(work, width - 8)}`)
     printToolInput(tool.input, width - 8)
@@ -1256,16 +1300,22 @@ async function main(): Promise<void> {
   console.log('')
   let rounds = 0
   let added = 0
+  let rebuilt = 0
   for (const result of results) {
     rounds += result.rounds
-    added += result.new_rounds
+    // A rebuild rewrites rounds that were already there, so counting them as new would overstate
+    // what the run found by the size of the whole store.
+    if (result.rebuilt) rebuilt += 1
+    else added += result.new_rounds
+    const change = result.rebuilt ? 'rebuilt' : result.new_rounds > 0 ? `+${result.new_rounds}` : '·'
     // The path, not the name, is what identifies a project, since several can share a basename.
     console.log(
-      `  ${pad(result.project, 24)}${pad(`${result.rounds} rounds`, 13)}${pad(result.new_rounds > 0 ? `+${result.new_rounds}` : '·', 9)}${result.path ? shorten(result.path) : '(path unknown)'}`,
+      `  ${pad(result.project, 24)}${pad(`${result.rounds} rounds`, 13)}${pad(change, 9)}${result.path ? shorten(result.path) : '(path unknown)'}`,
     )
   }
   console.log('')
-  console.log(`  ${results.length} projects · ${rounds} rounds · +${added} new`)
+  const note = rebuilt > 0 ? ` · ${rebuilt} rebuilt for the current schema` : ''
+  console.log(`  ${results.length} projects · ${rounds} rounds · +${added} new${note}`)
   console.log(`  → ${shorten(dataDir)}/projects`)
   console.log('')
   if (skippedTemp > 0) {

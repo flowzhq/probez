@@ -67,13 +67,29 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
   "session": "0b2cc149-f9c1-448f-bbac-a4c58b85e5bf",
   "round": 12, "task": 5, "agent": "main",
   "id": "msg_011CdwVKHe1jaMmvqeWS3tZp",
-  "ts": "2026-08-11T19:09:53.830Z", "ms": 8420,
-  "model": "claude-opus-5", "in_tokens": 36028, "out_tokens": 132,
+  "ts": "2026-08-11T19:09:53.830Z", "ms": 8420, "gen_ms": 14903, "wait_ms": null,
+  "first_input": "tool_result",
+  "model": "claude-opus-5",
+  "in_tokens": 36028, "in_uncached": 2, "in_cache_write": 1817, "in_cache_read": 34209,
+  "out_tokens": 132,
+  "mcp_server": null, "mcp_tool": null, "skill": null,
   "user_text": "why does the sync loop drop events?",
   "text": "Let me trace how EventLoop.flush calls into...",
   "thinking_chars": 1841,
   "tools": [
-    {"name": "Read", "input": {"file_path": "src/loop.ts"}, "result_chars": 8123, "is_error": false, "ms": 42}
+    {"name": "Read", "id": "toolu_013evtr8jYg2P6ypM2pmuWkR",
+     "input": {"file_path": "src/loop.ts"}, "input_chars": 38,
+     "result_chars": 8123, "is_error": false, "stderr_chars": null, "interrupted": null,
+     "patch": null,
+     "emitted_at": "2026-08-11T19:09:58.201Z", "result_at": "2026-08-11T19:09:58.243Z", "ms": 42}
+  ],
+  "events": [
+    {"type": "tool_result", "ts": "2026-08-11T19:09:48.799Z", "chars": 581,
+     "tool_call_id": "toolu_01GCiCgBY7BoAuSi88wMUexZ"},
+    {"type": "reasoning", "ts": "2026-08-11T19:09:53.830Z", "chars": 1841},
+    {"type": "text", "ts": "2026-08-11T19:09:56.260Z", "chars": 200},
+    {"type": "tool_call", "ts": "2026-08-11T19:09:58.201Z",
+     "tool_call_id": "toolu_013evtr8jYg2P6ypM2pmuWkR"}
   ]
 }
 ```
@@ -83,19 +99,36 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | `session`, `task`, `round` | Group rounds into tasks and order them |
 | `agent` | Separate the main agent from subagent work |
 | `in_tokens`, `out_tokens`, `ms` | Weight each category, giving the percentages |
+| `in_uncached`, `in_cache_write`, `in_cache_read` | The three price differently, so the sum alone says little about cost |
+| `gen_ms`, `wait_ms`, `first_input` | Separate the model's time from the person's, which `ms` cannot |
+| `events[]` | The round's moments in order, so a timing question does not need a re-collect |
+| `mcp_server`, `mcp_tool`, `skill` | Name work a built-in tool table cannot place |
 | `user_text`, `text` | Classify the round's intent |
 | `tools[].name`, `tools[].input` | Classify the operation and its target (code / tests / docs / config) |
-| `tools[].result_chars` | Depth of a reconstruction step |
-| `tools[].is_error` | Debugging signal |
+| `tools[].id`, `emitted_at`, `result_at` | Pair a call with its result, including across rounds |
+| `tools[].result_chars`, `input_chars` | Depth of a reconstruction step, and the true size of a truncated call |
+| `tools[].is_error` | What the harness reported |
+| `tools[].stderr_chars`, `interrupted` | What actually happened, which the harness flag does not report |
+| `tools[].patch` | Lines an edit changed, for attributing work to the files it touched |
 
 **Not recorded:** reasoning text and tool result bodies, which become character counts only. Both
 are large and add little next to `text` and tool inputs. In `tools[].input`, strings over 2000
 characters are truncated to the first 200 plus a length marker; object structure and every file
 path survives, so the target axis is unaffected while `Edit` and `Write` payloads stop dominating
-the file.
+the file. `input_chars` carries the size the cut removed, so a truncated call still says how large
+it was.
+
+**Two things worth being precise about.** `ms` spans the records the round itself wrote; `gen_ms`
+runs from the input that prompted it, so it includes the wait before the model said anything. On one
+442-round store the two are 0.66h and 1.82h — most of a round is outside `ms`. And `is_error` is the
+harness's flag, meaning the call was accepted, not that it worked: a Bash call whose suite failed
+comes back `false`. There is no exit code anywhere in the source records, so `stderr_chars` and
+`interrupted` are the whole of the real signal.
 
 A verbatim copy of each session file is kept next to `rounds.jsonl`. Agents prune old sessions, so
-this is what keeps every dropped field re-derivable locally, and what makes a lean schema safe.
+this is what keeps every dropped field re-derivable locally, and what makes a lean schema safe. It
+is also what a schema change rebuilds from: `collect` rewrites a store it finds on an older version,
+including the sessions the agent has since pruned.
 
 ## Taxonomy
 
@@ -140,11 +173,14 @@ silently counted ADRs as code.
 Three things in the original v0.2 sketch did not survive contact with a real store, and are recorded
 here because the reasons generalise:
 
-- **Repair is not detectable.** Only 2% of tool calls carry `is_error`, because it is a harness-level
-  flag rather than an exit status: a `Bash` call running a suite with 47 failures returns
-  `is_error: false`. The store keeps no exit code and no result body, so the great majority of real
-  repair work is invisible. The error signal survives as a column on the category table instead.
-  Detecting repair properly needs `exit_code` captured at extract time, which is a schema change.
+- **Repair was not detectable, and the fix was not the one assumed.** Only 2% of tool calls carry
+  `is_error`, because it is a harness-level flag rather than an exit status: a `Bash` call running a
+  suite with 47 failures returns `is_error: false`. This was written up as needing `exit_code`
+  captured at extract time. There is no exit code in the source records — the field does not exist.
+  What does exist is `stderr` and `interrupted` on the raw result, which v0.3 captures as
+  `stderr_chars` and `interrupted`. On one 442-round store that surfaces 15 calls that failed while
+  the harness reported success. The taxonomy does not yet spend it; the point here is that the
+  blocker was a wrong guess about the source, not a missing capability.
 - **`trace` is not detectable.** Following calls across files would mean knowing that one file was
   opened *because* of a symbol found in another, which needs result bodies the store does not keep.
   The nearest proxy, runs of consecutive reads, decays smoothly with no natural threshold: 25% of

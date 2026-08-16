@@ -15,11 +15,13 @@
  *    command before any edit is reconstruction. Ordering is evidence, and it is the only kind of
  *    evidence here that looks outside the call itself.
  *
- * What is deliberately absent is as load-bearing as what is here. There is no `repair` category:
- * `is_error` is a harness-level flag, so a Bash call running a suite with 47 failures comes back
- * `is_error: false`, and the store keeps no exit code to tell the difference. There is no `trace`
- * sub-kind: it would mean "this file was opened because of a symbol found in that one", which needs
- * result bodies the store does not keep. Both would have been buckets that only ever looked full.
+ * What is deliberately absent is as load-bearing as what is here. There is still no `repair`
+ * category: `is_error` is a harness-level flag, so a Bash call running a suite with 47 failures
+ * comes back `is_error: false`. The store now keeps `stderr_chars` and `interrupted`, which is the
+ * signal that was missing, but a category is a claim about what work *was* and that needs rules
+ * written against the new field rather than the old one renamed. There is no `trace` sub-kind: it
+ * would mean "this file was opened because of a symbol found in that one", which needs result
+ * bodies the store does not keep. Both would have been buckets that only ever looked full.
  */
 
 import { commandOf, parseCommands, UNPARSED } from './bash.js'

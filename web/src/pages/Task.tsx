@@ -3,12 +3,15 @@ import { useCallback, useEffect } from 'react'
 import { api } from '../api'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
 import { Inspector } from '../components/Inspector'
+import { InTokens, Lines, Reused } from '../components/Tokens'
 import { Trace } from '../components/Trace'
 import { WorkBars } from '../components/WorkBars'
 import { duration, percent, shortId, tokens, when } from '../format'
 import { go, href } from '../router'
 import { useData } from '../useData'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
+
+type Fact = [string, ReactNode]
 
 /**
  * One task: what was asked, and every round it took.
@@ -92,13 +95,23 @@ export function Task({
               items={[
                 ['rounds', data.task.rounds],
                 ['tool calls', data.task.tool_calls],
-                ['working', duration(data.task.ms)],
+                ['working', duration(data.task.gen_ms)],
                 ['elapsed', duration(data.task.elapsed_ms)],
-                ['in', tokens(data.task.in_tokens)],
-                ['out', tokens(data.task.out_tokens)],
-                ...(data.task.errors > 0
-                  ? ([['failed', data.task.errors]] as Array<[string, number]>)
+                ...(data.task.wait_ms > 0
+                  ? [['waiting on you', duration(data.task.wait_ms)] as Fact]
                   : []),
+                ['in', <InTokens of={data.task} />],
+                ['reused', <Reused of={data.task} />],
+                ['out', tokens(data.task.out_tokens)],
+                ...(data.task.added + data.task.removed > 0
+                  ? [
+                      [
+                        'lines',
+                        <Lines added={data.task.added} removed={data.task.removed} />,
+                      ] as Fact,
+                    ]
+                  : []),
+                ...(data.task.errors > 0 ? [['failed', data.task.errors] as Fact] : []),
               ]}
             />
 

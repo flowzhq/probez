@@ -63,6 +63,8 @@ export interface CategoryRow {
   rounds: number
   errors: number
   ms: number
+  in_tokens: number
+  in_cache_read: number
   out_tokens: number
   sub?: CategoryRow[]
 }
@@ -92,6 +94,9 @@ export interface StoredProject {
   rounds: number
   tasks: number
   in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_read: number
   out_tokens: number
   first_ts: string | null
   last_ts: string | null
@@ -106,7 +111,9 @@ export interface TraceRound {
   ref: string
   ts: string | null
   ms: number | null
+  gen_ms: number | null
   in_tokens: number
+  in_cache_read: number
   out_tokens: number
   thinking_chars: number
   tools: number
@@ -131,14 +138,25 @@ export interface Trace {
   span: { first: string | null; last: string | null; elapsed_ms: number; active_ms: number }
 }
 
-export interface ViewSession {
+/** What a span of rounds cost and changed. Mirrors `Totals` in src/inspect.ts. */
+export interface Totals {
+  in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_read: number
+  out_tokens: number
+  gen_ms: number
+  wait_ms: number
+  added: number
+  removed: number
+}
+
+export interface ViewSession extends Totals {
   session: string
   rounds: number
   tasks: number
   tool_calls: number
   errors: number
-  in_tokens: number
-  out_tokens: number
   first_ts: string | null
   last_ts: string | null
   model: string | null
@@ -147,12 +165,10 @@ export interface ViewSession {
   work: Dominant | null
 }
 
-export interface ViewTask {
+export interface ViewTask extends Totals {
   session: string
   task: number
   rounds: number
-  in_tokens: number
-  out_tokens: number
   ms: number
   first_ts: string | null
   asked: string
@@ -166,18 +182,40 @@ export interface ToolRow {
   name: string
   calls: number
   errors: number
+  /** Calls that failed without the harness saying so: stderr, or cut short. */
+  quiet: number
   result_chars: number
   ms: number
   kind?: string
   sub?: ToolRow[]
 }
 
+export interface Patch {
+  files: number
+  added: number
+  removed: number
+}
+
 export interface ToolCall {
   name: string | null
+  id: string | null
   input: unknown
+  input_chars: number
   result_chars: number | null
   is_error: boolean | null
+  stderr_chars: number | null
+  interrupted: boolean | null
+  patch: Patch | null
+  emitted_at: string | null
+  result_at: string | null
   ms: number | null
+}
+
+export interface RoundEvent {
+  type: 'user_message' | 'tool_result' | 'reasoning' | 'text' | 'tool_call'
+  ts: string
+  chars?: number
+  tool_call_id?: string
 }
 
 export interface Round {
@@ -188,13 +226,23 @@ export interface Round {
   id: string
   ts: string | null
   ms: number | null
+  gen_ms: number | null
+  wait_ms: number | null
+  first_input: 'user_message' | 'tool_result' | null
   model: string | null
   in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_read: number
   out_tokens: number
+  mcp_server: string | null
+  mcp_tool: string | null
+  skill: string | null
   user_text: string
   text: string
   thinking_chars: number
   tools: ToolCall[]
+  events: RoundEvent[]
 }
 
 export interface Label {
