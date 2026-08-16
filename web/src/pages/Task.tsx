@@ -2,16 +2,15 @@ import { useCallback, useEffect } from 'react'
 
 import { api } from '../api'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
+import type { Fact } from '../components/Chrome'
 import { Inspector } from '../components/Inspector'
 import { InTokens, Lines, Reused } from '../components/Tokens'
 import { Trace } from '../components/Trace'
 import { WorkBars } from '../components/WorkBars'
-import { duration, percent, shortId, tokens, when } from '../format'
+import { duration, money, percent, shortId, tokens, when } from '../format'
 import { go, href } from '../router'
 import { useData } from '../useData'
-import type { ReactElement, ReactNode } from 'react'
-
-type Fact = [string, ReactNode]
+import type { ReactElement } from 'react'
 
 /**
  * One task: what was asked, and every round it took.
@@ -101,8 +100,9 @@ export function Task({
                   ? [['waiting on you', duration(data.task.wait_ms)] as Fact]
                   : []),
                 ['in', <InTokens of={data.task} />],
-                ['reused', <Reused of={data.task} />],
+                ['reused', <Reused of={data.task} />, "Share of this task's input tokens that were served from the prompt cache rather than processed fresh. Agents resend the whole conversation every round, so almost all of it is a repeat — and a cache read is billed at about a tenth of the input rate, which is why a huge 'in' figure can still be cheap."],
                 ['out', tokens(data.task.out_tokens)],
+                ['cost', money(data.task.cost), "What this cost at the rates under Settings, worked out per round from its own model's prices and summed. Rounds whose model has no rate are left out."],
                 ...(data.task.added + data.task.removed > 0
                   ? [
                       [

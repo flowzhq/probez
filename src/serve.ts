@@ -6,11 +6,15 @@ import { fileURLToPath } from 'node:url'
 import { extname, join, resolve, sep } from 'node:path'
 
 import {
+  BadRequest,
   exportProject,
+  importExport,
   NotFound,
+  pricingPayload,
   projectPayload,
   projectsPayload,
   roundPayload,
+  savePricing,
   sessionPayload,
   syncProject,
   taskPayload,
@@ -182,17 +186,63 @@ async function serveAsset(res: ServerResponse, pathname: string): Promise<void> 
   send(res, 404, 'text/plain; charset=utf-8', 'not found\n')
 }
 
-/** The one path that accepts a method other than GET, matched exactly. */
+/** The one path that accepts a method other than GET *and refuses GET*, matched exactly. */
 function isSyncPath(parts: string[]): boolean {
   return parts.length === 3 && parts[0] === 'projects' && parts[2] === 'sync'
 }
 
+/** Rates: readable with GET, writable with POST. */
+function isPricingPath(parts: string[]): boolean {
+  return parts.length === 1 && parts[0] === 'pricing'
+}
+
+/** Taking in an exported project. POST only: it writes. */
+function isImportPath(parts: string[]): boolean {
+  return parts.length === 1 && parts[0] === 'import'
+}
+
+/** Every path that accepts a POST. */
+function isWritePath(parts: string[]): boolean {
+  return isSyncPath(parts) || isPricingPath(parts) || isImportPath(parts)
+}
+
+/**
+ * How much of a request body is worth reading.
+ *
+ * A rate table is a few hundred bytes; an exported project is the whole of someone's rounds, and a
+ * large one runs to tens of megabytes. The cap is what stops a body being read until this process
+ * runs out of memory, so it is generous rather than absent.
+ */
+const MAX_BODY = 64 * 1024
+const MAX_IMPORT_BODY = 256 * 1024 * 1024
+
+/**
+ * Read a JSON body, refusing anything oversized.
+ *
+ * The only body this server accepts is a table of numbers, so the cap is generous by two orders of
+ * magnitude and still small enough that nothing can be pushed into memory here.
+ */
+async function readJsonBody(req: IncomingMessage, cap = MAX_BODY): Promise<unknown> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    const buffer = chunk as Buffer
+    size += buffer.length
+    if (size > cap) throw new Error(`that file is larger than ${Math.round(cap / 1024 / 1024)} MB`)
+    chunks.push(buffer)
+  }
+  if (size === 0) return null
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
 async function serveApi(
+  req: IncomingMessage,
   res: ServerResponse,
   options: ServeOptions,
   parts: string[],
   url: URL,
 ): Promise<void> {
+  const method = req.method ?? 'GET'
   // /api/projects
   // /api/projects/<slug>
   // /api/projects/<slug>/tools
@@ -203,6 +253,35 @@ async function serveApi(
   // /api/projects/<slug>/sessions/<session>/rounds/<round>
   const dataDir = options.dataDir
   const [group, slug, kind, id, leaf, leafId] = parts
+
+  if (group === 'import' && slug === undefined) {
+    // Reachable only as POST; the method check upstream has already refused a GET here.
+    let body: unknown
+    try {
+      body = await readJsonBody(req, MAX_IMPORT_BODY)
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+      return
+    }
+    sendJson(res, 200, await importExport(dataDir, body))
+    return
+  }
+
+  if (group === 'pricing' && slug === undefined) {
+    if (method === 'POST') {
+      let body: unknown
+      try {
+        body = await readJsonBody(req)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+        return
+      }
+      sendJson(res, 200, await savePricing(dataDir, body))
+      return
+    }
+    sendJson(res, 200, await pricingPayload(dataDir))
+    return
+  }
 
   if (group !== 'projects') {
     sendJson(res, 404, { error: `no endpoint /api/${parts.join('/')}` })
@@ -305,7 +384,7 @@ export async function startServer(options: ServeOptions): Promise<Serving> {
 
     // GET everywhere, and POST on the one route that writes. Anything else has no implementation
     // to reach, which is a shorter thing to reason about than a set of handlers that check.
-    const allowed = isApi && isSyncPath(parts) ? 'GET, POST' : 'GET'
+    const allowed = isApi && isWritePath(parts) ? 'GET, POST' : 'GET'
     const wanted = req.method ?? ''
     if (wanted !== 'GET' && !(wanted === 'POST' && allowed === 'GET, POST')) {
       res.writeHead(405, { allow: allowed, 'content-length': 0 })
@@ -314,7 +393,7 @@ export async function startServer(options: ServeOptions): Promise<Serving> {
     }
     // Syncing is a write, so it is the one thing a GET must not be able to trigger: a URL that
     // collects when it is merely visited is a URL that can be put in an <img> tag.
-    if (wanted === 'GET' && isApi && isSyncPath(parts)) {
+    if (wanted === 'GET' && isApi && (isSyncPath(parts) || isImportPath(parts))) {
       res.writeHead(405, { allow: 'POST', 'content-length': 0 })
       res.end()
       return
@@ -337,9 +416,10 @@ export async function startServer(options: ServeOptions): Promise<Serving> {
     }
 
     try {
-      await serveApi(res, options, parts, url)
+      await serveApi(req, res, options, parts, url)
     } catch (error) {
       if (error instanceof NotFound) sendJson(res, 404, { error: error.message })
+      else if (error instanceof BadRequest) sendJson(res, 400, { error: error.message })
       else throw error
     }
   }

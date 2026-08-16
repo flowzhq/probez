@@ -74,3 +74,17 @@ export function shortId(session: string): string {
 export function shortModel(model: string | null): string {
   return model === null ? '—' : model.replace(/^claude-/, '')
 }
+
+/**
+ * Dollars, at a precision that survives being small.
+ *
+ * Mirrors `money` in `src/cli.ts`: a category can cost fractions of a cent on a short task and
+ * hundreds of dollars on a long one, so the decimals move with the size rather than rounding every
+ * small number away to `$0.00`.
+ */
+export function money(value: number): string {
+  if (value === 0) return '·'
+  if (value < 0.01) return `$${value.toFixed(4)}`
+  if (value < 1000) return `$${value.toFixed(2)}`
+  return `$${Math.round(value).toLocaleString('en-US')}`
+}

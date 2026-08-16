@@ -251,6 +251,8 @@ export async function extractSession(file: string, sessionId: string): Promise<R
             in_tokens: 0,
             in_uncached: 0,
             in_cache_write: 0,
+            in_cache_write_5m: 0,
+            in_cache_write_1h: 0,
             in_cache_read: 0,
             out_tokens: 0,
             mcp_server: null,
@@ -438,6 +440,18 @@ function applyUsage(builder: Builder, msg: Json): void {
   const uncached = asInt(u.input_tokens)
   const cacheWrite = asInt(u.cache_creation_input_tokens)
   const cacheRead = asInt(u.cache_read_input_tokens)
+  // A cache write has two prices, and `cache_creation` is where the log says which kind it was.
+  // Older records carry only the total; the 5-minute entry is the documented default, so an
+  // unsplit total is charged there rather than at the dearer rate.
+  const split = u.cache_creation
+  const detail = split && typeof split === 'object' ? (split as Json) : {}
+  let write1h = asInt(detail.ephemeral_1h_input_tokens)
+  let write5m = asInt(detail.ephemeral_5m_input_tokens)
+  if (write5m + write1h !== cacheWrite) {
+    // The parts must add up to the total probez reports, whatever the record says.
+    write1h = Math.min(write1h, cacheWrite)
+    write5m = cacheWrite - write1h
+  }
   const input = uncached + cacheWrite + cacheRead
   const output = asInt(u.output_tokens)
   const score: UsageScore = [output, input, msg.stop_reason != null ? 1 : 0]
@@ -449,6 +463,8 @@ function applyUsage(builder: Builder, msg: Json): void {
   // so the sum on its own says almost nothing about what a round cost.
   builder.round.in_uncached = uncached
   builder.round.in_cache_write = cacheWrite
+  builder.round.in_cache_write_5m = write5m
+  builder.round.in_cache_write_1h = write1h
   builder.round.in_cache_read = cacheRead
   builder.round.out_tokens = output
 }

@@ -2,15 +2,14 @@ import { useState } from 'react'
 
 import { api } from '../api'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
-import { InTokens, Lines, Reused } from '../components/Tokens'
+import type { Fact } from '../components/Chrome'
+import { InTokens, Lines, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
 import { Trace } from '../components/Trace'
 import { WorkBars } from '../components/WorkBars'
-import { clip, count, duration, percent, shortId, shortModel, tokens, when } from '../format'
+import { clip, count, duration, money, percent, shortId, shortModel, tokens, when } from '../format'
 import { go, href, linkProps } from '../router'
 import { useData } from '../useData'
-import type { ReactElement, ReactNode } from 'react'
-
-type Fact = [string, ReactNode]
+import type { ReactElement } from 'react'
 
 /**
  * One session: the run, its shape, and the turns it was made of.
@@ -54,8 +53,9 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                   ? [['waiting on you', duration(data.session.wait_ms)] as Fact]
                   : []),
                 ['in', <InTokens of={data.session} />],
-                ['reused', <Reused of={data.session} />],
+                ['reused', <Reused of={data.session} />, "Share of this session's input tokens that were served from the prompt cache rather than processed fresh. Agents resend the whole conversation every round, so almost all of it is a repeat — and a cache read is billed at about a tenth of the input rate, which is why a huge 'in' figure can still be cheap."],
                 ['out', tokens(data.session.out_tokens)],
+                ['cost', money(data.session.cost), "What this cost at the rates under Settings, worked out per round from its own model's prices and summed. Rounds whose model has no rate are left out."],
                 ...(data.session.added + data.session.removed > 0
                   ? [
                       [
@@ -92,7 +92,7 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                     <th className="r">Rounds</th>
                     <th className="r">Tools</th>
                     <th>Work</th>
-                    <th className="r">In</th>
+                    <TokenHeaders />
                     <th className="r">Lines</th>
                     <th className="r">Working</th>
                     <th className="r">Elapsed</th>
@@ -119,9 +119,7 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                       <td className="dim nowrap">
                         {task.work === null ? '—' : `${task.work.short} ${percent(task.work.share)}`}
                       </td>
-                      <td className="r num dim">
-                        <InTokens of={task} />
-                      </td>
+                      <TokenCells of={task} />
                       <td className="r num dim nowrap">
                         {task.added + task.removed > 0 ? (
                           <Lines added={task.added} removed={task.removed} />
@@ -139,8 +137,8 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                 {count(data.tasks.length)} tasks. A task is one user turn and everything the agent
                 did about it, subagents included. <em>Working</em> is the time the model spent
                 generating; <em>elapsed</em> adds the tools it waited on and every gap where it was
-                your turn. <em>In</em> counts the whole context each round was given, most of which
-                is usually the same prompt read from cache again — hover for the split.
+                your turn. The five token columns are the five the Settings screen prices: on agent
+                work <em>Read</em> is usually most of them, and it is billed at a tenth of the rest.
               </p>
             </section>
           </>

@@ -2,6 +2,8 @@ import { commandOf, parseCommands, UNPARSED } from './bash.js'
 import type { Command } from './bash.js'
 import { advance, CATEGORIES, categoryInfo, classifyCall, newContext } from './classify.js'
 import type { Category, Label } from './classify.js'
+import { costOf } from './pricing.js'
+import type { Pricing } from './pricing.js'
 import type { Round, ToolCall } from './types.js'
 
 /**
@@ -15,8 +17,12 @@ export interface Totals {
   in_tokens: number
   in_uncached: number
   in_cache_write: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
   in_cache_read: number
   out_tokens: number
+  /** Dollars, at the rates in force when this was totalled. Zero for rounds with no rate. */
+  cost: number
   /** Time from each round's prompt to its last output, which `ms` does not cover. */
   gen_ms: number
   /** Time spent waiting on a person. */
@@ -71,8 +77,11 @@ function noTotals(): Totals {
     in_tokens: 0,
     in_uncached: 0,
     in_cache_write: 0,
+    in_cache_write_5m: 0,
+    in_cache_write_1h: 0,
     in_cache_read: 0,
     out_tokens: 0,
+    cost: 0,
     gen_ms: 0,
     wait_ms: 0,
     added: 0,
@@ -81,12 +90,15 @@ function noTotals(): Totals {
 }
 
 /** Fold one round's cost and changes into a running total. */
-function addTotals(row: Totals, round: Round): void {
+function addTotals(row: Totals, round: Round, pricing: Pricing): void {
   row.in_tokens += round.in_tokens || 0
   row.in_uncached += round.in_uncached || 0
   row.in_cache_write += round.in_cache_write || 0
+  row.in_cache_write_5m += round.in_cache_write_5m || 0
+  row.in_cache_write_1h += round.in_cache_write_1h || 0
   row.in_cache_read += round.in_cache_read || 0
   row.out_tokens += round.out_tokens || 0
+  row.cost += costOf(round, pricing) ?? 0
   row.gen_ms += round.gen_ms || 0
   row.wait_ms += round.wait_ms || 0
   for (const tool of round.tools ?? []) {
@@ -117,8 +129,13 @@ export interface CategoryRow {
   ms: number
   /** Input the category was charged, split the same way a round's is. */
   in_tokens: number
+  in_uncached: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
   in_cache_read: number
   out_tokens: number
+  /** Dollars this category was charged, which is what its share is a share of. */
+  cost: number
   sub?: CategoryRow[]
 }
 
@@ -143,6 +160,10 @@ export interface Coverage {
   unclassified: number
   /** Weight whose target the path table could name. */
   targeted: number
+  /** Dollars across the classified rounds. The denominator for every share. */
+  cost: number
+  /** Classified rounds whose model has no rate, and so are outside `cost` entirely. */
+  unpriced: number
 }
 
 export interface Analysis {
@@ -150,6 +171,8 @@ export interface Analysis {
   coverage: Coverage
   /** What could not be classified, most weight first, so the hole can be named. */
   unknown: { name: string; weight: number }[]
+  /** Models with no rate, most rounds first, so that hole can be named too. */
+  unpriced: { model: string; rounds: number }[]
 }
 
 /**
@@ -177,7 +200,7 @@ export function subCommands(tool: ToolCall): Command[] {
  * Tasks are counted per session because task numbers restart at 1 in every session; this is the
  * same rule `summarize` applies when it totals them.
  */
-export function sessionRows(rounds: Round[]): SessionRow[] {
+export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
   const bySession = new Map<string, { row: SessionRow; tasks: Set<number> }>()
 
   for (const round of rounds) {
@@ -201,7 +224,7 @@ export function sessionRows(rounds: Round[]): SessionRow[] {
     const { row, tasks } = entry
     row.rounds += 1
     tasks.add(round.task)
-    addTotals(row, round)
+    addTotals(row, round, pricing)
     for (const tool of round.tools ?? []) {
       row.tool_calls += 1
       if (tool.is_error === true) row.errors += 1
@@ -246,7 +269,7 @@ export function asked(text: string): string {
  * that never happened. Subagent rounds count towards their task; delegated work is still work the
  * task cost.
  */
-export function taskRows(rounds: Round[]): TaskRow[] {
+export function taskRows(rounds: Round[], pricing: Pricing): TaskRow[] {
   const byTask = new Map<string, TaskRow>()
   for (const round of rounds) {
     const key = `${round.session} ${round.task}`
@@ -264,7 +287,7 @@ export function taskRows(rounds: Round[]): TaskRow[] {
       byTask.set(key, row)
     }
     row.rounds += 1
-    addTotals(row, round)
+    addTotals(row, round, pricing)
     if (typeof round.ms === 'number') row.ms += round.ms
     if (typeof round.ts === 'string' && (row.first_ts === null || round.ts < row.first_ts)) {
       row.first_ts = round.ts
@@ -403,7 +426,11 @@ export function labelRounds(rounds: Round[]): Map<Round, RoundLabel[]> {
  * Time and tokens are split by the same weights as the rounds, so a category that is cheap in
  * rounds but expensive on the clock stays visible instead of averaging away.
  */
-export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): Analysis {
+export function categoryTally(
+  rounds: Round[],
+  pricing: Pricing,
+  sub: 'sub' | 'target' = 'sub',
+): Analysis {
   const labelled = labelRounds(rounds)
   const byCategory = new Map<string, CategoryRow>()
   const subRows = new Map<string, Map<string, CategoryRow>>()
@@ -415,7 +442,10 @@ export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): A
     weight: 0,
     unclassified: 0,
     targeted: 0,
+    cost: 0,
+    unpriced: 0,
   }
+  const unpricedModels = new Map<string, number>()
 
   for (const round of rounds) {
     coverage.rounds += 1
@@ -425,6 +455,17 @@ export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): A
       continue
     }
     coverage.classified += 1
+
+    // A round whose model has no rate contributes nothing to the shares. That is a hole, not a
+    // zero, so it is counted and named rather than quietly averaged in at nothing.
+    const spent = costOf(round, pricing)
+    if (spent === null) {
+      coverage.unpriced += 1
+      const name = round.model ?? '(no model recorded)'
+      unpricedModels.set(name, (unpricedModels.get(name) ?? 0) + 1)
+    } else {
+      coverage.cost += spent
+    }
 
     for (const label of labels) {
       coverage.weight += label.weight
@@ -439,10 +480,10 @@ export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): A
       const info = categoryInfo(label.category)
       let row = byCategory.get(label.category)
       if (row === undefined) {
-        row = { name: label.category, label: info.label, rounds: 0, errors: 0, ms: 0, in_tokens: 0, in_cache_read: 0, out_tokens: 0 }
+        row = { name: label.category, label: info.label, rounds: 0, errors: 0, ms: 0, ...noCategoryTokens(), cost: 0 }
         byCategory.set(label.category, row)
       }
-      addWeighted(row, label, round)
+      addWeighted(row, label, round, spent ?? 0)
 
       const key = sub === 'target' ? label.target : label.sub
       let group = subRows.get(label.category)
@@ -452,10 +493,10 @@ export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): A
       }
       let entry = group.get(key)
       if (entry === undefined) {
-        entry = { name: key, label: key, rounds: 0, errors: 0, ms: 0, in_tokens: 0, in_cache_read: 0, out_tokens: 0 }
+        entry = { name: key, label: key, rounds: 0, errors: 0, ms: 0, ...noCategoryTokens(), cost: 0 }
         group.set(key, entry)
       }
-      addWeighted(entry, label, round)
+      addWeighted(entry, label, round, spent ?? 0)
     }
   }
 
@@ -474,6 +515,9 @@ export function categoryTally(rounds: Round[], sub: 'sub' | 'target' = 'sub'): A
     unknown: [...unknown.entries()]
       .map(([name, weight]) => ({ name, weight }))
       .sort((a, b) => b.weight - a.weight),
+    unpriced: [...unpricedModels.entries()]
+      .map(([model, rounds]) => ({ model, rounds }))
+      .sort((a, b) => b.rounds - a.rounds),
   }
 }
 
@@ -773,15 +817,34 @@ export function traceOf(rounds: Round[], options: { window?: number } = {}): Tra
  * belongs to a call rather than to a share of one, and is counted whole against every label that
  * call produced, the same way `toolTally` charges a multi-command call to each command in it.
  */
-function addWeighted(row: CategoryRow, label: RoundLabel, round: Round): void {
+function addWeighted(row: CategoryRow, label: RoundLabel, round: Round, spent: number): void {
   row.rounds += label.weight
   row.ms += (round.ms ?? 0) * label.weight
   // Input is charged to the work the round did, on the same split as the round count. A round that
   // read two files and ran a test charges each of those a third of the context it was given.
   row.in_tokens += (round.in_tokens || 0) * label.weight
+  row.in_uncached += (round.in_uncached || 0) * label.weight
+  row.in_cache_write_5m += (round.in_cache_write_5m || 0) * label.weight
+  row.in_cache_write_1h += (round.in_cache_write_1h || 0) * label.weight
   row.in_cache_read += (round.in_cache_read || 0) * label.weight
   row.out_tokens += round.out_tokens * label.weight
+  row.cost += spent * label.weight
   if (label.errored) row.errors += 1
+}
+
+/** The token fields of a category row at zero, so a row starts complete. */
+function noCategoryTokens(): Pick<
+  CategoryRow,
+  'in_tokens' | 'in_uncached' | 'in_cache_write_5m' | 'in_cache_write_1h' | 'in_cache_read' | 'out_tokens'
+> {
+  return {
+    in_tokens: 0,
+    in_uncached: 0,
+    in_cache_write_5m: 0,
+    in_cache_write_1h: 0,
+    in_cache_read: 0,
+    out_tokens: 0,
+  }
 }
 
 /** One source of truth for the order: the table in `classify.ts` that also defines the sub-kinds. */

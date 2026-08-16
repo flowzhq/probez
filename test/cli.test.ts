@@ -199,11 +199,47 @@ test('`analyze` reports a distribution and says what it is a distribution of', (
 
   const out = read(env, ['analyze'])
   assert.equal(out.status, 0)
-  assert.match(out.stdout, /WORK\s+ROUNDS\s+SHARE\s+ERRORS\s+TIME\s+OUT/)
+  assert.match(out.stdout, /WORK\s+ROUNDS\s+SHARE\s+COST\s+ERRORS\s+TIME\s+OUT/)
   // The coverage line is part of the answer, not a footnote: a share with no denominator behind it
-  // reads as a share of everything, and rounds that called no tool are outside it.
-  assert.match(out.stdout, /rounds did something a tool can see, out of \d+\. Shares are of those/)
+  // reads as a share of everything, and rounds that called no tool are outside it. The denominator
+  // is money, so the line names the amount rather than leaving "of those" to be guessed at.
+  assert.match(
+    out.stdout,
+    /rounds did something a tool can see, out of \d+\. Shares are of the \$[\d.]+ they cost/,
+  )
   assert.match(out.stdout, /of work has a known target/)
+})
+
+test('a share is a share of cost, so it does not track the round count', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+
+  const rows = read(env, ['analyze']).stdout
+    .split('\n')
+    .map((line) => line.match(/^ {2}(\w[\w ]*?)\s{2,}([\d.]+)\s+([\d.]+)%/))
+    .filter((match): match is RegExpMatchArray => match !== null)
+  assert.ok(rows.length > 1, 'need at least two categories to compare')
+
+  // If SHARE were still the round share, these two would agree by construction. The fixture's
+  // rounds differ in what they spent, so they must not.
+  const whole = rows.reduce((sum, row) => sum + Number(row[2]), 0)
+  const differs = rows.some((row) => Math.abs(Number(row[3]) - (Number(row[2]) / whole) * 100) > 0.5)
+  assert.ok(differs, 'SHARE must be the cost share, not the round share under another name')
+})
+
+test('a model with no rate is reported rather than priced at nothing', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+
+  // Nothing prices this model, so its rounds sit outside the shares and the table says so.
+  writeFileSync(
+    join(env.dataDir, 'pricing.json'),
+    JSON.stringify({ schema_version: 1, models: {} }, null, 2) + '\n',
+  )
+  const out = read(env, ['analyze'])
+  assert.equal(out.status, 0)
+  assert.match(out.stdout, /no rate for claude-opus-5/)
+  assert.match(out.stdout, /Settings/)
 })
 
 test('`analyze` writes its cache owner-only, and writing it again changes nothing', () => {
@@ -357,4 +393,58 @@ test('a rebuild drops the analysis computed from the rounds it replaced', () => 
     false,
     'the cache described rounds that no longer exist in that shape',
   )
+})
+
+test('a project exported from one store imports into another and reads the same', () => {
+  const mine = makeSource(2)
+  assert.equal(collect(mine).status, 0)
+  const before = read(mine, ['analyze']).stdout
+
+  const bundle = join(mine.dataDir, 'sent.json')
+  const exported = run(['export', mine.project, '--data-dir', mine.dataDir, '--bundle', '--out', bundle])
+  assert.equal(exported.status, 0, exported.stderr)
+
+  // A second machine: its own store, and no session directory the export could have come from.
+  const theirs = realpathSync(mkdtempSync(join(tmpdir(), 'probez-cli-import-')))
+  const imported = run(['import', bundle, '--data-dir', theirs])
+  assert.equal(imported.status, 0, imported.stderr)
+  assert.match(imported.stdout, /imported/)
+
+  // Read back by the name it arrived under, on a machine with no agent directory at all — which is
+  // exactly the machine someone who was only ever sent a file is sitting at.
+  const after = run(['analyze', 'work', '--data-dir', theirs, '--claude-dir', join(theirs, 'none')])
+  assert.equal(after.status, 0, after.stderr)
+  // Every figure the analysis prints, in order. The first line names the project and differs: one
+  // of these has a path on this machine and the other does not.
+  const figures = (text: string): string[] =>
+    text.split('\n').slice(2).join('\n').match(/[\d.]+[KM%]?/g) ?? []
+  assert.deepEqual(figures(after.stdout), figures(before))
+})
+
+test('importing the same project twice leaves one copy of it', () => {
+  const mine = makeSource(1)
+  assert.equal(collect(mine).status, 0)
+  const bundle = join(mine.dataDir, 'sent.json')
+  run(['export', mine.project, '--data-dir', mine.dataDir, '--bundle', '--out', bundle])
+
+  const theirs = realpathSync(mkdtempSync(join(tmpdir(), 'probez-cli-twice-')))
+  assert.equal(run(['import', bundle, '--data-dir', theirs]).status, 0)
+  assert.equal(run(['import', bundle, '--data-dir', theirs]).status, 0)
+
+  assert.equal(readdirSync(join(theirs, 'projects')).length, 1)
+})
+
+test('a file that is not an export is refused with a reason', () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'probez-cli-junk-')))
+  const junk = join(dir, 'notes.txt')
+  writeFileSync(junk, 'just some notes I made\n')
+
+  const refused = run(['import', junk, '--data-dir', dir])
+  assert.equal(refused.status, 2)
+  assert.match(refused.stderr, /no rounds in that file/)
+  assert.equal(existsSync(join(dir, 'projects')), false)
+
+  const missing = run(['import', join(dir, 'nope.json'), '--data-dir', dir])
+  assert.equal(missing.status, 2)
+  assert.match(missing.stderr, /cannot read/)
 })

@@ -18,7 +18,7 @@ import {
   workIndex,
 } from '../src/inspect.js'
 import type { Round, ToolCall } from '../src/types.js'
-import { ROUND_DEFAULTS, TOOL_DEFAULTS } from './support.js'
+import { PRICING, ROUND_DEFAULTS, TOOL_DEFAULTS } from './support.js'
 
 function tool(name: string | null, extra: Partial<ToolCall> = {}): ToolCall {
   return { ...TOOL_DEFAULTS, name, result_chars: 100, is_error: false, ms: 10, ...extra }
@@ -47,7 +47,7 @@ const rounds: Round[] = [
 ]
 
 test('sessions group, and tasks are counted within each session', () => {
-  const rows = sessionRows(rounds)
+  const rows = sessionRows(rounds, PRICING)
   assert.deepEqual(
     rows.map((r) => [r.session, r.rounds, r.tasks]),
     [
@@ -63,7 +63,7 @@ test('sessions group, and tasks are counted within each session', () => {
 })
 
 test('a session row counts its tool calls, errors and tokens', () => {
-  const [first] = sessionRows(rounds)
+  const [first] = sessionRows(rounds, PRICING)
   assert.ok(first)
   assert.equal(first.tool_calls, 4)
   assert.equal(first.errors, 1)
@@ -74,7 +74,7 @@ test('a session row counts its tool calls, errors and tokens', () => {
 })
 
 test('sessions are ordered by when they were last active, not by the order rounds arrive', () => {
-  const rows = sessionRows([...rounds].reverse())
+  const rows = sessionRows([...rounds].reverse(), PRICING)
   assert.deepEqual(
     rows.map((r) => r.session),
     ['aaaa1111', 'bbbb2222'],
@@ -106,7 +106,7 @@ const oneSession: Round[] = [
 ]
 
 test('tasks roll up the rounds that belong to them, subagents included', () => {
-  const rows = taskRows(oneSession)
+  const rows = taskRows(oneSession, PRICING)
   assert.deepEqual(
     rows.map((r) => [r.task, r.rounds, r.in_tokens, r.out_tokens, r.ms]),
     [
@@ -119,7 +119,7 @@ test('tasks roll up the rounds that belong to them, subagents included', () => {
 test('task 1 of one session is not task 1 of the next', () => {
   // Task numbers restart in every session, so merging them by number alone would invent a task
   // that never happened. The id carries the session for exactly this reason.
-  const rows = taskRows(rounds)
+  const rows = taskRows(rounds, PRICING)
   assert.deepEqual(
     rows.map((r) => [r.session, r.task, r.rounds]),
     [
@@ -167,11 +167,11 @@ test('an unresolvable task selector says what went wrong', () => {
 })
 
 test('a task is named by what opened it, not by the rounds tool results drove', () => {
-  const rows = taskRows(oneSession)
+  const rows = taskRows(oneSession, PRICING)
   assert.equal(rows[0]?.asked, 'why does the sync loop drop events?')
   assert.equal(rows[1]?.asked, 'now make it retry')
   // Nothing to roll up is an empty list, not a task 0.
-  assert.deepEqual(taskRows([]), [])
+  assert.deepEqual(taskRows([], PRICING), [])
 })
 
 test('a prompt is read without the envelope the harness wrapped it in', () => {
@@ -500,7 +500,7 @@ test('a span of rounds totals what it cost and what it changed', () => {
     }),
   ]
 
-  const [session] = sessionRows(edited)
+  const [session] = sessionRows(edited, PRICING)
   assert.equal(session?.in_tokens, 1500)
   assert.equal(session?.in_uncached, 15)
   assert.equal(session?.in_cache_write, 135)
@@ -516,7 +516,7 @@ test('a span of rounds totals what it cost and what it changed', () => {
   assert.equal(session?.removed, 4)
 
   // A task over the same rounds answers the same questions at the smaller size.
-  const [task] = taskRows(edited)
+  const [task] = taskRows(edited, PRICING)
   assert.equal(task?.in_cache_read, 1350)
   assert.equal(task?.gen_ms, 5000)
   assert.equal(task?.added, 42)
@@ -542,17 +542,61 @@ test('a call that failed without the harness noticing is counted apart from one 
 })
 
 test('input is charged to the work a round did, on the same split as its rounds', () => {
-  const analysis = categoryTally([
-    round({
-      session: 'eeee5555',
-      round: 0,
-      in_tokens: 900,
-      in_cache_read: 600,
-      tools: [tool('Read'), tool('Read'), tool('Write')],
-    }),
-  ])
+  const analysis = categoryTally(
+    [
+      round({
+        session: 'eeee5555',
+        round: 0,
+        in_tokens: 900,
+        in_cache_read: 600,
+        tools: [tool('Read'), tool('Read'), tool('Write')],
+      }),
+    ],
+    PRICING,
+  )
   const total = analysis.rows.reduce((sum, row) => sum + row.in_tokens, 0)
   assert.equal(Math.round(total), 900, 'the round charges its whole input across its work, once')
   const cached = analysis.rows.reduce((sum, row) => sum + row.in_cache_read, 0)
   assert.equal(Math.round(cached), 600)
+})
+
+test('a share is a share of money, and the money splits the way the rounds do', () => {
+  // At the test rate, this round costs 1,000 uncached input at $10/MTok plus 200 output at
+  // $100/MTok: $0.01 + $0.02 = $0.03, split three ways across the work it did.
+  const analysis = categoryTally(
+    [
+      round({
+        session: 'ffff6666',
+        round: 0,
+        model: 'claude-opus-5',
+        in_uncached: 1000,
+        out_tokens: 200,
+        tools: [tool('Read'), tool('Read'), tool('Write')],
+      }),
+    ],
+    PRICING,
+  )
+  assert.ok(Math.abs(analysis.coverage.cost - 0.03) < 1e-9)
+  const charged = analysis.rows.reduce((sum, row) => sum + row.cost, 0)
+  assert.ok(Math.abs(charged - 0.03) < 1e-9, 'the round charges its whole cost across its work, once')
+  assert.equal(analysis.coverage.unpriced, 0)
+})
+
+test('a model with no rate is named rather than counted as free', () => {
+  const analysis = categoryTally(
+    [
+      round({
+        session: 'gggg7777',
+        round: 0,
+        model: 'some-model-nobody-priced',
+        in_uncached: 1_000_000,
+        tools: [tool('Read')],
+      }),
+    ],
+    PRICING,
+  )
+  // Costing nothing and having no price are different facts, and the second one is reported.
+  assert.equal(analysis.coverage.cost, 0)
+  assert.equal(analysis.coverage.unpriced, 1)
+  assert.deepEqual(analysis.unpriced, [{ model: 'some-model-nobody-priced', rounds: 1 }])
 })

@@ -4,9 +4,9 @@ import { api } from '../api'
 import type { ToolRow } from '../api'
 import { Actions } from '../components/Actions'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
-import { InTokens, Reused } from '../components/Tokens'
+import { InTokens, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
 import { WorkBars } from '../components/WorkBars'
-import { ago, count, duration, percent, shortId, shortModel, tokens, when } from '../format'
+import { ago, count, duration, money, percent, shortId, shortModel, tokens, when } from '../format'
 import { go, href, linkProps } from '../router'
 import { useData } from '../useData'
 import type { ReactElement } from 'react'
@@ -37,7 +37,12 @@ export function Project({ slug }: { slug: string }): ReactElement {
               <h1>{data.project.project}</h1>
               <span className="muted mono clip">{data.project.path ?? data.project.key}</span>
               <span className="spacer" style={{ flex: 1 }} />
-              <span className="muted">Last collected {ago(data.project.collected_at)}</span>
+              {/* An import was never collected here, and saying so would misplace where it came from. */}
+              <span className="muted">
+                {data.project.imported_at === null
+                  ? `Last collected ${ago(data.project.collected_at)}`
+                  : `Imported ${ago(data.project.imported_at)}`}
+              </span>
               <Actions slug={slug} onSynced={() => setRead(read + 1)} />
             </div>
             <Facts
@@ -47,8 +52,9 @@ export function Project({ slug }: { slug: string }): ReactElement {
                 ['rounds', count(data.project.rounds)],
                 ['tool calls', count(data.tool_calls)],
                 ['in', <InTokens of={data.project} />],
-                ['reused', <Reused of={data.project} />],
+                ['reused', <Reused of={data.project} />, "Share of this project's input tokens that were served from the prompt cache rather than processed fresh. Agents resend the whole conversation every round, so almost all of it is a repeat — and a cache read is billed at about a tenth of the input rate, which is why a huge 'in' figure can still be cheap."],
                 ['out', tokens(data.project.out_tokens)],
+                ['cost', money(data.cost), "What this cost at the rates under Settings, worked out per round from its own model's prices and summed. Rounds whose model has no rate are left out."],
               ]}
             />
 
@@ -82,7 +88,7 @@ export function Project({ slug }: { slug: string }): ReactElement {
                     <th className="r">Rounds</th>
                     <th className="r">Tools</th>
                     <th>Work</th>
-                    <th className="r">In</th>
+                    <TokenHeaders />
                     <th className="r">Working</th>
                     <th className="r">Elapsed</th>
                   </tr>
@@ -112,9 +118,7 @@ export function Project({ slug }: { slug: string }): ReactElement {
                           ? '—'
                           : `${session.work.short} ${percent(session.work.share)}`}
                       </td>
-                      <td className="r num dim">
-                        <InTokens of={session} />
-                      </td>
+                      <TokenCells of={session} />
                       <td className="r num dim">{duration(session.active_ms)}</td>
                       <td className="r num dim">{duration(session.elapsed_ms)}</td>
                     </tr>

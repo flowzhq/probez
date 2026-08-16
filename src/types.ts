@@ -81,8 +81,12 @@ export interface Round {
   in_tokens: number
   /** Input the model had not seen before, charged at full rate. */
   in_uncached: number
-  /** Input written into the prompt cache. */
+  /** Input written into the prompt cache, which is the two below summed. */
   in_cache_write: number
+  /** Written to a 5-minute cache entry, billed at 1.25× the input rate. */
+  in_cache_write_5m: number
+  /** Written to a 1-hour cache entry, billed at 2×. */
+  in_cache_write_1h: number
   /** Input served from the prompt cache, charged at a fraction of the rate. */
   in_cache_read: number
   out_tokens: number
@@ -121,4 +125,11 @@ export interface Project {
   sessions: SessionFile[]
   /** Newest session mtime, in ms. */
   lastActivity: number
+  /**
+   * Where this project's store directory is, when it is not derived from the path.
+   *
+   * Set only for a project that exists in the store but not in the agent's directory — an import.
+   * Discovery never sets it, and `slugFor` falls back to hashing the path as it always has.
+   */
+  slug?: string
 }

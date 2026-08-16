@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 
 import { linkProps } from '../router'
+import { Tip, useTip } from './Tip'
 
 export interface Crumb {
   label: string
@@ -34,6 +35,28 @@ export function Chrome({ crumbs, right }: { crumbs: Crumb[]; right?: ReactNode }
         </nav>
         <span className="spacer" />
         {right}
+        <a
+          className="gear"
+          {...linkProps('/settings')}
+          aria-label="Settings — token pricing"
+          title="Settings — token pricing"
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            {/* Eight square teeth on a ring, with the hole through the middle. Deliberately not the
+                rays-from-a-dot shape the light theme uses, which sits two controls away. */}
+            <path d="M6.75 2.80 L6.37 1.19 L9.63 1.19 L9.25 2.80 L10.80 3.44 L11.66 2.03 L13.97 4.34 L12.56 5.20 L13.20 6.75 L14.81 6.37 L14.81 9.63 L13.20 9.25 L12.56 10.80 L13.97 11.66 L11.66 13.97 L10.80 12.56 L9.25 13.20 L9.63 14.81 L6.37 14.81 L6.75 13.20 L5.20 12.56 L4.34 13.97 L2.03 11.66 L3.44 10.80 L2.80 9.25 L1.19 9.63 L1.19 6.37 L2.80 6.75 L3.44 5.20 L2.03 4.34 L4.34 2.03 L5.20 3.44 Z" />
+            <circle cx="8" cy="8" r="2.35" />
+          </svg>
+        </a>
         <Theme />
       </div>
     </header>
@@ -140,18 +163,62 @@ export function Problem({ message }: { message: string }): ReactElement {
   )
 }
 
-/** One number with its name, for the row under a page title. */
-export function Facts({ items }: { items: Array<[string, ReactNode]> }): ReactElement {
+/**
+ * A word that needs a sentence.
+ *
+ * Some of these labels are jargon the page invented — "reused" is a share of prompt-cache reads,
+ * which nobody should be expected to infer from four letters. The mark says an explanation exists;
+ * without it the tooltip is undiscoverable, because nothing tells you to hover a number.
+ */
+export function Info({ says }: { says: string }): ReactElement {
+  const { tip, show, hide } = useTip()
+  // The browser's own `title` was the obvious thing and the wrong one: it waits about a second,
+  // renders as a bare `?` cursor until then, and never appears at all for a keyboard user. This is
+  // the same tooltip the charts use, so it shows at once and on focus as well as on hover.
+  return (
+    <>
+      <span
+        className="info"
+        tabIndex={0}
+        role="note"
+        aria-label={says}
+        onMouseEnter={(event) => show(event, says)}
+        onMouseMove={(event) => show(event, says)}
+        onMouseLeave={hide}
+        onFocus={(event) => {
+          const at = event.currentTarget.getBoundingClientRect()
+          show({ clientX: at.left, clientY: at.bottom }, says)
+        }}
+        onBlur={hide}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') hide()
+        }}
+      >
+        i
+      </span>
+      <Tip tip={tip} />
+    </>
+  )
+}
+
+/** One number with its name, and optionally what the name means, for the row under a page title. */
+export type Fact = [label: string, value: ReactNode, says?: string]
+
+export function Facts({ items }: { items: Fact[] }): ReactElement {
   // A fact with nothing to report drops out entirely rather than printing a bare label: a project
   // with no input has no reused share, and "· reused" with a blank in front of it reads as a bug.
   const shown = items.filter(([, value]) => value !== null && value !== undefined && value !== '')
   return (
     <div className="facts">
-      {shown.map(([label, value], at) => (
+      {shown.map(([label, value, says], at) => (
         <Fragment key={label}>
           {at === 0 ? null : <span className="sep">·</span>}
           <span>
-            <span className="num">{value}</span> <span className="muted">{label}</span>
+            <span className="num">{value}</span>{' '}
+            <span className="muted">
+              {label}
+              {says === undefined ? null : <Info says={says} />}
+            </span>
           </span>
         </Fragment>
       ))}

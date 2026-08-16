@@ -19,7 +19,7 @@ import { createInterface } from 'node:readline'
 import { extractSession } from './extract.js'
 import type { Project, Round, SessionFile } from './types.js'
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 export interface Summary {
   project: string
@@ -32,6 +32,8 @@ export interface Summary {
   in_tokens: number
   in_uncached: number
   in_cache_write: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
   in_cache_read: number
   out_tokens: number
   first_ts: string | null
@@ -69,15 +71,21 @@ export interface StoredProject {
   in_tokens: number
   in_uncached: number
   in_cache_write: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
   in_cache_read: number
   out_tokens: number
   first_ts: string | null
   last_ts: string | null
   collected_at: string | null
+  /** When this arrived as an export, or null when it was collected on this machine. */
+  imported_at: string | null
 }
 
 interface Manifest {
   schema_version?: number
+  /** Set only on a project that arrived as a file. Absent means it was collected here. */
+  imported_at?: string | null
   project?: string
   path?: string | null
   key?: string
@@ -89,6 +97,8 @@ interface Manifest {
   in_tokens?: number
   in_uncached?: number
   in_cache_write?: number
+  in_cache_write_5m?: number
+  in_cache_write_1h?: number
   in_cache_read?: number
   out_tokens?: number
   first_ts?: string | null
@@ -123,11 +133,14 @@ function asStored(slug: string, dir: string, manifest: Manifest): StoredProject 
     in_tokens: manifest.in_tokens ?? 0,
     in_uncached: manifest.in_uncached ?? 0,
     in_cache_write: manifest.in_cache_write ?? 0,
+    in_cache_write_5m: manifest.in_cache_write_5m ?? 0,
+    in_cache_write_1h: manifest.in_cache_write_1h ?? 0,
     in_cache_read: manifest.in_cache_read ?? 0,
     out_tokens: manifest.out_tokens ?? 0,
     first_ts: manifest.first_ts ?? null,
     last_ts: manifest.last_ts ?? null,
     collected_at: manifest.collected_at ?? null,
+    imported_at: manifest.imported_at ?? null,
   }
 }
 
@@ -176,10 +189,28 @@ export function defaultDataDir(): string {
  * same project always lands in the same place and two repos sharing a basename never collide.
  */
 export function slugFor(project: Project): string {
+  // A project read back out of the store already knows where it lives; only a discovered one has
+  // to be hashed into a name.
+  if (project.slug !== undefined) return project.slug
   const source = project.path ?? project.key
   const hash = createHash('sha256').update(source).digest('hex').slice(0, 8)
   const name = (project.path ? basename(project.path) : project.key).replace(/[^A-Za-z0-9._-]/g, '-')
   return `${name || 'project'}-${hash}`
+}
+
+/**
+ * Where an imported project lives.
+ *
+ * Deliberately not `slugFor`. That hashes the directory an agent ran in, so importing a colleague's
+ * copy of a repo you also have — same name, same path — would land on your own store and overwrite
+ * it. Hashing the sender's identity for it under a separate namespace means an import can never
+ * collide with something collected here, and re-importing a newer export of the same project
+ * replaces it rather than making a second copy.
+ */
+export function importSlug(name: string, source: string): string {
+  const hash = createHash('sha256').update(`probez-import\u0000${source}`).digest('hex').slice(0, 8)
+  const safe = name.replace(/[^A-Za-z0-9._-]/g, '-').replace(/^[.-]+/, '').slice(0, 40)
+  return `${safe || 'imported'}-${hash}`
 }
 
 export function projectDir(dataDir: string, project: Project): string {
@@ -311,6 +342,8 @@ export async function summarize(project: Project, dataDir: string): Promise<Summ
   let inTokens = 0
   let uncached = 0
   let cacheWrite = 0
+  let write5m = 0
+  let write1h = 0
   let cacheRead = 0
   let outTokens = 0
   let first: string | null = null
@@ -322,6 +355,8 @@ export async function summarize(project: Project, dataDir: string): Promise<Summ
     inTokens += round.in_tokens || 0
     uncached += round.in_uncached || 0
     cacheWrite += round.in_cache_write || 0
+    write5m += round.in_cache_write_5m || 0
+    write1h += round.in_cache_write_1h || 0
     cacheRead += round.in_cache_read || 0
     outTokens += round.out_tokens || 0
     let tasks = tasksBySession.get(round.session)
@@ -355,6 +390,8 @@ export async function summarize(project: Project, dataDir: string): Promise<Summ
     in_tokens: inTokens,
     in_uncached: uncached,
     in_cache_write: cacheWrite,
+    in_cache_write_5m: write5m,
+    in_cache_write_1h: write1h,
     in_cache_read: cacheRead,
     out_tokens: outTokens,
     first_ts: first,
@@ -502,6 +539,8 @@ export async function collectProject(
         in_tokens: summary.in_tokens,
         in_uncached: summary.in_uncached,
         in_cache_write: summary.in_cache_write,
+        in_cache_write_5m: summary.in_cache_write_5m,
+        in_cache_write_1h: summary.in_cache_write_1h,
         in_cache_read: summary.in_cache_read,
         out_tokens: summary.out_tokens,
         first_ts: summary.first_ts,
@@ -529,5 +568,127 @@ export async function collectProject(
     read_sessions: stale.length,
     skipped_sessions: sources.length - stale.length,
     rebuilt: rebuild,
+  }
+}
+
+export interface ImportResult {
+  slug: string
+  dir: string
+  project: string
+  rounds: number
+  sessions: number
+  tasks: number
+  /** Records in the file that were not rounds, so a partly-wrong file says so. */
+  skipped: number
+  /** Whether this replaced a project of the same origin rather than adding one. */
+  replaced: boolean
+}
+
+/**
+ * Write a project that arrived as a file.
+ *
+ * The rounds are re-serialised from the normalised objects rather than copied through, so whatever
+ * the file contained, what lands on disk is this schema and nothing else. The store keeps no
+ * session copies for an import — there were none to send — which is why a later schema change
+ * leaves an imported project at its own version rather than rebuilding it from nothing.
+ */
+export async function importProject(
+  dataDir: string,
+  name: string,
+  source: string,
+  rounds: Round[],
+  skipped: number,
+): Promise<ImportResult> {
+  const slug = importSlug(name, source)
+  const dir = storedDir(dataDir, slug)
+  const replaced = (await readJson<Manifest>(join(dir, 'manifest.json'))) !== null
+
+  await mkdir(dir, { recursive: true, mode: DIR_MODE })
+  for (const path of [dataDir, join(dataDir, 'projects'), dir]) await tighten(path, DIR_MODE)
+
+  // Written beside and moved over, so an interrupted import cannot leave half a project behind.
+  const target = join(dir, 'rounds.jsonl.import')
+  await rm(target, { force: true })
+  await writeFile(target, rounds.map((round) => JSON.stringify(round)).join('\n') + '\n', {
+    encoding: 'utf8',
+    mode: FILE_MODE,
+  })
+  await rename(target, join(dir, 'rounds.jsonl'))
+  // Any analysis beside it described the rounds this just replaced.
+  await rm(join(dir, 'analysis.jsonl'), { force: true })
+
+  const sessions = new Set<string>()
+  const tasks = new Set<string>()
+  let inTokens = 0
+  let uncached = 0
+  let cacheWrite = 0
+  let write5m = 0
+  let write1h = 0
+  let cacheRead = 0
+  let outTokens = 0
+  let first: string | null = null
+  let last: string | null = null
+  for (const round of rounds) {
+    sessions.add(round.session)
+    tasks.add(`${round.session} ${round.task}`)
+    inTokens += round.in_tokens
+    uncached += round.in_uncached
+    cacheWrite += round.in_cache_write
+    write5m += round.in_cache_write_5m
+    write1h += round.in_cache_write_1h
+    cacheRead += round.in_cache_read
+    outTokens += round.out_tokens
+    if (typeof round.ts === 'string') {
+      if (first === null || round.ts < first) first = round.ts
+      if (last === null || round.ts > last) last = round.ts
+    }
+  }
+
+  const now = new Date().toISOString()
+  await writeFile(
+    join(dir, 'manifest.json'),
+    JSON.stringify(
+      {
+        schema_version: SCHEMA_VERSION,
+        project: name,
+        // No path and no source directory: this project was never run on this machine, and
+        // recording the sender's would invite something here to go looking for it.
+        path: null,
+        key: slug,
+        source_dir: null,
+        collected_at: now,
+        imported_at: now,
+        sessions: sessions.size,
+        rounds: rounds.length,
+        tasks: tasks.size,
+        in_tokens: inTokens,
+        in_uncached: uncached,
+        in_cache_write: cacheWrite,
+        in_cache_write_5m: write5m,
+        in_cache_write_1h: write1h,
+        in_cache_read: cacheRead,
+        out_tokens: outTokens,
+        first_ts: first,
+        last_ts: last,
+      },
+      null,
+      2,
+    ) + '\n',
+    { encoding: 'utf8', mode: FILE_MODE },
+  )
+
+  for (const file of [join(dir, 'rounds.jsonl'), join(dir, 'manifest.json')]) {
+    await tighten(file, FILE_MODE)
+  }
+
+  return {
+    slug,
+    dir,
+    project: name,
+    rounds: rounds.length,
+    sessions: sessions.size,
+    tasks: tasks.size,
+    skipped,
+    replaced,
   }
 }

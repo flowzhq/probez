@@ -70,7 +70,8 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
   "ts": "2026-08-11T19:09:53.830Z", "ms": 8420, "gen_ms": 14903, "wait_ms": null,
   "first_input": "tool_result",
   "model": "claude-opus-5",
-  "in_tokens": 36028, "in_uncached": 2, "in_cache_write": 1817, "in_cache_read": 34209,
+  "in_tokens": 36028, "in_uncached": 2, "in_cache_read": 34209,
+  "in_cache_write": 1817, "in_cache_write_5m": 0, "in_cache_write_1h": 1817,
   "out_tokens": 132,
   "mcp_server": null, "mcp_tool": null, "skill": null,
   "user_text": "why does the sync loop drop events?",
@@ -100,6 +101,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | `agent` | Separate the main agent from subagent work |
 | `in_tokens`, `out_tokens`, `ms` | Weight each category, giving the percentages |
 | `in_uncached`, `in_cache_write`, `in_cache_read` | The three price differently, so the sum alone says little about cost |
+| `in_cache_write_5m`, `in_cache_write_1h` | A cache write has two prices: 1.25× input for a 5-minute entry, 2× for a 1-hour one |
 | `gen_ms`, `wait_ms`, `first_input` | Separate the model's time from the person's, which `ms` cannot |
 | `events[]` | The round's moments in order, so a timing question does not need a re-collect |
 | `mcp_server`, `mcp_tool`, `skill` | Name work a built-in tool table cannot place |
@@ -110,6 +112,12 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | `tools[].is_error` | What the harness reported |
 | `tools[].stderr_chars`, `interrupted` | What actually happened, which the harness flag does not report |
 | `tools[].patch` | Lines an edit changed, for attributing work to the files it touched |
+
+**Pricing is not in the round.** A round records tokens; what they cost depends on rates that change
+and that differ per contract, so they live in `~/.probez/pricing.json` and are applied at read time.
+Every share under "where agent work goes" is a share of cost, so a wrong rate is a wrong answer;
+the rates ship at published list prices and are editable in the view's Settings screen. A model with
+no rate is reported as outside the shares rather than counted as free.
 
 **Not recorded:** reasoning text and tool result bodies, which become character counts only. Both
 are large and add little next to `text` and tool inputs. In `tools[].input`, strings over 2000
@@ -284,14 +292,26 @@ that is slow to open and stale the moment it is written. A loopback server lazy-
 writes nothing at all. The cost is a socket, which is why `CONTRIBUTING.md` constraint 2 is now
 "no *outbound* network" and why five separate CI checks fence in what the listener may do.
 
-**Two actions, and the line they sit on.** A project can be **synced** — `collect` then `analyze`,
-on that project — and **exported**. Sync is the only write the view can make, and it makes exactly
-the writes those two commands make, through the same `analysisRecords` that builds the cache for
-`analyze`, so the file cannot come to mean two things depending on which wrote it last. It is the
-one route that takes a `POST`, and it refuses `GET`, because a URL that collects when it is merely
-visited is a URL that can be put in an `<img>` tag. Export does not bend constraint 3: the server
-hands bytes to the browser and the browser writes them where the person said, which is also the
-only way a page can put a file on disk.
+**Four actions, and the line they sit on.** A project can be **synced** — `collect` then `analyze`,
+on that project — and **exported**; the store's rates can be **saved**, and a project someone sent
+you can be **imported**. Sync makes exactly the writes those two commands make, through the same
+`analysisRecords` that builds the cache for `analyze`, so the file cannot come to mean two things
+depending on which wrote it last. Those three writes are all the view has, and each is a `POST` that
+refuses `GET`, because a URL that collects — or imports — when it is merely visited is a URL that can
+be put in an `<img>` tag. Export does not bend constraint 3: the server hands bytes to the browser
+and the browser writes them where the person said, which is also the only way a page can put a file
+on disk.
+
+**Import is the one input probez does not control.** Everything else it reads was written by the
+agent on this machine; an export was written by somebody else's, and arrives by whatever route
+attachments arrive by. So it is parsed as hostile: every field type-checked, every string bounded,
+control characters stripped from anything that reaches a terminal, token totals recomputed from
+their parts rather than believed, and the store directory derived from a hash of the sender's project
+identity so nothing in the file can decide where anything is written. What probez cannot do is
+verify the contents — an imported round says whatever the sender's agent said, and probez shows it
+as faithfully as your own. That is the feature and the risk together, which is why `SECURITY.md`
+says so at the same length. An export written before the token split is refused rather than shown at
+zero cost: a wrong number is worse than a missing project.
 
 **What it deliberately does not do.** Reading never writes, not even the analysis cache that
 `analyze` leaves behind as a side effect of being run. And it invents no categories: the sketch this

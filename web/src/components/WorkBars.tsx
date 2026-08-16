@@ -4,9 +4,10 @@ import { useState } from 'react'
 
 import type { Analysis, CategoryRow } from '../api'
 import { fillOf, orderOf, styleOf } from '../categories'
-import { duration, percent, tokens } from '../format'
+import { duration, money, percent, tokens } from '../format'
+import { href, linkProps } from '../router'
 import { Tip, useTip } from './Tip'
-import { InTokens } from './Tokens'
+import { TokenCells, TokenHeaders } from './Tokens'
 import type { ReactElement } from 'react'
 
 /**
@@ -30,7 +31,10 @@ export function WorkBars({
 }): ReactElement {
   const { tip, show, hide } = useTip()
   const [open, setOpen] = useState<string | null>(null)
+  // Shares are of money. `classified` is still the round count the bars are drawn from, because a
+  // bar is a picture of how much work a category was, not of how much it cost.
   const total = analysis.coverage.classified
+  const spent = analysis.coverage.cost
 
   if (total === 0) {
     return <p className="note">No round in this span called a tool, so there is no work to divide.</p>
@@ -62,8 +66,8 @@ export function WorkBars({
         <thead>
           <tr>
             <th style={{ width: 170 }}>Work</th>
-            <th style={{ width: '36%' }} />
-            <th className="r" style={{ width: 66 }}>
+            <th style={{ width: '18%' }} />
+            <th className="r" style={{ width: 66 }} title="Share of what the classified rounds cost, at the rates in Settings.">
               Share
             </th>
             <th className="r" style={{ width: 66 }}>
@@ -72,11 +76,9 @@ export function WorkBars({
             <th className="r" style={{ width: 66 }}>
               Time
             </th>
-            <th className="r" style={{ width: 66 }} title="Input this work was charged, split across the work each round did.">
-              In
-            </th>
-            <th className="r" style={{ width: 66 }}>
-              Out
+            <TokenHeaders />
+            <th className="r" style={{ width: 72 }}>
+              Cost
             </th>
             <th className="r" style={{ width: 56 }}>
               Errors
@@ -102,10 +104,11 @@ export function WorkBars({
                       <strong>{row.label}</strong>
                       <br />
                       <span className="tip-key">share </span>
-                      {percent(row.rounds / total, 1)} of {Math.round(total)} classified rounds
+                      {percent(spent === 0 ? 0 : row.cost / spent, 1)} of the {money(spent)} the
+                      classified rounds cost
                       <br />
                       <span className="tip-key">weighted rounds </span>
-                      {row.rounds.toFixed(1)}
+                      {row.rounds.toFixed(1)} of {Math.round(total)}
                       <br />
                       <span className="tip-key">in </span>
                       {tokens(row.in_tokens)}
@@ -125,13 +128,11 @@ export function WorkBars({
                   {row.label}
                 </td>
                 <td>{bar(row, false)}</td>
-                <td className="r num">{percent(row.rounds / total, 1)}</td>
+                <td className="r num">{percent(spent === 0 ? 0 : row.cost / spent, 1)}</td>
                 <td className="r num dim">{row.rounds.toFixed(1)}</td>
                 <td className="r num dim">{duration(row.ms)}</td>
-                <td className="r num dim">
-                  <InTokens of={row} />
-                </td>
-                <td className="r num dim">{tokens(row.out_tokens)}</td>
+                <TokenCells of={row} />
+                <td className="r num dim">{money(row.cost)}</td>
                 <td className={`r num ${row.errors > 0 ? 'bad' : 'muted'}`}>
                   {row.errors > 0 ? row.errors : '·'}
                 </td>
@@ -143,13 +144,13 @@ export function WorkBars({
                         {child.label}
                       </td>
                       <td>{bar(child, true)}</td>
-                      <td className="r num dim">{percent(child.rounds / total, 1)}</td>
+                      <td className="r num dim">
+                        {percent(spent === 0 ? 0 : child.cost / spent, 1)}
+                      </td>
                       <td className="r num muted">{child.rounds.toFixed(1)}</td>
                       <td className="r num muted">{duration(child.ms)}</td>
-                      <td className="r num muted">
-                        <InTokens of={child} />
-                      </td>
-                      <td className="r num muted">{tokens(child.out_tokens)}</td>
+                      <TokenCells of={child} dim="muted" />
+                      <td className="r num muted">{money(child.cost)}</td>
                       <td className="r num muted">{child.errors > 0 ? child.errors : '·'}</td>
                     </tr>
                   ))
@@ -165,14 +166,20 @@ export function WorkBars({
 }
 
 export function Coverage({ analysis }: { analysis: Analysis }): ReactElement {
-  const { rounds, classified, toolless, weight, unclassified, targeted } = analysis.coverage
+  const { rounds, classified, toolless, weight, unclassified, targeted, cost, unpriced } =
+    analysis.coverage
   const unknown = analysis.unknown
     .slice(0, 3)
     .map((row) => row.name)
     .join(', ')
   return (
     <p className="note" style={{ marginTop: 12 }}>
-      {Math.round(classified)} of {rounds} rounds did something a tool can see. Shares are of those.
+      {Math.round(classified)} of {rounds} rounds did something a tool can see.{' '}
+      {cost > 0 ? (
+        <>Shares are of the {money(cost)} they cost.</>
+      ) : (
+        <>None of them has a priced model, so there is no cost to divide.</>
+      )}
       <br />
       {toolless} {toolless === 1 ? 'round' : 'rounds'} of prose only (
       {percent(rounds === 0 ? 0 : toolless / rounds, 1)}) ·{' '}
@@ -182,6 +189,14 @@ export function Coverage({ analysis }: { analysis: Analysis }): ReactElement {
         <>
           <br />
           Unclassified is mostly {unknown}.
+        </>
+      )}
+      {unpriced === 0 ? null : (
+        <>
+          <br />
+          {unpriced} {unpriced === 1 ? 'round is' : 'rounds are'} outside that: no rate for{' '}
+          {analysis.unpriced.slice(0, 3).map((row) => row.model).join(', ')}.{' '}
+          <a {...linkProps(href.settings())}>Set one</a>.
         </>
       )}
     </p>

@@ -50,3 +50,68 @@ export function Lines({ added, removed }: { added: number; removed: number }): R
     </span>
   )
 }
+
+/**
+ * The five classes of token, in the order money moves through a round.
+ *
+ * They are the same five the Settings screen sets a rate for, under the same names, so a column
+ * here and a rate there are visibly the same thing. A cache write appears twice because it is
+ * billed twice over: the 5-minute entry at 1.25× the input rate, the 1-hour entry at 2×.
+ */
+export interface TokenSplit {
+  in_uncached: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
+  in_cache_read: number
+  out_tokens: number
+}
+
+export const TOKEN_COLUMNS: Array<{
+  key: keyof TokenSplit
+  label: string
+  full: string
+}> = [
+  { key: 'in_uncached', label: 'Input', full: 'Input the model had not seen before.' },
+  {
+    key: 'in_cache_write_5m',
+    label: 'Write 5m',
+    full: 'Cache write, 5-minute entry. Billed at 1.25× the input rate.',
+  },
+  {
+    key: 'in_cache_write_1h',
+    label: 'Write 1h',
+    full: 'Cache write, 1-hour entry. Billed at 2× the input rate, and usually almost every write.',
+  },
+  {
+    key: 'in_cache_read',
+    label: 'Read',
+    full: 'Cache read. Billed at a tenth of the input rate, and usually most of the tokens.',
+  },
+  { key: 'out_tokens', label: 'Output', full: 'Tokens the model produced.' },
+]
+
+/** The five headers, so no table spells them differently from another. */
+export function TokenHeaders({ width = 68 }: { width?: number }): ReactElement {
+  return (
+    <>
+      {TOKEN_COLUMNS.map((column) => (
+        <th key={column.key} className="r" style={{ width }} title={column.full}>
+          {column.label}
+        </th>
+      ))}
+    </>
+  )
+}
+
+/** The five cells, in the same order, for any row that carries the split. */
+export function TokenCells({ of, dim = 'dim' }: { of: TokenSplit; dim?: string }): ReactElement {
+  return (
+    <>
+      {TOKEN_COLUMNS.map((column) => (
+        <td key={column.key} className={`r num ${dim}`}>
+          {tokens(of[column.key])}
+        </td>
+      ))}
+    </>
+  )
+}
