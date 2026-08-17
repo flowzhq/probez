@@ -233,6 +233,25 @@ test('kinds follow what the command does', () => {
   assert.equal(cell(bash('flowz scan')), 'unclassified/unknown')
 })
 
+test('working on the machines the code runs on is environment, not nothing', () => {
+  assert.equal(cell(bash('kubectl get pods -n prod')), 'environment/infra')
+  assert.equal(cell(bash('kubectl apply -f k8s/deploy.yaml')), 'environment/infra')
+  assert.equal(cell(bash('aws sts get-caller-identity')), 'environment/infra')
+  assert.equal(cell(bash('terraform apply')), 'environment/infra')
+  assert.equal(cell(bash('docker compose up -d')), 'environment/infra')
+  assert.equal(cell(bash('flyctl deploy')), 'environment/infra')
+  // Installing a dependency is still the other half of the category, not this one.
+  assert.equal(cell(bash('brew install jq')), 'environment/deps')
+})
+
+test('the target of an infra command is still read off the path it names', () => {
+  // The category comes from the command and the target from the file, the way both axes always
+  // work: `kubectl apply -f` names a manifest, and a manifest is infrastructure.
+  const [label] = classifyCall(bash('kubectl apply -f k8s/deploy.yaml'))
+  assert.equal(label?.target, 'infra')
+  assert.equal(classifyCall(bash('kubectl get pods'))[0]?.target, 'unknown')
+})
+
 test('compiling is part of shipping, and running a suite is not', () => {
   assert.equal(cell(bash('npm run build')), 'delivery/build')
   assert.equal(cell(bash('npx tsc --noEmit')), 'delivery/build')

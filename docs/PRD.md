@@ -158,7 +158,7 @@ tests or on configuration. Those are targets, and the target axis already carrie
 | Testing | test · run |
 | Documentation | system · change · agent |
 | Delivery | build · commit · publish · branch |
-| Environment | deps · env |
+| Environment | deps · env · infra |
 | Unclassified | incidental · unknown |
 
 The one place a path changes a *category* rather than only a target is prose. Reading prose is

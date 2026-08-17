@@ -67,7 +67,11 @@ export interface CategoryInfo {
  * counted only the transitions, and those are near 1% of any store.
  *
  * `environment` stays small and stays named. A named 1% is worth more than an unnamed one, because
- * the alternative is `npm install` being indistinguishable from a tool nothing recognized.
+ * the alternative is `npm install` being indistinguishable from a tool nothing recognized. Its
+ * third sub-kind, `infra`, is that argument applied again: `kubectl`, `terraform`, `aws` and the
+ * rest of the container and cloud CLIs used to land in `unclassified/unknown`, which said only that
+ * nothing recognized them. Working on the machines the code runs on is not the same work as
+ * changing the code, and it is not nothing.
  */
 export const CATEGORIES: CategoryInfo[] = [
   {
@@ -91,7 +95,7 @@ export const CATEGORIES: CategoryInfo[] = [
     short: 'Deliv',
     subs: ['build', 'commit', 'publish', 'branch'],
   },
-  { id: 'environment', label: 'Environment', short: 'Env', subs: ['deps', 'env'] },
+  { id: 'environment', label: 'Environment', short: 'Env', subs: ['deps', 'env', 'infra'] },
   { id: 'unclassified', label: 'Unclassified', short: 'Uncl', subs: ['incidental', 'unknown'] },
 ]
 
@@ -143,6 +147,7 @@ const LABELS: Record<Verb, [Category, string]> = {
   branch: ['delivery', 'branch'],
   install: ['environment', 'deps'],
   env: ['environment', 'env'],
+  infra: ['environment', 'infra'],
   ask: ['planning', 'clarify'],
   track: ['planning', 'decompose'],
   plan: ['planning', 'design'],

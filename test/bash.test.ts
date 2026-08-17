@@ -108,3 +108,28 @@ test('kinds follow what the command does, not who ran it', () => {
   // An unrecognized program is `other`, not a guess at what it might do.
   assert.equal(kind('flowz scan'), 'other')
 })
+
+test('a container or cloud CLI is infra whatever its subcommand does', () => {
+  // Reading a cluster and changing one are the same kind here: both are work on the machines the
+  // code runs on. Before this they were `other`, alongside the programs nothing recognized.
+  assert.equal(kind('kubectl get pods -n prod'), 'infra')
+  assert.equal(kind('kubectl apply -f k8s/deploy.yaml'), 'infra')
+  assert.equal(kind('aws s3 cp out.json s3://bucket/out.json'), 'infra')
+  assert.equal(kind('gcloud auth login'), 'infra')
+  assert.equal(kind('terraform plan -out=tf.plan'), 'infra')
+  assert.equal(kind('docker build -t app .'), 'infra')
+  assert.equal(kind('helm upgrade --install app ./chart'), 'infra')
+  assert.equal(kind('systemctl restart nginx'), 'infra')
+  // Not a multiplexer, so it is named on its own row.
+  assert.equal(kind('kubectx staging'), 'infra')
+  // A container whose name mentions tests is still not a test run: the head is read first.
+  assert.equal(kind('docker exec test-db psql -c "select 1"'), 'infra')
+})
+
+test('a pod or container name does not become a row of its own', () => {
+  // `npm run build` is worth the third token because a script name is the work. What follows
+  // `kubectl exec` is a pod, and naming rows after pods gives every pod a row.
+  assert.deepEqual(names('kubectl exec api-7d8f9 -- sh -c "ls"'), ['kubectl exec'])
+  assert.deepEqual(names('docker run -it node:20 bash'), ['docker run'])
+  assert.deepEqual(names('npm run build'), ['npm run build'])
+})

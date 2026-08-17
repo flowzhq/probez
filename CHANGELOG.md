@@ -8,6 +8,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+### Added
+
+- **Container, cluster and cloud tooling is named work.** `kubectl`, `docker`, `terraform`, `aws`,
+  `gcloud`, `helm`, `systemctl` and the rest of that family used to fall through to `other`, which
+  is where a program nothing recognized lands, and from there into `Unclassified · unknown`. They
+  are now a command kind of their own, `infra`, and a third Environment sub-kind, so a session
+  spent deploying reads as time spent on the machines the code runs on rather than as a hole in the
+  tally. `probez rounds --kind infra` and `--category environment` both find them.
+  Whatever the subcommand does, the kind is the same: `kubectl get` reports on a cluster and
+  `kubectl apply` changes one, and keeping them apart would mean a sub-table of read-versus-write
+  verbs for thirty different CLIs to buy a distinction nothing downstream asks for.
+
+### Changed
+
+- **`docker run` is Environment, not a run of the project.** It was the one entry from that family
+  the command table already knew, and it named a container as though it were the project starting
+  up. The rest of `docker` was unclassified around it, so the two halves of the same call disagreed.
+- **What follows `docker exec` or `kubectl exec` no longer names a row.** The rule that makes
+  `npm run build` worth naming after its script was reaching the token after `exec` as well, which
+  gave every pod and every container a row of its own in `probez tools`. They come back as
+  `docker exec` and `kubectl exec`. A container named `test-db` is also no longer read as a test
+  run, since the program is now recognized before the token after it is.
+
 ## [0.3.3] - 2026-08-16
 
 The view says more and gives away less. Every tool call now carries the work it was counted as,

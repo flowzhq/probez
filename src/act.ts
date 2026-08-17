@@ -40,6 +40,7 @@ export type Verb =
   | 'branch'    // git checkout, merge, rebase, stash, reset
   | 'install'   // npm install, pip, brew, go get
   | 'env'       // ps, kill, gh auth — the machine rather than the work
+  | 'infra'     // docker, kubectl, terraform, aws — the machines the code runs on
   | 'ask'       // AskUserQuestion
   | 'track'     // TodoWrite, TaskCreate, Agent
   | 'plan'      // EnterPlanMode, ExitPlanMode
@@ -48,7 +49,7 @@ export type Verb =
 
 export const VERBS: Verb[] = [
   'read', 'search', 'query', 'write', 'move', 'test', 'run', 'build',
-  'commit', 'publish', 'branch', 'install', 'env', 'ask', 'track', 'plan',
+  'commit', 'publish', 'branch', 'install', 'env', 'infra', 'ask', 'track', 'plan',
   'noop', 'unknown',
 ]
 
@@ -457,6 +458,8 @@ function verbOf(command: Command, writes: string | null, piped: boolean): Verb {
       return 'build'
     case 'deps':
       return 'install'
+    case 'infra':
+      return 'infra'
     case 'run':
       if (writes !== null) return 'write'
       return RUNS_PROJECT.has(command.name) ? 'run' : 'query'
