@@ -235,7 +235,7 @@ the server and its tools are whatever someone configured, so nothing here can sa
 read a Figma file or filed a Jira ticket. Reconstruction is where the bulk of them sit — a server is
 usually reached to find out something the repo does not hold — and the sub-kind is kept apart from
 `inspect` so the share stays visible and can be moved wholesale if a store says otherwise. Before
-0.3.3 all of it was `unclassified/unknown`.
+0.3.4 all of it was `unclassified/unknown`.
 
 **Attribution caveat.** A project is the directory the agent session was *started* in, because that
 is how the agent files its own logs. Work done in one repo from a session launched in another is

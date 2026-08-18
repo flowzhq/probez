@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-18
+
+Work that was falling through the table now has a name, and every task says which commit it started
+from. Deploying a cluster reads as time on the machines the code runs on, a call to an MCP server
+reads as finding out what the repo does not hold, and a task carries the state of the tree it was
+asked against.
+
 ### Added
 
 - **Every task records the commit it started from.** A task is a piece of work asked against a
@@ -511,7 +518,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/flowzhq/probez/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/flowzhq/probez/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/flowzhq/probez/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/flowzhq/probez/compare/v0.3.0...v0.3.1

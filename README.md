@@ -133,13 +133,13 @@ $ probez
 
 probez  flowz-mcp  ~/Dev/workspace/flowz-mcp
 
-  sessions   5         rounds   442      tasks  17
-  tokens     67.5M in · 504.8K out
-             825 new · 1.4M cached · 66.1M reused  (98% reused)
-  span       Aug 11 – Aug 12, 2026
-  top tools  Bash 171 · Edit 101 · Write 78 · Read 58 · ToolSearch 4
+  sessions   8         rounds   652      tasks  24
+  tokens     94.4M in · 646.3K out
+             1.2K new · 2.0M cached · 92.4M reused  (98% reused)
+  span       Aug 11 – Aug 18, 2026
+  top tools  Bash 292 · Edit 125 · Write 91 · Read 84 · mcp__codebase-memory-mcp__query_graph 12
 
-  +442 rounds, 5 sessions read
+  +652 rounds, 9 sessions read
   → ~/.probez/projects/flowz-mcp-75ad21ac/rounds.jsonl
 ```
 
@@ -151,13 +151,16 @@ $ probez sessions flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   SESSION    ROUNDS  TASKS  TOOLS           IN      OUT  WORK       LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 37%   5 days ago
-  0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   5 days ago
-  51cced08      134      4  131          24.3M   138.1K  Impl 39%   4 days ago
-  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 55%  4 days ago
-  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 34%  4 days ago
+  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 37%   7 days ago
+  0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   7 days ago
+  51cced08      134      4  131          24.3M   138.1K  Impl 39%   7 days ago
+  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 55%  7 days ago
+  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 34%  7 days ago
+  6ffef9bc       33      4  30            2.2M    17.5K  Recon 52%  2 days ago
+  c21c7448      146      2  145 ✗5       22.8M   112.6K  Recon 43%  2 days ago
+  069d8593       31      1  30 ✗3         1.9M    11.3K  Recon 72%  13 hr ago
 
-  5 sessions · 442 rounds
+  8 sessions · 652 rounds
   `probez session <id>` shows one of them, task by task.
 ```
 
@@ -194,36 +197,37 @@ $ probez analyze flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   WORK                  ROUNDS    SHARE      COST  ERRORS      TIME      OUT
-  Planning                33.3    12.7%     $7.36     1.0     32.9s    11.2K
-    read                  23.3    10.7%     $6.18     1.0     11.6s     5.5K
-    design                 8.0     1.5%     $0.86       ·       0ms      248
-    clarify                2.0     0.6%     $0.32       ·     21.3s     5.4K
-  Reconstruction           103    19.2%    $11.09     2.0      2.8m    68.3K
-    read                  53.9     8.9%     $5.13       ·     26.3s    25.8K
-    locate                41.2     7.6%     $4.43     2.0     39.9s    29.2K
-    inspect                7.8     2.6%     $1.53       ·      1.7m    13.3K
-  Implementation           155    37.6%    $21.74     4.0     24.0m   281.9K
-    modify                 111    23.9%    $13.85     4.0      6.5m   107.0K
-    create                44.0    13.6%     $7.90       ·     17.5m   175.0K
-  Testing                 26.4     5.4%     $3.12       ·     10.4s     4.8K
-    test                  26.4     5.4%     $3.12       ·     10.4s     4.8K
-  Documentation           61.0    15.6%     $9.04       ·      9.4m    92.0K
-    system                47.0    11.8%     $6.84       ·      5.2m    61.7K
-    agent                 14.0     3.8%     $2.20       ·      4.2m    30.3K
-  Delivery                33.2     5.8%     $3.34     1.0     34.8s    14.5K
-    build                 28.2     4.9%     $2.83     1.0     16.1s     7.6K
-    branch                 4.5     0.8%     $0.47       ·     16.0s     6.5K
-    commit                 0.5     0.1%     $0.04       ·      2.7s      385
-  Environment              4.7     0.8%     $0.44       ·     11.1s     3.2K
-    env                    2.7     0.5%     $0.28       ·      7.4s     1.8K
-    deps                   2.0     0.3%     $0.16       ·      3.7s     1.4K
-  Unclassified            12.0     3.0%     $1.75       ·     26.3s    11.8K
-    unknown               11.0     2.9%     $1.66       ·     25.2s    11.5K
-    incidental             1.0     0.2%     $0.09       ·      1.1s      378
+  Planning                49.2    10.4%     $8.38     1.0     58.4s    19.2K
+    read                  37.2     8.7%     $6.96     1.0     16.9s    10.0K
+    design                 8.0     1.1%     $0.86       ·       0ms      248
+    clarify                4.0     0.7%     $0.55       ·     41.5s     9.0K
+  Reconstruction           202    24.3%    $19.52    13.0      4.3m   107.2K
+    read                  93.8    10.2%     $8.17     2.0     43.8s    37.4K
+    locate                83.5    10.1%     $8.07     7.0      1.4m    43.0K
+    mcp                   16.0     1.9%     $1.53     4.0     21.0s    13.2K
+    inspect                9.1     2.2%     $1.75       ·      1.8m    13.5K
+  Implementation           188    33.8%    $27.10     8.0     30.6m   341.8K
+    modify                 132    20.9%    $16.77     8.0      8.2m   128.1K
+    create                56.0    12.9%    $10.33       ·     22.4m   213.7K
+  Testing                 34.3     5.2%     $4.14       ·     13.7s     7.2K
+    test                  34.3     5.2%     $4.14       ·     13.7s     7.2K
+  Documentation           73.0    13.2%    $10.56       ·     10.5m   105.5K
+    system                59.0    10.4%     $8.36       ·      6.3m    75.2K
+    agent                 14.0     2.7%     $2.20       ·      4.2m    30.3K
+  Delivery                42.0     5.3%     $4.25     1.0     36.8s    16.0K
+    build                 37.1     4.7%     $3.73     1.0     18.1s     9.1K
+    branch                 4.5     0.6%     $0.47       ·     16.0s     6.5K
+    commit                 0.5     0.0%     $0.04       ·      2.7s      385
+  Environment             12.4     3.4%     $2.73     3.0     18.8s     6.7K
+    env                   10.4     3.2%     $2.56     3.0     15.1s     5.3K
+    deps                   2.0     0.2%     $0.16       ·      3.7s     1.4K
+  Unclassified            31.5     4.4%     $3.53     1.0     45.4s    18.5K
+    unknown               30.5     4.3%     $3.44     1.0     44.2s    18.1K
+    incidental             1.0     0.1%     $0.09       ·      1.1s      378
 
-  428 rounds did something a tool can see, out of 442. Shares are of the $57.90 they cost
-  14 rounds of prose only (3.2%) · 2.8% unclassified · 76.9% of work has a known target
-  Unclassified is mostly ToolSearch, codebase-memory-mcp, Skill. --unclassified lists it
+  633 rounds did something a tool can see, out of 652. Shares are of the $80.21 they cost
+  19 rounds of prose only (2.9%) · 5.0% unclassified · 69.4% of work has a known target
+  Unclassified is mostly codebase-memory-mcp, ToolSearch, Skill. --unclassified lists it
 ```
 
 **A share is a share of money.** `ROUNDS` says how much of the work a category was; `SHARE` says how
@@ -261,7 +265,7 @@ report or a review the way a log does.
 $ probez export flowz-mcp --bundle --out flowz-mcp.json
 
   exported  flowz-mcp  →  ~/probez-demo/flowz-mcp.json
-  991 KB · they read it with `probez import flowz-mcp.json`
+  1432 KB · they read it with `probez import flowz-mcp.json`
 ```
 
 ```console
@@ -269,7 +273,7 @@ $ probez import flowz-mcp.json
 
   imported  flowz-mcp
 
-  sessions   5         rounds   442      tasks  17
+  sessions   8         rounds   652      tasks  24
 
   this is somebody else's work, kept apart from anything collected here
   → ~/.probez/projects/flowz-mcp-34f11966/rounds.jsonl
