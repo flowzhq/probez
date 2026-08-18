@@ -10,6 +10,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ### Added
 
+- **Cursor transcripts.** `probez collect` reads Cursor agent transcripts under
+  `~/.cursor/projects/<slug>/agent-transcripts` as well as Claude Code sessions, and a repository
+  used in both is one project. `--source claude|cursor|both` (default `both`) and `--cursor-dir`
+  select which. Cursor rows have no usage, model, or tool results; those fields stay blank rather
+  than being guessed at. Nested subagent files are `agent: sub`, archived under a flat name. A
+  project slug is resolved against the directories that still exist, so a name with dashes
+  (`flowz-agentic-sdlc`) is not split into extra path segments.
+
 - **Every task records the commit it started from.** A task is a piece of work asked against a
   particular state of the tree, and until now nothing said which one. `probez tasks` grows a `FROM`
   column, `probez task <id>` and `probez round <id>` end their header with `from 0e864ea`, the view

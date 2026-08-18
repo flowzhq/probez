@@ -325,9 +325,11 @@ function RoundCell({
             {duration(workOf(round))} · {tokens(round.in_tokens)} in · {tokens(round.out_tokens)} out
             <br />
             <span className="tip-key">of that input </span>
-            {round.in_tokens === 0
+            {round.in_tokens === null
+              ? 'not recorded'
+              : round.in_tokens === 0
               ? 'none'
-              : `${percent(round.in_cache_read / round.in_tokens, 0)} reused from cache`}
+              : `${percent(round.in_cache_read! / round.in_tokens, 0)} reused from cache`}
             <br />
             <span className="tip-key">tools </span>
             {round.tools === 0 ? 'none' : round.tools}

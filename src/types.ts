@@ -51,6 +51,9 @@ export interface RoundEvent {
   tool_call_id?: string
 }
 
+/** Which coding agent produced a session. */
+export type AgentSource = 'claude-code' | 'cursor'
+
 /** One LLM round: a single assistant message and the input that prompted it. */
 export interface Round {
   /** Session id, i.e. the source session file's name. */
@@ -86,19 +89,22 @@ export interface Round {
   /** What prompted the round: a person, or the previous round's tool results. */
   first_input: 'user_message' | 'tool_result' | null
   model: string | null
-  /** Total input, which is the three fields below summed. */
-  in_tokens: number
+  /**
+   * Total input, which is the three fields below summed. Null when the session never recorded
+   * usage — Cursor transcripts do not — which is not the same as a measured zero.
+   */
+  in_tokens: number | null
   /** Input the model had not seen before, charged at full rate. */
-  in_uncached: number
+  in_uncached: number | null
   /** Input written into the prompt cache, which is the two below summed. */
-  in_cache_write: number
+  in_cache_write: number | null
   /** Written to a 5-minute cache entry, billed at 1.25× the input rate. */
-  in_cache_write_5m: number
+  in_cache_write_5m: number | null
   /** Written to a 1-hour cache entry, billed at 2×. */
-  in_cache_write_1h: number
+  in_cache_write_1h: number | null
   /** Input served from the prompt cache, charged at a fraction of the rate. */
-  in_cache_read: number
-  out_tokens: number
+  in_cache_read: number | null
+  out_tokens: number | null
   /** The MCP server this round's work was attributed to, when the harness named one. */
   mcp_server: string | null
   mcp_tool: string | null
@@ -121,6 +127,7 @@ export interface SessionFile {
   file: string
   size: number
   mtimeMs: number
+  source: AgentSource
 }
 
 /** A project the agent has been run in. */
@@ -129,11 +136,18 @@ export interface Project {
   key: string
   /** Absolute directory the agent ran in, read from the session records. */
   path: string | null
+  /**
+   * True when `path` was decoded from a Cursor project slug rather than read from a session
+   * record. That encoding is lossy, so a Claude `cwd` for the same checkout outranks it.
+   */
+  path_inferred?: boolean
   /** Directory holding the session files. */
   dir: string
   sessions: SessionFile[]
   /** Newest session mtime, in ms. */
   lastActivity: number
+  /** Which agents have sessions in this project. Empty on a store-only import. */
+  sources?: AgentSource[]
   /**
    * Where this project's store directory is, when it is not derived from the path.
    *

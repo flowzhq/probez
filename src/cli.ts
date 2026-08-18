@@ -7,6 +7,7 @@ import { COMMAND_KINDS } from './bash.js'
 import { CATEGORIES, classifyCall, isCategory, isTarget, TARGETS } from './classify.js'
 import {
   defaultClaudeDir,
+  defaultCursorDir,
   discoverProjects,
   isEphemeral,
   matchByName,
@@ -89,6 +90,8 @@ const GLOBAL_FLAGS = new Set([
   'include-temp',
   'data-dir',
   'claude-dir',
+  'cursor-dir',
+  'source',
   'version',
   'help',
 ])
@@ -231,6 +234,10 @@ Collection
   probez collect [project]     Collect one project, or every project under a folder
   probez collect --all         Collect every project on this machine
   --full                       Re-read every session instead of only what changed
+  --source claude|cursor|both  Which agents to read (default both)
+
+  Claude Code sessions live under ~/.claude/projects. Cursor transcripts live under
+  ~/.cursor/projects/<slug>/agent-transcripts. A repository used by both is one project.
 
   A store collected by an older probez is rebuilt on the next collect, from the session copies
   it already keeps. Nothing leaves the machine and nothing is lost, but it is not instant.
@@ -241,7 +248,11 @@ Options (these work on every command)
   --include-temp               Include scratch directories, which projects and --all skip
   --data-dir <dir>             Where probez stores data (default ~/.probez,
                                or \$PROBEZ_DATA_DIR when that is set)
-  --claude-dir <dir>           Where to read sessions from (default ~/.claude/projects)
+  --claude-dir <dir>           Where to read Claude Code sessions from
+                               (default ~/.claude/projects)
+  --cursor-dir <dir>           Where to read Cursor projects from
+                               (default ~/.cursor/projects)
+  --source claude|cursor|both  Which agents to collect (default both)
   --version                    Print the version
   -h, --help                   Print this help
 
@@ -529,6 +540,7 @@ async function storedMatches(dataDir: string, target: string | undefined): Promi
     sessions: [],
     lastActivity: Date.parse(row.last_ts ?? '') || 0,
     slug: row.slug,
+    sources: row.sources,
   }))
 }
 
@@ -1026,6 +1038,7 @@ function matchStored(stored: StoredProject[], target: string): StoredProject[] {
 async function runView(
   dataDir: string,
   claudeDir: string,
+  cursorDir: string,
   target: string | undefined,
   options: { port?: string; open: boolean; json: boolean },
 ): Promise<void> {
@@ -1059,6 +1072,7 @@ async function runView(
   const serving = await startServer({
     dataDir,
     claudeDir,
+    cursorDir,
     port,
     pinned: options.port !== undefined,
   })
@@ -1101,6 +1115,8 @@ async function main(): Promise<void> {
       options: {
         'data-dir': { type: 'string' },
         'claude-dir': { type: 'string' },
+        'cursor-dir': { type: 'string' },
+        source: { type: 'string' },
         json: { type: 'boolean', default: false },
         all: { type: 'boolean', default: false },
         full: { type: 'boolean', default: false },
@@ -1183,6 +1199,16 @@ async function main(): Promise<void> {
   const dataDir = values['data-dir'] ? resolve(values['data-dir']) : defaultDataDir()
 
   const claudeDir = values['claude-dir'] ? resolve(values['claude-dir']) : defaultClaudeDir()
+  const cursorDir = values['cursor-dir'] ? resolve(values['cursor-dir']) : defaultCursorDir()
+  if (
+    values.source !== undefined &&
+    values.source !== 'claude' &&
+    values.source !== 'cursor' &&
+    values.source !== 'both'
+  ) {
+    fail(`--source takes claude, cursor or both, got "${values.source}"`)
+  }
+  const source = (values.source ?? 'both') as 'claude' | 'cursor' | 'both'
 
   // Import reads a file and writes the store, and never looks at the agent's directory at all.
   if (command === 'import') {
@@ -1201,7 +1227,7 @@ async function main(): Promise<void> {
   // been collected stays browsable whether or not the sessions it came from still do; the agent's
   // directory is consulted only when you press Sync, and only then can it be missing.
   if (command === 'view') {
-    await runView(dataDir, claudeDir, target, {
+    await runView(dataDir, claudeDir, cursorDir, target, {
       port: values.port,
       open: values['no-open'] !== true,
       json: values.json,
@@ -1209,12 +1235,18 @@ async function main(): Promise<void> {
     return
   }
 
-  const projects = await discoverProjects(claudeDir)
+  const projects = await discoverProjects({ claudeDir, cursorDir, source })
 
   // An empty agent directory is only a dead end if the store is empty too. Someone who was sent an
   // export and has never run an agent has nothing to discover and a project to read all the same.
   if (projects.length === 0 && (await listStored(dataDir)).length === 0) {
-    console.error(`probez: no agent sessions found in ${shorten(claudeDir)}`)
+    const where =
+      source === 'cursor'
+        ? shorten(cursorDir)
+        : source === 'claude'
+          ? shorten(claudeDir)
+          : `${shorten(claudeDir)} or ${shorten(cursorDir)}`
+    console.error(`probez: no agent sessions found in ${where}`)
     process.exit(1)
   }
 
@@ -1240,6 +1272,7 @@ async function main(): Promise<void> {
         // where that one is stated.
         lastActivity: Date.parse(row.last_ts ?? row.imported_at ?? '') || 0,
         slug: row.slug,
+        sources: row.sources,
       }))
     const listed = [...own, ...imported]
     const named = (project: Project): string =>

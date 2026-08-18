@@ -117,6 +117,7 @@ export interface StoredProject {
   collected_at: string | null
   /** When this arrived as an export, or null when it was collected on this machine. */
   imported_at: string | null
+  sources: Array<'claude-code' | 'cursor'>
 }
 
 export interface TraceRound {
@@ -128,9 +129,9 @@ export interface TraceRound {
   ts: string | null
   ms: number | null
   gen_ms: number | null
-  in_tokens: number
-  in_cache_read: number
-  out_tokens: number
+  in_tokens: number | null
+  in_cache_read: number | null
+  out_tokens: number | null
   thinking_chars: number
   tools: number
   errors: number
@@ -272,13 +273,13 @@ export interface Round {
   wait_ms: number | null
   first_input: 'user_message' | 'tool_result' | null
   model: string | null
-  in_tokens: number
-  in_uncached: number
-  in_cache_write: number
-  in_cache_write_5m: number
-  in_cache_write_1h: number
-  in_cache_read: number
-  out_tokens: number
+  in_tokens: number | null
+  in_uncached: number | null
+  in_cache_write: number | null
+  in_cache_write_5m: number | null
+  in_cache_write_1h: number | null
+  in_cache_read: number | null
+  out_tokens: number | null
   mcp_server: string | null
   mcp_tool: string | null
   skill: string | null

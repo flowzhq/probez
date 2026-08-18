@@ -498,6 +498,7 @@ const TOOL_VERBS: Record<string, Verb> = {
   Edit: 'write',
   MultiEdit: 'write',
   NotebookEdit: 'write',
+  StrReplace: 'write',
   WebSearch: 'read',
   WebFetch: 'read',
 }

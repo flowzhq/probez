@@ -8,7 +8,9 @@ response within a few business days.
 
 ## How probez handles your data
 
-probez reads real work sessions, so the data-handling rules matter as much as the code.
+probez reads real work sessions, so the data-handling rules matter as much as the code. It reads
+Claude Code session files under `~/.claude/projects` and Cursor agent transcripts under
+`~/.cursor/projects`.
 
 **Nothing leaves your machine.** probez never opens a connection to anything. There is no telemetry,
 no account, no upload path, and no remote configuration. This is enforced by the codebase containing

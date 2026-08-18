@@ -663,9 +663,9 @@ export interface TraceRound {
   ms: number | null
   /** From the input that prompted the round to its last output, so it precedes `ts`. */
   gen_ms: number | null
-  in_tokens: number
-  in_cache_read: number
-  out_tokens: number
+  in_tokens: number | null
+  in_cache_read: number | null
+  out_tokens: number | null
   thinking_chars: number
   tools: number
   errors: number
@@ -758,9 +758,9 @@ export function traceOf(rounds: Round[], options: { window?: number } = {}): Tra
       ts: round.ts,
       ms: round.ms,
       gen_ms: round.gen_ms ?? null,
-      in_tokens: round.in_tokens || 0,
-      in_cache_read: round.in_cache_read || 0,
-      out_tokens: round.out_tokens || 0,
+      in_tokens: round.in_tokens,
+      in_cache_read: round.in_cache_read,
+      out_tokens: round.out_tokens,
       thinking_chars: round.thinking_chars || 0,
       tools: tools.length,
       errors: tools.filter((tool) => tool.is_error === true).length,
@@ -838,7 +838,7 @@ function addWeighted(row: CategoryRow, label: RoundLabel, round: Round, spent: n
   row.in_cache_write_5m += (round.in_cache_write_5m || 0) * label.weight
   row.in_cache_write_1h += (round.in_cache_write_1h || 0) * label.weight
   row.in_cache_read += (round.in_cache_read || 0) * label.weight
-  row.out_tokens += round.out_tokens * label.weight
+  row.out_tokens += (round.out_tokens || 0) * label.weight
   row.cost += spent * label.weight
   if (label.errored) row.errors += 1
 }

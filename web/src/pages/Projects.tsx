@@ -88,6 +88,14 @@ export function Projects(): ReactElement {
                               imported
                             </span>
                           )}
+                          {(project.sources ?? []).includes('cursor') ? (
+                            <span
+                              className="mark"
+                              title="Includes Cursor sessions. Cursor transcripts do not record token usage or cost."
+                            >
+                              cursor
+                            </span>
+                          ) : null}
                           <div className="muted mono clip" style={{ fontSize: 11 }}>
                             {project.path ?? project.key}
                           </div>
