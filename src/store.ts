@@ -17,10 +17,11 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { extractSession } from './extract.js'
+import { readHeadHistory } from './git.js'
 import { CONTROL } from './import.js'
 import type { Project, Round, SessionFile } from './types.js'
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 
 export interface Summary {
   project: string
@@ -516,9 +517,14 @@ export async function collectProject(
   const target = rebuild ? `${roundsFile}.rebuild` : roundsFile
   if (rebuild) await rm(target, { force: true })
 
+  // Read once for the whole project rather than per session: it is one file, and every session
+  // here ran in the same checkout. A project that is not in a repository comes back null and every
+  // round it yields is recorded with no commit, which is the honest answer rather than a failure.
+  const head = stale.length > 0 ? await readHeadHistory(project.path) : null
+
   let newRounds = 0
   for (const session of stale) {
-    const rounds = await extractSession(session.file, session.id)
+    const rounds = await extractSession(session.file, session.id, head)
     const lines: string[] = []
     for (const round of rounds) {
       const key = `${round.session}\u0000${round.id}`

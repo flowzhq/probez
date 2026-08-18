@@ -10,6 +10,14 @@ export function shorten(path: string): string {
   return path
 }
 
+/**
+ * A commit as it is read and typed: the first seven characters, the length git itself abbreviates
+ * to. The full hash stays in `--json`, since that is what another tool wants.
+ */
+export function shortCommit(hash: string | null): string | null {
+  return hash === null || hash === '' ? null : hash.slice(0, 7)
+}
+
 export function tokens(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`

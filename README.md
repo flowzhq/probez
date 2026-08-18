@@ -161,6 +161,31 @@ $ probez sessions flowz-mcp
   `probez session <id>` shows one of them, task by task.
 ```
 
+A session as its tasks, each with the commit the tree was on when it was asked:
+
+```console
+$ probez tasks flowz-agentic-sdlc --session 15ac167d --limit 8
+
+  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
+
+  TASK         ROUNDS       IN     OUT     TIME  WORK       FROM     ASKED
+  15ac167d#1       12   517.7K   10.8K     2.6m  Docs 55%   a938f1f  start tracking the proje…
+  15ac167d#2        5   275.1K    5.9K     1.4m  Docs 75%   6e9716d  once i a while i'll post…
+  15ac167d#3        1    58.4K    1.5K    23.8s  —          9e4e660  we are implementing task…
+  15ac167d#4        3   186.2K    3.4K    51.7s  Plan 100%  9e4e660  what next? M2?
+  15ac167d#5        3   215.4K    6.9K     1.3m  Docs 50%   9e4e660  do we have this in the d…
+  15ac167d#6        4   307.5K    3.0K    41.9s  Docs 67%   2a0c9e7  this should be in the co…
+  15ac167d#7       20     2.1M   36.2K     7.3m  Docs 46%   be347e3  i see the task, yet no m…
+  15ac167d#8        4   569.1K    6.4K     1.5m  Recon 42%  52900e4  add to the metrics ledge…
+
+  showing 8 of 16 tasks, --limit 0 for all. `probez task <id>` shows one in full
+```
+
+**`FROM` is where the task began, not what it produced.** Tasks 3, 4 and 5 all start from
+`9e4e660`, so those three asks were made against the same tree; the hash then moves, which is the
+work of the task before it landing. It is read from git's HEAD reflog when the project is
+collected — no `git` runs — and it is blank for a project that is not a checkout.
+
 And what the work actually was:
 
 ```console
@@ -270,7 +295,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 ```json
 {
   "session": "0bfa7fe3-f9c1-448f-bbac-a4c58b85e5bf",
-  "round": 87, "task": 3, "agent": "main",
+  "round": 87, "task": 3, "commit": null, "agent": "main",
   "id": "msg_011CdwSqg3tdZwYQ7vw69XdB",
   "ts": "2026-08-11T18:37:28.976Z", "ms": 12571, "gen_ms": 16407, "wait_ms": null,
   "first_input": "tool_result",
@@ -300,7 +325,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 }
 ```
 
-Three of those repay a second look:
+Four of those repay a second look:
 
 - **`in_tokens` is the sum of the fields after it**, and the last is usually almost all of it. Cache
   reads bill at a fraction of the rate, so the total alone is a poor guide to what a round cost.
@@ -308,6 +333,9 @@ Three of those repay a second look:
   from the input that prompted it, so it includes the wait before the model said anything.
 - **`is_error` is the harness's flag**, meaning the call was accepted — a `Bash` call whose test
   suite fails still comes back `false`. `stderr_chars` and `interrupted` are what actually happened.
+- **`commit` is the task's starting point, at full length**, and it is the same on every round of
+  the task. It is `null` here because the project this round came from is not a git checkout, which
+  is also what a repository with no reflog and a task older than the reflog reaches both look like.
 
 **Not recorded:** reasoning text and tool result bodies, kept as character counts. Tool input
 strings over 2,000 characters are cut to the first 200 plus a length marker; object structure and
@@ -324,7 +352,9 @@ the normalized rounds 30 MB.
 Everything stays under `~/.probez` on your machine.
 
 It does read your real work. `rounds.jsonl` holds prompts and assistant messages in full, and tool
-inputs including file paths and shell commands. The verbatim session copies beside it hold more
+inputs including file paths and shell commands. One file outside the agent's session directory is
+read too: `.git/logs/HEAD` in the project, for the commit each task started from — read-only, with
+no `git` subprocess, and nothing kept from it but the hash. The verbatim session copies beside it hold more
 still: the full reasoning text and full tool output the round record leaves out.
 
 There is no redaction of any kind. A credential typed into a shell command is stored exactly as

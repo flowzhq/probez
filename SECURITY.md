@@ -14,6 +14,14 @@ probez reads real work sessions, so the data-handling rules matter as much as th
 no account, no upload path, and no remote configuration. This is enforced by the codebase containing
 no HTTP client and no outbound socket use, and checked in CI.
 
+**One file is read outside the agent's session directory.** To say which commit a task started
+from, probez opens `.git/logs/HEAD` — git's HEAD reflog — in the directory the agent ran in. It is
+read-only, and it is a read of a text file: no `git` subprocess is started, nothing from the
+repository is executed, and probez works the same where git is not installed. What is kept from it
+is a commit hash per round and nothing else; branch names, commit messages, and the identity of
+whoever made the commits are all in that file and none of them are stored. A directory that is not
+a checkout, or one where git keeps no reflog, is recorded as having no commit.
+
 **`probez view` listens on a port, and that deserves stating plainly.** It is the one place probez
 opens a socket. It serves your own store, unredacted, to your own browser, so it is fenced in five
 ways:

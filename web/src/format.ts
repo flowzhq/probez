@@ -70,6 +70,11 @@ export function shortId(session: string): string {
   return session.slice(0, 8)
 }
 
+/** A commit at the length git itself abbreviates to. The full hash stays in the API payload. */
+export function shortCommit(hash: string | null): string | null {
+  return hash === null || hash === '' ? null : hash.slice(0, 7)
+}
+
 /** `claude-opus-5` is the model; the vendor prefix is the same on every row. */
 export function shortModel(model: string | null): string {
   return model === null ? '—' : model.replace(/^claude-/, '')

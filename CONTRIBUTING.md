@@ -60,6 +60,13 @@ Three constraints are not up for negotiation in a PR, because they are the produ
 3. **Only ever read the agent's session files.** probez writes exclusively under its own data
    directory.
 
+   There is one read outside them, and it is named here so it stays a decision rather than a
+   precedent: `src/git.ts` opens `.git/logs/HEAD` in the directory the agent ran in, to say which
+   commit a task started from. It is one plain text file, opened read-only, and nothing is
+   executed — there is no `git` subprocess, and probez behaves the same on a machine with no git
+   installed. CI greps for it, so a second reader anywhere else fails the build rather than
+   arriving quietly, and a PR that wants one needs to argue for it the way this paragraph does.
+
    The view's routes that write are all `POST`, and there are five: `.../sync` writes what `collect`
    and `analyze` write, `.../rename` sets one field of a manifest, `.../delete` removes one project's
    directory, `/import` writes a project that arrived as a file, and `/pricing` stores rates. Every

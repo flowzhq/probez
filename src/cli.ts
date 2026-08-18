@@ -13,7 +13,7 @@ import {
   matchProjects,
   projectName,
 } from './discover.js'
-import { ago, clip, duration, pad, padStart, shorten, span, tokens, wrap } from './format.js'
+import { ago, clip, duration, pad, padStart, shortCommit, shorten, span, tokens, wrap } from './format.js'
 import {
   analysisRecords,
   categoryTally,
@@ -155,6 +155,10 @@ Tasks
   probez task <id>             One task: what it asked, and every round it took
   --session <id>               Only tasks from this session
   --limit <n>                  As above
+
+  FROM is the commit the checkout was on when the task was asked: where the work started, not
+  what it ended up as. It is read from git's HEAD reflog when the project is collected, so it
+  is blank for a project outside a checkout and for tasks older than the reflog reaches.
 
 Rounds
   probez rounds [project]      Every round
@@ -614,13 +618,19 @@ function printTaskRows(tasks: TaskRow[], width: number, showSession: boolean, wo
   // The id column is named after what it identifies. Calling it `#` in a table that also counts
   // rounds reads as "round number", which is the one thing it is not.
   const idWidth = showSession ? 13 : 6
-  const asked = Math.max(20, width - idWidth - 45)
+  // FROM is the commit the task was asked against, and it earns its width only where there is one:
+  // a project outside a checkout, or one collected before probez recorded commits, gets the table
+  // it has always had rather than a column of dashes taking room from what was asked.
+  const from = tasks.some((task) => task.commit !== null)
+  const fromWidth = from ? 9 : 0
+  const asked = Math.max(20, width - idWidth - fromWidth - 45)
   console.log(
-    `  ${pad('TASK', idWidth)}${padStart('ROUNDS', 6)}  ${padStart('IN', 7)}  ${padStart('OUT', 6)}  ${padStart('TIME', 7)}  ${pad('WORK', 11)}ASKED`,
+    `  ${pad('TASK', idWidth)}${padStart('ROUNDS', 6)}  ${padStart('IN', 7)}  ${padStart('OUT', 6)}  ${padStart('TIME', 7)}  ${pad('WORK', 11)}${from ? pad('FROM', fromWidth) : ''}ASKED`,
   )
   for (const task of tasks) {
+    const commit = from ? pad(shortCommit(task.commit) ?? '—', fromWidth) : ''
     console.log(
-      `  ${pad(taskId(task, showSession), idWidth)}${padStart(String(task.rounds), 6)}  ${padStart(tokens(task.in_tokens), 7)}  ${padStart(tokens(task.out_tokens), 6)}  ${padStart(duration(task.gen_ms), 7)}  ${pad(work.task(task.session, task.task), 11)}${clip(task.asked === '' ? '—' : task.asked, asked)}`,
+      `  ${pad(taskId(task, showSession), idWidth)}${padStart(String(task.rounds), 6)}  ${padStart(tokens(task.in_tokens), 7)}  ${padStart(tokens(task.out_tokens), 6)}  ${padStart(duration(task.gen_ms), 7)}  ${pad(work.task(task.session, task.task), 11)}${commit}${clip(task.asked === '' ? '—' : task.asked, asked)}`,
     )
   }
 }
@@ -647,8 +657,11 @@ function printTask(
 ): void {
   const tools = toolTally(rounds)
   const errors = tools.reduce((sum, tool) => sum + tool.errors, 0)
+  // Where the checkout stood when this was asked for, which is what the work was asked against.
+  // Absent for a project that is not a git checkout, and for tasks collected before probez looked.
+  const from = shortCommit(row.commit)
   console.log(
-    `  task ${row.task} of session ${row.session.slice(0, 8)}  ·  ${rounds.length} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out · ${duration(row.gen_ms)} working`,
+    `  task ${row.task} of session ${row.session.slice(0, 8)}  ·  ${rounds.length} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out · ${duration(row.gen_ms)} working${from === null ? '' : ` · from ${from}`}`,
   )
 
   if (row.asked !== '') {
@@ -780,7 +793,10 @@ function printRound(round: Round, width: number): void {
     .filter((part): part is string => typeof part === 'string')
     .join(' · ')
   if (attributed !== '') console.log(`  ${attributed}`)
-  console.log(`  session ${round.session}${round.ts ? ` · ${round.ts}` : ''}`)
+  const from = shortCommit(round.commit)
+  console.log(
+    `  session ${round.session}${round.ts ? ` · ${round.ts}` : ''}${from === null ? '' : ` · from ${from}`}`,
+  )
 
   if (round.user_text !== '') {
     console.log('')

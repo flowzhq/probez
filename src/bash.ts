@@ -19,6 +19,7 @@ export type CommandKind =
   | 'test'
   | 'build'
   | 'deps'
+  | 'infra'
   | 'run'
   | 'net'
   | 'proc'
@@ -34,6 +35,7 @@ export const COMMAND_KINDS: CommandKind[] = [
   'test',
   'build',
   'deps',
+  'infra',
   'run',
   'net',
   'proc',
@@ -52,6 +54,26 @@ export interface Command {
 export const UNPARSED = '(unparsed)'
 
 /**
+ * Container, cluster and cloud tooling.
+ *
+ * These are multiplexers too, but they are listed apart because they are the one family where the
+ * subcommand does not change the kind. `kubectl get` reports on a cluster and `kubectl apply`
+ * changes one; `terraform plan` and `terraform apply` are the same pair. Both halves are work on
+ * the machines the code runs on rather than on the code, so both are `infra`, and the alternative —
+ * a sub-table per CLI, guessing which verbs of thirty clouds are reads and which are writes — buys
+ * a distinction nothing downstream asks for. Before this existed they all landed in `other`, which
+ * is where a tool nothing recognized lands, and a named 1% is worth more than an unnamed one.
+ */
+const INFRA = new Set([
+  'docker', 'docker-compose', 'podman',
+  'kubectl', 'helm', 'kustomize', 'minikube', 'skaffold', 'argocd', 'eksctl',
+  'terraform', 'terragrunt', 'tofu', 'pulumi', 'ansible', 'vagrant', 'nomad', 'consul', 'vault',
+  'aws', 'gcloud', 'gsutil', 'az', 'doctl',
+  'heroku', 'flyctl', 'vercel', 'netlify', 'railway', 'wrangler', 'supabase', 'firebase',
+  'systemctl', 'launchctl',
+])
+
+/**
  * Programs whose first argument is the real operation. `git` alone merges reading history with
  * committing; `git log` and `git commit` are different work and belong in different rows.
  */
@@ -59,16 +81,15 @@ const MULTIPLEXERS = new Set([
   'git', 'gh', 'jj',
   'npm', 'pnpm', 'yarn', 'npx', 'bun', 'deno',
   'cargo', 'go', 'make',
-  'docker', 'kubectl', 'terraform', 'gcloud', 'aws',
   'brew', 'pip', 'pip3', 'uv', 'poetry',
+  ...INFRA,
 ])
 
-/** Where an unrecognized subcommand of a multiplexer lands. */
+/** Where an unrecognized subcommand of a multiplexer lands. `INFRA` is answered before this. */
 const MULTIPLEXER_KIND: Record<string, CommandKind> = {
   git: 'vcs', gh: 'vcs', jj: 'vcs',
   npm: 'build', pnpm: 'build', yarn: 'build', npx: 'build', bun: 'build', deno: 'build',
   cargo: 'build', go: 'build', make: 'build',
-  docker: 'other', kubectl: 'other', terraform: 'other', gcloud: 'other', aws: 'other',
   brew: 'deps', pip: 'deps', pip3: 'deps', uv: 'deps', poetry: 'deps',
 }
 
@@ -131,9 +152,13 @@ const KIND_BY_NAME: Record<string, CommandKind> = {
   'go install': 'deps', 'go get': 'deps', 'go mod': 'deps', 'cargo add': 'deps',
   'pip install': 'deps', 'pip3 install': 'deps', 'brew install': 'deps',
 
+  // infra: the multiplexers in INFRA cover the rest, whatever their subcommand
+  kubectx: 'infra', kubens: 'infra', k9s: 'infra', stern: 'infra', colima: 'infra',
+  'ansible-playbook': 'infra', helmfile: 'infra', journalctl: 'infra',
+
   // run
   node: 'run', python: 'run', python3: 'run', ruby: 'run', bash: 'run', sh: 'run', zsh: 'run',
-  osascript: 'run', claude: 'run', 'go run': 'run', 'cargo run': 'run', 'docker run': 'run',
+  osascript: 'run', claude: 'run', 'go run': 'run', 'cargo run': 'run',
   'npm start': 'run', 'pnpm start': 'run', 'npm run': 'build', 'pnpm run': 'build',
 
   // net
@@ -183,6 +208,10 @@ function kindOf(name: string, head: string, label: string | null, argv: string[]
 
   const exact = KIND_BY_NAME[name]
   if (exact !== undefined) return exact
+
+  // Asked before the label, or a container named `test-db` in `docker exec test-db psql` would make
+  // a shell into a database read as a test run.
+  if (INFRA.has(head)) return 'infra'
 
   if (label !== null) {
     // `npx vitest` and `pnpm eslint` are the tool they name, whatever ran them.
@@ -253,8 +282,10 @@ function nameSegment(segment: string): Command | null {
 
   let name = `${head} ${sub}`
   let label = sub
-  if (sub === 'run' || sub === 'exec') {
+  if ((sub === 'run' || sub === 'exec') && !INFRA.has(head)) {
     // `npm run build` is worth naming; `go run ./cmd/x` is not, since a path is not a script name.
+    // Neither is what follows `docker exec` or `kubectl exec`: that is a container or a pod, and
+    // naming the row after it gives every pod a row of its own.
     const after = tokens[at + 1]
     if (after !== undefined && !/^[-./]/.test(after) && SUBCOMMAND.test(after)) {
       name += ` ${after}`

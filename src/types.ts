@@ -59,6 +59,15 @@ export interface Round {
   round: number
   /** 1-based task number; a new user turn starts a new task. */
   task: number
+  /**
+   * The commit HEAD pointed at when this round's task began: where the work started from, not what
+   * it ended up as. Every round of a task carries the same hash, including its subagents'.
+   *
+   * Null when the project is not a git checkout, when git is keeping no HEAD reflog, or when the
+   * reflog no longer reaches back to the task. Resolved once, when the round is collected, so it
+   * does not decay as the reflog is pruned.
+   */
+  commit: string | null
   /** "sub" for subagent work, "main" otherwise. */
   agent: 'main' | 'sub'
   /** Provider message id, unique within the session. */
