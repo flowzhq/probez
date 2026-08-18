@@ -44,13 +44,14 @@ export type Verb =
   | 'ask'       // AskUserQuestion
   | 'track'     // TodoWrite, TaskCreate, Agent
   | 'plan'      // EnterPlanMode, ExitPlanMode
+  | 'mcp'       // a tool served by an MCP server — mcp__<server>__<tool>
   | 'noop'      // cd, echo, pipe filters, git plumbing
-  | 'unknown'   // MCP servers, unparsed commands
+  | 'unknown'   // harness tools nothing recognizes, unparsed commands
 
 export const VERBS: Verb[] = [
   'read', 'search', 'query', 'write', 'move', 'test', 'run', 'build',
   'commit', 'publish', 'branch', 'install', 'env', 'infra', 'ask', 'track', 'plan',
-  'noop', 'unknown',
+  'mcp', 'noop', 'unknown',
 ]
 
 /** What the act was done to. Orthogonal to the verb, and derived from paths and commands. */
@@ -505,6 +506,21 @@ const TOOL_VERBS: Record<string, Verb> = {
 const TARGETLESS = new Set(['Grep', 'Glob', 'AskUserQuestion', 'TaskCreate', 'TaskUpdate',
   'TodoWrite', 'Agent', 'Task', 'EnterPlanMode', 'ExitPlanMode'])
 
+/**
+ * A tool served by an MCP server.
+ *
+ * The harness namespaces these as `mcp__<server>__<tool>`, which is the one thing about them a
+ * built-in table can know: the server and the tool are whatever someone configured, so nothing here
+ * can say what `mcp__figma__get_design_context` did. That the call went to an MCP server is still a
+ * fact about the call, and it is the fact worth keeping — a named 3% beats an unnamed one, for the
+ * same reason `environment` stays its own category.
+ */
+const MCP_NAME = /^mcp__/
+
+export function isMcpTool(name: string): boolean {
+  return MCP_NAME.test(name)
+}
+
 function act(verb: Verb, path: string, source: string, creating = false): Act {
   return { verb, path, target: targetOf(path), creating, source, weight: 1 }
 }
@@ -516,8 +532,12 @@ export function actsOf(tool: ToolCall): Act[] {
   if (name === 'Bash') return bashActs(tool)
 
   const verb = TOOL_VERBS[name]
-  // MCP servers and harness tools. Their inputs are per-server and unknowable to a built-in table,
-  // so they are named rather than guessed at. `analyze --unclassified` lists them.
+  // An MCP tool is recognized by its namespace, not by a table: the name after `mcp__` is whatever
+  // someone configured. The path is left unread for the same reason — the input shape is per-server,
+  // and a guessed target is worse than an unset one.
+  if (verb === undefined && isMcpTool(name)) return [act('mcp', '', name)]
+  // Harness tools nothing recognizes. Their inputs are unknowable to a built-in table, so they are
+  // named rather than guessed at. `analyze --unclassified` lists them.
   if (verb === undefined) return [act('unknown', '', name)]
 
   const path = TARGETLESS.has(name) ? '' : pathOf(tool.input)

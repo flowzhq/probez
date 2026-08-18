@@ -154,7 +154,7 @@ tests or on configuration. Those are targets, and the target axis already carrie
 | Category | Sub-kinds |
 | --- | --- |
 | Planning | read · clarify · decompose · design |
-| Reconstruction | locate · read · inspect |
+| Reconstruction | locate · read · inspect · mcp |
 | Implementation | create · modify |
 | Testing | test · run |
 | Documentation | system · change · agent |
@@ -228,6 +228,14 @@ tried to smuggle one such rule into the per-call table as Review, and 0.3.2 took
 analysis wants its own pass, not a category propped up by task history.
 
 Until then the categories should be read as what the agent *did*, not as what it was *achieving*.
+
+**MCP caveat.** `reconstruction/mcp` is the one sub-kind placed rather than read. The harness
+namespaces these calls as `mcp__<server>__<tool>`, and that prefix is all a built-in table can know:
+the server and its tools are whatever someone configured, so nothing here can say whether a call
+read a Figma file or filed a Jira ticket. Reconstruction is where the bulk of them sit — a server is
+usually reached to find out something the repo does not hold — and the sub-kind is kept apart from
+`inspect` so the share stays visible and can be moved wholesale if a store says otherwise. Before
+0.3.3 all of it was `unclassified/unknown`.
 
 **Attribution caveat.** A project is the directory the agent session was *started* in, because that
 is how the agent files its own logs. Work done in one repo from a session launched in another is

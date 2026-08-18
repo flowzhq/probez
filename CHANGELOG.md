@@ -37,6 +37,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   `kubectl apply` changes one, and keeping them apart would mean a sub-table of read-versus-write
   verbs for thirty different CLIs to buy a distinction nothing downstream asks for.
 
+- **A call to an MCP server is named work.** Anything the harness namespaces as
+  `mcp__<server>__<tool>` used to fall through to `Unclassified · unknown`, alongside genuinely
+  unreadable calls. It is now the `mcp` verb and a fourth Reconstruction sub-kind, so a session that
+  leaned on Figma, a browser or a ticket tracker reads as time spent finding out what the repo does
+  not hold. `probez rounds --category reconstruction` finds them, and the full tool name is still
+  what `--unclassified` would have shown.
+
+  The namespace is the whole signal, and the placement is honest about that: the tool after
+  `mcp__<server>__` is whatever someone configured, so nothing built in can tell a Figma read from a
+  Jira write. Reconstruction is where the bulk of them sit, and the sub-kind is kept apart from
+  `inspect` so the share stays visible and can be moved wholesale if a store says otherwise. No
+  target is read off the input either — the shape is per-server, and an unset target beats a guessed
+  one.
+
 ### Changed
 
 - **`docker run` is Environment, not a run of the project.** It was the one entry from that family

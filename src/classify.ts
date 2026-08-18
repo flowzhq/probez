@@ -28,6 +28,15 @@
  * every round carrying the history of its task. Read-only git is now unconditionally reconstruction,
  * which costs a distinction that was never load-bearing and buys a classifier where a round can be
  * labelled on its own.
+ *
+ * `reconstruction/mcp` is the one row here that is a placement rather than a reading. `act.ts` can
+ * tell that a call went to an MCP server and nothing else: the tool after `mcp__<server>__` is
+ * whatever someone configured, so no built-in table can say whether it read a Figma file or filed a
+ * Jira ticket. Reconstruction is where the bulk of them sit — an agent reaches for a server to find
+ * out something the repo does not hold — and it is the honest default, but a server that writes is
+ * filed under reading it. The sub-kind is kept separate from `inspect` precisely so that share stays
+ * visible and can be moved wholesale if a store says otherwise. Before this, all of it was
+ * `unclassified/unknown`.
  */
 
 import { actsOf, documentSub, isProse } from './act.js'
@@ -84,7 +93,7 @@ export const CATEGORIES: CategoryInfo[] = [
     id: 'reconstruction',
     label: 'Reconstruction',
     short: 'Recon',
-    subs: ['locate', 'read', 'inspect'],
+    subs: ['locate', 'read', 'inspect', 'mcp'],
   },
   { id: 'implementation', label: 'Implementation', short: 'Impl', subs: ['create', 'modify'] },
   { id: 'testing', label: 'Testing', short: 'Test', subs: ['test', 'run'] },
@@ -151,6 +160,7 @@ const LABELS: Record<Verb, [Category, string]> = {
   ask: ['planning', 'clarify'],
   track: ['planning', 'decompose'],
   plan: ['planning', 'design'],
+  mcp: ['reconstruction', 'mcp'],
   noop: ['unclassified', 'incidental'],
   unknown: ['unclassified', 'unknown'],
 }

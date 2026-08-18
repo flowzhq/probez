@@ -326,10 +326,33 @@ test('the planning a tool log can see is the harness moving around it', () => {
 })
 
 test('a tool with no table entry is named rather than guessed at', () => {
-  const labels = classifyCall(tool('mcp__figma__use_figma', { id: '1' }))
+  const labels = classifyCall(tool('SomeHarnessTool', { id: '1' }))
   assert.deepEqual(cells(labels), ['unclassified/unknown'])
   // The name survives, so `analyze --unclassified` can say what the hole is made of.
-  assert.equal(labels[0]?.source, 'mcp__figma__use_figma')
+  assert.equal(labels[0]?.source, 'SomeHarnessTool')
+})
+
+test('a call to an MCP server is reconstruction, and says so rather than being a hole', () => {
+  // The namespace is the whole signal: the tool after `mcp__<server>__` is whatever someone
+  // configured, so the verb records that a server was reached and stops there.
+  assert.deepEqual(verbs(tool('mcp__figma__get_design_context', { id: '1' })), ['mcp'])
+  assert.equal(cell(tool('mcp__figma__get_design_context', { id: '1' })), 'reconstruction/mcp')
+  assert.equal(cell(tool('mcp__claude-in-chrome__navigate', { url: 'https://x.test' })), 'reconstruction/mcp')
+
+  // The full name survives as the source, the same as it did when this was a hole.
+  const [label] = classifyCall(tool('mcp__figma__get_design_context', { id: '1' }))
+  assert.equal(label?.source, 'mcp__figma__get_design_context')
+
+  // The input shape is per-server, so no target is read off it — an unset target beats a guessed
+  // one, and `mcp__x__navigate`'s `url` is not the project's.
+  assert.equal(label?.target, 'unknown')
+})
+
+test('only the mcp namespace is an MCP call', () => {
+  // A built-in keeps its own row, and a name that merely mentions mcp is not namespaced by it.
+  assert.deepEqual(verbs(tool('Read', { file_path: '/repo/mcp__notes.ts' })), ['read'])
+  assert.deepEqual(verbs(tool('McpThing', { id: '1' })), ['unknown'])
+  assert.deepEqual(verbs(bash('npm run mcp__build')), ['build'])
 })
 
 // --- rounds ----------------------------------------------------------------------------------
