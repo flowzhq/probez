@@ -191,6 +191,8 @@ export interface ViewTask extends Totals {
   ms: number
   first_ts: string | null
   asked: string
+  /** The commit the checkout was on when the task started. Null when nothing recorded one. */
+  commit: string | null
   tool_calls: number
   errors: number
   elapsed_ms: number

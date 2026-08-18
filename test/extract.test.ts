@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { extractSession, foldPatch, truncateInput } from '../src/extract.js'
+import { parseHeadLog } from '../src/git.js'
 import type { Round } from '../src/types.js'
 
 // Compiled output lives at dist/test/, so the fixture is two levels up from here.
@@ -204,4 +205,47 @@ test('truncateInput leaves short values alone and recurses', () => {
   assert.deepEqual(truncateInput({ a: 'short', b: [{ c: 1 }] }), { a: 'short', b: [{ c: 1 }] })
   const long = truncateInput({ a: 'q'.repeat(2001) }) as { a: string }
   assert.equal(long.a, `${'q'.repeat(200)}…(2001 chars)`)
+})
+
+/**
+ * A commit stamped on a round is the one HEAD was on when its *task* started, so the fixture is
+ * read against a reflog that moves in the middle of task 1: task 1 must still report where it began
+ * even though the checkout had moved on by the time it ended.
+ *
+ * The fixture opens at 1767225600 and its second task at +8s.
+ */
+const OLD = 'a'.repeat(40)
+const NEW = 'b'.repeat(40)
+const HEAD = parseHeadLog(
+  [
+    `${'0'.repeat(40)} ${OLD} A <a@example.com> 1767225000 +0000\tcommit: before the session`,
+    `${OLD} ${NEW} A <a@example.com> 1767225604 +0000\tcommit: made during task 1`,
+  ].join('\n'),
+)
+
+const stamped = await extractSession(FIXTURE, 'demo', HEAD)
+const commitOf = (id: string): string | null => {
+  const found = stamped.find((r) => r.id === id)
+  assert.ok(found, `no round ${id}`)
+  return found.commit
+}
+
+test('a task is stamped with where it started, not what it ended on', () => {
+  // msg_a and msg_b are task 1, which opened at 00:00:00, four seconds before the commit at +4s.
+  assert.equal(commitOf('msg_a'), OLD)
+  assert.equal(commitOf('msg_b'), OLD)
+  // msg_c opens task 2 at 00:00:08, by which time HEAD had moved.
+  assert.equal(commitOf('msg_c'), NEW)
+  assert.equal(commitOf('msg_d'), NEW)
+})
+
+test('a subagent carries the commit of the task it was delegated by', () => {
+  const sub = stamped.find((r) => r.id === 'msg_c2')
+  assert.equal(sub?.agent, 'sub')
+  assert.equal(sub?.task, 2)
+  assert.equal(sub?.commit, NEW)
+})
+
+test('with no history to read, every round records no commit rather than a guess', () => {
+  assert.ok(rounds.every((r) => r.commit === null))
 })

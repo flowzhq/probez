@@ -10,6 +10,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ### Added
 
+- **Every task records the commit it started from.** A task is a piece of work asked against a
+  particular state of the tree, and until now nothing said which one. `probez tasks` grows a `FROM`
+  column, `probez task <id>` and `probez round <id>` end their header with `from 0e864ea`, the view
+  puts it beside the round count, and `commit` is on every round in `rounds.jsonl` and in `--json`
+  at full length. It is the starting point, not the result: a task that opened before the agent
+  committed still reports where it began, and the commit it made belongs to the task after it.
+
+  It is read from git's own HEAD reflog — `.git/logs/HEAD`, a plain text file listing every commit,
+  checkout, merge and reset with the second it happened — and matched against the moment the user
+  turn arrived. No `git` subprocess runs, probez works the same on a machine with no git installed,
+  and a worktree reports its own HEAD rather than the checkout it points at. The answer is resolved
+  when a session is collected and stored with the round, so it does not decay as git prunes the
+  reflog behind it. Blank means blank: a project outside a checkout, a repository keeping no
+  reflog, or a task older than the reflog still reaches are all reported as nothing rather than as
+  a nearby hash, and a project where nothing resolved keeps the table it always had rather than
+  gaining a column of dashes.
+
 - **Container, cluster and cloud tooling is named work.** `kubectl`, `docker`, `terraform`, `aws`,
   `gcloud`, `helm`, `systemctl` and the rest of that family used to fall through to `other`, which
   is where a program nothing recognized lands, and from there into `Unclassified · unknown`. They

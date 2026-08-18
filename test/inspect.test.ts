@@ -116,6 +116,27 @@ test('tasks roll up the rounds that belong to them, subagents included', () => {
   )
 })
 
+test('a task reports the commit its rounds were stamped with', () => {
+  const hash = 'a'.repeat(40)
+  const rows = taskRows(
+    [
+      // Rounds collected before probez recorded commits sit beside ones that were, and the round
+      // with none must not be the one that settles the task.
+      round({ session: 'aaaa1111', round: 0, task: 1, commit: null }),
+      round({ session: 'aaaa1111', round: 1, task: 1, commit: hash }),
+      round({ session: 'aaaa1111', round: 2, task: 2, commit: null }),
+    ],
+    PRICING,
+  )
+  assert.deepEqual(
+    rows.map((r) => [r.task, r.commit]),
+    [
+      [1, hash],
+      [2, null],
+    ],
+  )
+})
+
 test('task 1 of one session is not task 1 of the next', () => {
   // Task numbers restart in every session, so merging them by number alone would invent a task
   // that never happened. The id carries the session for exactly this reason.

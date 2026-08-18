@@ -77,6 +77,17 @@ jobs:
           fi
           echo "ok: opener is argv-only"
 
+      - name: Only the reflog reader looks inside a repository
+        run: |
+          # probez reads the agent's session files and one file beside the work: git's HEAD reflog,
+          # for the commit a task started from. That read lives in src/git.ts, is read-only, and
+          # starts no `git` process. A second reader anywhere else is a constraint changing.
+          # `\b` keeps this off `.gitignore` and `.github`, which are names in the tool tables.
+          if grep -rlnE "\.git\b" src/ | grep -v "^src/git\.ts$"; then
+            echo "reading a repository belongs in src/git.ts and nowhere else"; exit 1
+          fi
+          echo "ok: one reader, read-only"
+
       - name: The view loads nothing from off-origin
         run: |
           if grep -rnE "(fetch|src|href)\s*[=(]\s*['\"\`]https?://" web/src web/index.html; then

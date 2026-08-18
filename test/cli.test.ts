@@ -193,6 +193,47 @@ test('--session narrows `tasks` rather than being validated and dropped', () => 
   assert.equal(read(env, ['tasks', '--session', 'ffffffff']).status, 2)
 })
 
+test('a task is listed with the commit it started from, and not with one it made', () => {
+  const env = makeSource(1)
+  // A HEAD reflog for the directory the fixture sessions ran in. The fixture opens at 1767225600
+  // and its second task eight seconds later, so the move at +4s lands inside the first task: the
+  // column has to keep reporting where that task began.
+  const old = 'a'.repeat(40)
+  const made = 'b'.repeat(40)
+  mkdirSync(join(env.project, '.git', 'logs'), { recursive: true })
+  writeFileSync(
+    join(env.project, '.git', 'logs', 'HEAD'),
+    [
+      `${'0'.repeat(40)} ${old} A <a@example.com> 1767225000 +0000\tcommit: before`,
+      `${old} ${made} A <a@example.com> 1767225604 +0000\tcommit: during task 1`,
+      '',
+    ].join('\n'),
+  )
+  assert.equal(collect(env).status, 0)
+
+  const listed = read(env, ['tasks'])
+  assert.equal(listed.status, 0, listed.stderr)
+  assert.match(listed.stdout, /\bFROM\b/)
+  assert.match(listed.stdout, /^\s+1\s+\d+\s.*\baaaaaaa\b/m, 'task 1 started before the commit')
+  assert.match(listed.stdout, /^\s+2\s+\d+\s.*\bbbbbbbb\b/m, 'task 2 started after it')
+
+  assert.match(read(env, ['task', '1']).stdout, /from aaaaaaa/)
+  // The full hash is what another tool wants, so `--json` is not abbreviated.
+  const rows = JSON.parse(read(env, ['tasks', '--json']).stdout) as Array<{ commit: string }>
+  assert.deepEqual(rows.map((r) => r.commit), [old, made])
+})
+
+test('a project outside a checkout keeps the table it always had', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+
+  const listed = read(env, ['tasks'])
+  assert.equal(listed.status, 0, listed.stderr)
+  // No commit anywhere means no column: a row of dashes would cost width and say nothing.
+  assert.doesNotMatch(listed.stdout, /\bFROM\b/)
+  assert.doesNotMatch(read(env, ['task', '1']).stdout, /\bfrom \b/)
+})
+
 test('`analyze` reports a distribution and says what it is a distribution of', () => {
   const env = makeSource(2)
   assert.equal(collect(env).status, 0)

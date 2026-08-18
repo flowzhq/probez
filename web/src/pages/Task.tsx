@@ -7,7 +7,7 @@ import { Inspector } from '../components/Inspector'
 import { InTokens, Lines, Reused } from '../components/Tokens'
 import { Trace } from '../components/Trace'
 import { WorkBars } from '../components/WorkBars'
-import { duration, money, percent, shortId, tokens, when } from '../format'
+import { duration, money, percent, shortCommit, shortId, tokens, when } from '../format'
 import { go, href } from '../router'
 import { useData } from '../useData'
 import type { ReactElement } from 'react'
@@ -94,6 +94,17 @@ export function Task({
               items={[
                 ['rounds', data.task.rounds],
                 ['tool calls', data.task.tool_calls],
+                ...(data.task.commit === null
+                  ? []
+                  : [
+                      [
+                        // Facts read value-then-label, so this is "a938f1f started", the way
+                        // "2.6m elapsed" and "94% reused" beside it read.
+                        'started',
+                        shortCommit(data.task.commit),
+                        "The commit this checkout was on when the task was asked — where the work started, not what it ended up as. Read from git's HEAD reflog when the project was collected.",
+                      ] as Fact,
+                    ]),
                 ['working', duration(data.task.gen_ms)],
                 ['elapsed', duration(data.task.elapsed_ms)],
                 ...(data.task.wait_ms > 0

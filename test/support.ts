@@ -41,6 +41,7 @@ export const ROUND_DEFAULTS: Round = {
   session: '',
   round: 0,
   task: 1,
+  commit: null,
   agent: 'main',
   id: '',
   ts: null,

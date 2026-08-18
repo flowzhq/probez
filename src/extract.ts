@@ -1,6 +1,7 @@
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
+import type { HeadHistory } from './git.js'
 import type { Patch, Round, RoundEvent, ToolCall } from './types.js'
 
 /** Strings longer than this in a tool's input are truncated. */
@@ -194,7 +195,11 @@ interface Pending {
  *   them to the round they prompted is what lets `gen_ms` span the wait before the model spoke,
  *   which `ms` — the span of the round's own records — cannot see.
  */
-export async function extractSession(file: string, sessionId: string): Promise<Round[]> {
+export async function extractSession(
+  file: string,
+  sessionId: string,
+  head: HeadHistory | null = null,
+): Promise<Round[]> {
   const rounds: Round[] = []
   const builders: Builder[] = []
   const byMsgId = new Map<string, Builder>()
@@ -205,6 +210,8 @@ export async function extractSession(file: string, sessionId: string): Promise<R
   let lastOutputTs: number | null = null
   let task = 0
   let taskUsed = false
+  /** When the user turn that opened the current task arrived, which is what dates its commit. */
+  let taskStart: number | null = null
 
   const stream = createReadStream(file, { encoding: 'utf8' })
   const lines = createInterface({ input: stream, crlfDelay: Infinity })
@@ -240,6 +247,11 @@ export async function extractSession(file: string, sessionId: string): Promise<R
             session: sessionId,
             round: 0,
             task: task === 0 ? 1 : task,
+            // The task's starting point, not this round's: the whole task is one piece of work and
+            // a commit the agent made partway through it is a result, not a premise. `ts` is the
+            // fallback for the rounds of a session that opens without a user turn, which have no
+            // task start to date them by.
+            commit: head === null ? null : head.at(taskStart ?? ts),
             agent: sidechain ? 'sub' : 'main',
             id,
             ts: timestamp,
@@ -387,6 +399,7 @@ export async function extractSession(file: string, sessionId: string): Promise<R
     if (!sidechain && (task === 0 || taskUsed)) {
       task += 1
       taskUsed = false
+      taskStart = ts
     }
   }
 

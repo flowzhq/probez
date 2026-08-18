@@ -65,7 +65,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 ```json
 {
   "session": "0b2cc149-f9c1-448f-bbac-a4c58b85e5bf",
-  "round": 12, "task": 5, "agent": "main",
+  "round": 12, "task": 5, "commit": "9e4e660c1d7a4c2f0b8e5a3d61f27b90cc4e1a55", "agent": "main",
   "id": "msg_011CdwVKHe1jaMmvqeWS3tZp",
   "ts": "2026-08-11T19:09:53.830Z", "ms": 8420, "gen_ms": 14903, "wait_ms": null,
   "first_input": "tool_result",
@@ -99,6 +99,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | --- | --- |
 | `session`, `task`, `round` | Group rounds into tasks and order them |
 | `agent` | Separate the main agent from subagent work |
+| `commit` | Which state of the tree a task was asked against, read from git's HEAD reflog at collect time |
 | `in_tokens`, `out_tokens`, `ms` | Weight each category, giving the percentages |
 | `in_uncached`, `in_cache_write`, `in_cache_read` | The three price differently, so the sum alone says little about cost |
 | `in_cache_write_5m`, `in_cache_write_1h` | A cache write has two prices: 1.25× input for a 5-minute entry, 2× for a 1-hour one |

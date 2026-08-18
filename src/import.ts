@@ -57,6 +57,18 @@ function list(value: unknown): unknown[] {
   return Array.isArray(value) ? value.slice(0, MAX_LIST) : []
 }
 
+/**
+ * A commit hash, or null for anything that is not one.
+ *
+ * Kept, because where the sender's work started is a fact about the task they exported and it is
+ * shown as faithfully as the rest of it. Shape-checked rather than merely stripped, because this
+ * one field is printed in a fixed-width column and read as an identifier: a hash is hex and either
+ * 40 or 64 characters, and anything else in that slot is a sender writing prose into a table.
+ */
+function commitOf(value: unknown): string | null {
+  return typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value) ? value : null
+}
+
 function patchOf(value: unknown): Patch | null {
   if (!value || typeof value !== 'object') return null
   const p = value as Record<string, unknown>
@@ -139,6 +151,7 @@ export function normalizeRound(value: unknown): Round | null {
     session,
     round: num(r.round),
     task: num(r.task),
+    commit: commitOf(r.commit),
     agent: r.agent === 'sub' ? 'sub' : 'main',
     id,
     ts: strOrNull(r.ts),

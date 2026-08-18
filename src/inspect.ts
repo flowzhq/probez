@@ -52,6 +52,11 @@ export interface TaskRow extends Totals {
   first_ts: string | null
   /** What was asked to start this task: the first user text in it. */
   asked: string
+  /**
+   * The commit the checkout was on when this task started, which is the state the work was asked
+   * against. Null when nothing recorded one; see `Round.commit`.
+   */
+  commit: string | null
 }
 
 export interface ToolRow {
@@ -283,6 +288,7 @@ export function taskRows(rounds: Round[], pricing: Pricing): TaskRow[] {
         ms: 0,
         first_ts: null,
         asked: '',
+        commit: null,
       }
       byTask.set(key, row)
     }
@@ -294,6 +300,9 @@ export function taskRows(rounds: Round[], pricing: Pricing): TaskRow[] {
     }
     // Only the round that opened the task carries the prompt; the rest were driven by tool results.
     if (row.asked === '' && typeof round.user_text === 'string') row.asked = asked(round.user_text)
+    // Every round of a task was stamped with the same commit, so the first one that has one settles
+    // it. Rounds collected before probez recorded commits have none, and do not overwrite one.
+    row.commit ??= round.commit ?? null
   }
   return [...byTask.values()].sort(
     (a, b) => (a.first_ts ?? '').localeCompare(b.first_ts ?? '') || a.task - b.task,

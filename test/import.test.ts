@@ -134,6 +134,22 @@ test('control characters never reach anything that prints', () => {
   assert.doesNotMatch(read.user_text + read.text + parsed.name, CONTROL)
 })
 
+test('an imported commit is kept only when it is shaped like one', () => {
+  const hash = 'a'.repeat(40)
+  const kept = parseExport(bundle([round({ commit: hash })]))
+  assert.equal(kept.rounds[0]?.commit, hash)
+  // 64 characters is what a SHA-256 repository writes, and is a hash too.
+  const long = 'f'.repeat(64)
+  assert.equal(parseExport(bundle([round({ commit: long })])).rounds[0]?.commit, long)
+
+  // Everything else is a sender writing into a column that is read as an identifier.
+  for (const bad of ['HEAD', 'a'.repeat(39), 'a'.repeat(41), 'A'.repeat(40), 'g'.repeat(40), '']) {
+    const parsed = parseExport(bundle([round({ commit: bad as string })]))
+    assert.equal(parsed.rounds[0]?.commit, null, `kept ${JSON.stringify(bad)}`)
+  }
+  assert.equal(parseExport(bundle([round({ commit: null })])).rounds[0]?.commit, null)
+})
+
 test('a file with nothing usable in it says so instead of importing nothing', () => {
   assert.throws(() => parseExport(''), ImportError)
   assert.throws(() => parseExport('   \n\n'), ImportError)
