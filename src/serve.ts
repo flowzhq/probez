@@ -15,6 +15,7 @@ import {
   projectsPayload,
   removeStored,
   renameStored,
+  resultPayload,
   roundPayload,
   savePricing,
   sessionPayload,
@@ -32,7 +33,8 @@ import {
  *
  * - It binds `127.0.0.1`, so it is not reachable from the network at all.
  * - Every `/api` request must carry the token printed with the URL, which is new on every run. A
- *   page you did not open cannot read your prompts.
+ *   page you did not open cannot read your prompts, and — since one route serves the body of a
+ *   tool result straight out of an archived session — cannot read what your tools returned either.
  * - Every request's `Host` header must be the address it bound. That is the defence against DNS
  *   rebinding, where a hostile page resolves its own domain to 127.0.0.1 and talks to this from
  *   inside your browser's origin. The token alone would not stop it.
@@ -267,6 +269,7 @@ async function serveApi(
   // /api/projects/<slug>/sessions/<session>
   // /api/projects/<slug>/sessions/<session>/tasks/<task>
   // /api/projects/<slug>/sessions/<session>/rounds/<round>
+  // /api/projects/<slug>/sessions/<session>/results/<tool_use_id>
   const dataDir = options.dataDir
   const [group, slug, kind, id, leaf, leafId] = parts
 
@@ -360,6 +363,17 @@ async function serveApi(
   }
   if (leaf === undefined) {
     sendJson(res, 200, await sessionPayload(dataDir, slug, id))
+    return
+  }
+
+  // Not a numbered child of the session like tasks and rounds are, so it is answered before the
+  // index is parsed: what addresses a result is the id its call was made with.
+  if (leaf === 'results') {
+    if (leafId === undefined || leafId === '') {
+      sendJson(res, 400, { error: 'that request names no tool call' })
+      return
+    }
+    sendJson(res, 200, await resultPayload(dataDir, slug, id, leafId))
     return
   }
 

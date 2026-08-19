@@ -5,8 +5,8 @@ import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
 import type { Fact } from '../components/Chrome'
 import { InTokens, Lines, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
 import { Trace } from '../components/Trace'
-import { WorkBars } from '../components/WorkBars'
-import { clip, count, duration, money, percent, shortId, shortModel, tokens, when } from '../format'
+import { MixBar, WorkBars } from '../components/WorkBars'
+import { clip, count, duration, money, shortId, shortModel, tokens, when } from '../format'
 import { go, href, linkProps } from '../router'
 import { useData } from '../useData'
 import type { ReactElement } from 'react'
@@ -116,8 +116,29 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                         {task.tool_calls}
                         {task.errors > 0 ? <span className="bad"> ✗{task.errors}</span> : null}
                       </td>
-                      <td className="dim nowrap">
-                        {task.work === null ? '—' : `${task.work.short} ${percent(task.work.share)}`}
+                      {/* The distribution rather than the name of its largest slice: the widest
+                          band is the same answer the name gave, and the rest of the bar is the part
+                          a single category and a percentage threw away. */}
+                      <td>
+                        {task.mix.length === 0 ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          /* A fixed width, because the bar's slices are flex-sized and so have no
+                             width of their own to give the column: left to size itself, the column
+                             shrinks to the header and every minor category becomes a hairline. */
+                          <div
+                            style={{ width: 110 }}
+                            /* The bar carries a title per slice, but nothing that reads the row
+                               aloud gets the summary the old text gave for free. */
+                            aria-label={
+                              task.work === null
+                                ? undefined
+                                : `mostly ${task.work.short}, ${task.mix.length} kinds of work`
+                            }
+                          >
+                            <MixBar mix={task.mix} />
+                          </div>
+                        )}
                       </td>
                       <TokenCells of={task} />
                       <td className="r num dim nowrap">

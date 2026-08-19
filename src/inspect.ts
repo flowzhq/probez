@@ -613,10 +613,45 @@ export function dominant(labels: Label[]): Dominant | null {
  * A table prints one of these per row, and each row would otherwise re-label the whole project to
  * answer a question about one session. Labelling happens once here; the callers ask.
  */
+/** One category's share of a piece of work, for a bar that shows the whole distribution. */
+export interface Share {
+  category: Category
+  label: string
+  short: string
+  share: number
+}
+
+/**
+ * The same tally `dominant` picks a winner from, kept whole.
+ *
+ * Deliberately weighted the way `dominant` weighs it rather than the way `categoryTally` counts
+ * rounds. A bar drawn from one basis beside a name drawn from the other can disagree about which
+ * category is largest, and a bar whose widest slice is not the one the row is named after reads as
+ * a bug in the measurement rather than as two honest numbers.
+ */
+export function spread(labels: Label[]): Share[] {
+  const totals = new Map<string, number>()
+  let all = 0
+  for (const label of labels) {
+    totals.set(label.category, (totals.get(label.category) ?? 0) + label.weight)
+    all += label.weight
+  }
+  if (all === 0) return []
+  return [...totals]
+    .map(([id, weight]) => {
+      const category = id as Category
+      const info = categoryInfo(category)
+      return { category, label: info.label, short: info.short, share: weight / all }
+    })
+    .sort((a, b) => categoryOrder(a.category) - categoryOrder(b.category))
+}
+
 export interface WorkIndex {
   session(id: string): Dominant | null
   task(session: string, task: number): Dominant | null
   round(round: Round): Dominant | null
+  /** The whole distribution behind `task`, for the bar the tasks table draws instead of a name. */
+  taskMix(session: string, task: number): Share[]
 }
 
 export function workIndex(rounds: Round[]): WorkIndex {
@@ -639,6 +674,7 @@ export function workIndex(rounds: Round[]): WorkIndex {
     session: (id) => dominant(bySession.get(id) ?? []),
     task: (session, task) => dominant(byTask.get(`${session} ${task}`) ?? []),
     round: (round) => dominant(labelled.get(round) ?? []),
+    taskMix: (session, task) => spread(byTask.get(`${session} ${task}`) ?? []),
   }
 }
 

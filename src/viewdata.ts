@@ -14,7 +14,7 @@ import {
   traceOf,
   workIndex,
 } from './inspect.js'
-import type { Analysis, Dominant, RoundLabel, SessionRow, TaskRow, ToolRow, Trace } from './inspect.js'
+import type { Analysis, Dominant, RoundLabel, SessionRow, Share, TaskRow, ToolRow, Trace } from './inspect.js'
 import {
   collectProject,
   findStored,
@@ -30,6 +30,7 @@ import {
 import type { CollectResult, ImportResult, RemoveResult, StoredProject } from './store.js'
 import { CONTROL, ImportError, parseExport } from './import.js'
 import { shorten } from './format.js'
+import { MAX_RESULT_CHARS, readToolResult } from './result.js'
 import {
   costOf,
   defaultPricing,
@@ -39,7 +40,7 @@ import {
   writePricing,
 } from './pricing.js'
 import type { Pricing, Rates } from './pricing.js'
-import type { Round } from './types.js'
+import type { Round, ToolCall } from './types.js'
 
 /**
  * What `view` answers with, one shape per screen.
@@ -80,6 +81,8 @@ export interface ViewTask extends TaskRow {
   errors: number
   elapsed_ms: number
   work: Dominant | null
+  /** The whole distribution behind `work`, which the tasks table draws as a bar. */
+  mix: Share[]
 }
 
 export interface ProjectsPayload {
@@ -136,6 +139,32 @@ export interface ToolsPayload {
   project: StoredProject
   tools: ToolRow[]
   kinds: ToolRow[]
+}
+
+/**
+ * One tool result's body, which is the only thing `view` serves that is not derived.
+ *
+ * Every other payload here is aggregation: measured in Node, tested with the rest of the analysis
+ * layer, and small. This is a slice of a raw log, read on request and never on the way to a page.
+ * That is the whole design of it — the inspector shows sizes until someone asks for a body, and
+ * asking is what pays for reading the file.
+ */
+export interface ResultPayload {
+  project: StoredProject
+  /** The session it was read from, in full: the request may have named a prefix. */
+  session: string
+  tool_use_id: string
+  /** The tool whose result this is, named from the round that called it. */
+  tool: string | null
+  chars: number
+  body: string
+  truncated: boolean
+  /** The cut this response was held to, so the page can say what it stopped at. */
+  cap: number
+  is_error: boolean
+  omitted: string[]
+  /** The archived file it came out of, written `~/…` like every other path the view prints. */
+  file: string
 }
 
 /**
@@ -330,6 +359,7 @@ export async function sessionPayload(
       ...callsIn(rows),
       elapsed_ms: elapsedOf(rows),
       work: work.task(session, task.task),
+      mix: work.taskMix(session, task.task),
     }
   })
 
@@ -372,6 +402,7 @@ export async function taskPayload(
       ...callsIn(mine),
       elapsed_ms: elapsedOf(mine),
       work: work.task(mine[0]!.session, task),
+      mix: work.taskMix(mine[0]!.session, task),
     },
     analysis: categoryTally(mine, pricing),
     trace: traceOf(mine),
@@ -391,6 +422,67 @@ export async function roundPayload(
   )
   if (found === undefined) throw new NotFound(`no round ${round} in session ${session}`)
   return { project: shown(stored), round: found, labels: labelled.get(found) ?? [] }
+}
+
+/**
+ * The body of one tool result, read from the archived session on request.
+ *
+ * The call is resolved out of the store before the file is touched, and that ordering is the
+ * security of this route rather than a tidiness. It means `session` is only ever a session this
+ * project recorded — a name matched against the rounds, never a path handed through from the
+ * browser — and it means the id being searched for is one the store already knows, so this cannot
+ * be turned into a way to look for an arbitrary string in a file.
+ */
+export async function resultPayload(
+  dataDir: string,
+  slug: string,
+  session: string,
+  toolUseId: string,
+): Promise<ResultPayload> {
+  const { stored, rounds } = await open(dataDir, slug)
+
+  let found: { session: string; tool: ToolCall } | null = null
+  for (const round of rounds) {
+    if (!round.session.startsWith(session)) continue
+    const tool = round.tools.find((candidate) => candidate.id === toolUseId)
+    if (tool !== undefined) {
+      found = { session: round.session, tool }
+      break
+    }
+  }
+  if (found === null) throw new NotFound(`no tool call ${toolUseId} in session ${session}`)
+
+  const file = join(stored.dir, 'sessions', `${found.session}.jsonl`)
+  if ((await stat(file).catch(() => null)) === null) {
+    // Worth separating from "no result recorded": nothing is wrong with the call, there is simply
+    // no log here to read it out of. An export carries the rounds probez normalized and not the
+    // sessions behind them, which is also why a result body never leaves the machine it was
+    // collected on.
+    throw new NotFound(
+      stored.imported_at === null
+        ? `this project has no archived copy of session ${found.session}`
+        : 'an imported project carries its rounds, not the logs behind them, so there is no result body here',
+    )
+  }
+
+  const body = await readToolResult(file, toolUseId)
+  if (body === null) {
+    throw new NotFound(`the archived session records no result for ${toolUseId}`)
+  }
+
+  return {
+    project: shown(stored),
+    session: found.session,
+    tool_use_id: toolUseId,
+    tool: found.tool.name,
+    chars: body.chars,
+    body: body.body,
+    truncated: body.truncated,
+    cap: MAX_RESULT_CHARS,
+    is_error: body.is_error,
+    omitted: body.omitted,
+    file: shorten(file),
+  }
 }
 
 export async function toolsPayload(dataDir: string, slug: string): Promise<ToolsPayload> {

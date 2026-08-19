@@ -805,6 +805,26 @@ button.save.grave:hover {
   min-width: 0;
 }
 
+/*
+ * The control that reads one result out of the archived session.
+ *
+ * It sits inside the opened call rather than on the collapsed row, and that is the point of it: a
+ * list of twenty calls each offering a button that scans a session file is exactly the cost the
+ * extract exists to avoid. Opening a call is free; reading its result is the thing you ask for.
+ */
+.call-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--rule);
+}
+
+/* Both notes inside a call: the one about a cut input, and the ones under a result. */
+.call .note {
+  padding: 0 10px;
+}
+
 .call pre {
   margin: 0;
   padding: 10px;

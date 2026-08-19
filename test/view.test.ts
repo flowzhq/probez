@@ -384,6 +384,85 @@ test('a delete cannot be aimed out of the store', async () => {
   }
 })
 
+test('a result body is served from the archived session, and only when asked for', async () => {
+  const { dataDir, slug, session } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    // The round carries the size and not the text. That is the whole reason the route below
+    // exists, so it is asserted rather than assumed.
+    const round = await body(
+      withToken(server, `/api/projects/${slug}/sessions/${session}/rounds/0`),
+    )
+    const call = round.round.tools.find((tool: any) => tool.id === 'tu_1')
+    assert.equal(call.result_chars, 30)
+    assert.equal('result' in call, false, 'the round payload carries a result body')
+
+    const result = await body(
+      withToken(server, `/api/projects/${slug}/sessions/${session}/results/tu_1`),
+    )
+    assert.equal(result.body, 'x'.repeat(30))
+    assert.equal(result.chars, 30)
+    assert.equal(result.truncated, false)
+    assert.equal(result.tool, 'Read')
+    assert.equal(result.session, session)
+    // Shortened like every other path the view hands over, so a screenshot of it carries no home
+    // directory.
+    assert.ok(!result.file.startsWith('/Users'), result.file)
+
+    // The harness's own flag travels with the body, since a failed call is the one you open.
+    const failed = await body(
+      withToken(server, `/api/projects/${slug}/sessions/${session}/results/tu_2`),
+    )
+    assert.equal(failed.body, 'boom')
+    assert.equal(failed.is_error, true)
+
+    // A prefix addresses a session here as it does everywhere else.
+    const byPrefix = await body(
+      withToken(server, `/api/projects/${slug}/sessions/${session.slice(0, 8)}/results/tu_3`),
+    )
+    assert.equal(byPrefix.body, 'ok')
+  } finally {
+    await server.close()
+  }
+})
+
+test('a result is only readable through a call the store recorded', async () => {
+  const { dataDir, slug, session } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    // The id is resolved against the rounds before the file is opened, which is what stops this
+    // being a way to look for an arbitrary string in a session log.
+    assert.equal(
+      (await withToken(server, `/api/projects/${slug}/sessions/${session}/results/tu_99`)).status,
+      404,
+    )
+    assert.equal(
+      (await withToken(server, `/api/projects/${slug}/sessions/no-such-session/results/tu_1`))
+        .status,
+      404,
+    )
+    // And the session is a name matched against the store, never a path: a traversal reaches no
+    // round, so it never reaches a file either.
+    assert.equal(
+      (await withToken(server, `/api/projects/${slug}/sessions/..%2f..%2fetc/results/tu_1`)).status,
+      404,
+    )
+    // Naming no call at all is a bad request rather than a missing one, which is how the numbered
+    // children of a session answer the same shape.
+    assert.equal(
+      (await withToken(server, `/api/projects/${slug}/sessions/${session}/results/`)).status,
+      400,
+    )
+    // A body is data, so it needs the token like the rest of the store does.
+    assert.equal(
+      (await get(server, `/api/projects/${slug}/sessions/${session}/results/tu_1`)).status,
+      403,
+    )
+  } finally {
+    await server.close()
+  }
+})
+
 test('a name that is not in the store is a 404, and one that climbs out is refused', async () => {
   const { dataDir, slug } = makeStore()
   const server = await serving(dataDir)
@@ -516,6 +595,7 @@ test('browsing a store leaves it exactly as it was', async () => {
       `/api/projects/${slug}/sessions/${session}`,
       `/api/projects/${slug}/sessions/${session}/tasks/1`,
       `/api/projects/${slug}/sessions/${session}/rounds/0`,
+      `/api/projects/${slug}/sessions/${session}/results/tu_1`,
       `/api/projects/${slug}/export?format=jsonl`,
       `/api/projects/${slug}/export?format=json`,
     ]) {

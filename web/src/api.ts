@@ -57,6 +57,14 @@ export interface Dominant {
   share: number
 }
 
+/** One category's slice of a piece of work. Shares are weighted, and sum to 1. */
+export interface Share {
+  category: string
+  label: string
+  short: string
+  share: number
+}
+
 export interface CategoryRow {
   name: string
   label: string
@@ -198,6 +206,8 @@ export interface ViewTask extends Totals {
   errors: number
   elapsed_ms: number
   work: Dominant | null
+  /** The whole distribution behind `work`, drawn as a bar in the tasks table. */
+  mix: Share[]
 }
 
 export interface ToolRow {
@@ -349,6 +359,21 @@ export interface ToolsPayload {
   kinds: ToolRow[]
 }
 
+/** One tool result's body, fetched on request. Nothing renders it until someone asks. */
+export interface ResultPayload {
+  project: StoredProject
+  session: string
+  tool_use_id: string
+  tool: string | null
+  chars: number
+  body: string
+  truncated: boolean
+  cap: number
+  is_error: boolean
+  omitted: string[]
+  file: string
+}
+
 export interface ImportResult {
   slug: string
   dir: string
@@ -486,6 +511,12 @@ export const api = {
   round: (slug: string, session: string, round: number) =>
     get<RoundPayload>(`/projects/${slug}/sessions/${session}/rounds/${round}`),
   tools: (slug: string) => get<ToolsPayload>(`/projects/${slug}/tools`),
+  // Deliberately not folded into `round`: the bodies are the bulk of a session file, and the
+  // inspector opens without paying for any of them.
+  result: (slug: string, session: string, toolUseId: string) =>
+    get<ResultPayload>(
+      `/projects/${slug}/sessions/${session}/results/${encodeURIComponent(toolUseId)}`,
+    ),
   pricing: () => get<PricingPayload>('/pricing'),
   savePricing: (models: Record<string, Rates>) => post<PricingPayload>('/pricing', { models }),
   import: (text: string, from: string) => post<ImportResult>('/import', { text, from }),

@@ -67,7 +67,8 @@ down to a single tool call. It listens on `127.0.0.1` with a token that is new o
 **A session** — the trace. Two rows over one axis: the phases the agent moved through, and the
 rounds themselves, each stacked by the work it did. Click a round to open it in full — what it was
 asked, what it said, and every tool call marked with the work it was counted as; the arrow keys walk
-to the next.
+to the next. Opening a call shows the arguments it was given, and **Show result** reads what came
+back out of the archived session — fetched when you ask for it, not when the page loads.
 
 <p align="center">
   <img src="docs/view-session.png" alt="probez view: a session trace and its work profile" width="900">
@@ -153,14 +154,14 @@ $ probez sessions flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   SESSION    ROUNDS  TASKS  TOOLS           IN      OUT  WORK       LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 37%   7 days ago
-  0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   7 days ago
+  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 37%   8 days ago
+  0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   8 days ago
   51cced08      134      4  131          24.3M   138.1K  Impl 39%   7 days ago
   be254122       21      2  19 ✗1         1.0M     8.2K  Recon 55%  7 days ago
   bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 34%  7 days ago
-  6ffef9bc       33      4  30            2.2M    17.5K  Recon 52%  2 days ago
-  c21c7448      146      2  145 ✗5       22.8M   112.6K  Recon 43%  2 days ago
-  069d8593       31      1  30 ✗3         1.9M    11.3K  Recon 72%  13 hr ago
+  6ffef9bc       33      4  30            2.2M    17.5K  Recon 52%  3 days ago
+  c21c7448      146      2  145 ✗5       22.8M   112.6K  Recon 43%  3 days ago
+  069d8593       31      1  30 ✗3         1.9M    11.3K  Recon 72%  1 day ago
 
   8 sessions · 652 rounds
   `probez session <id>` shows one of them, task by task.
@@ -348,7 +349,9 @@ strings over 2,000 characters are cut to the first 200 plus a length marker; obj
 every file path survives, and `input_chars` carries the size the cut removed.
 
 A verbatim copy of each session file is kept alongside, so nothing is lost if you later want a field
-probez does not normalize — and it is what a schema change rebuilds from. Collecting every project
+probez does not normalize — and it is what a schema change rebuilds from. It is also where `view`
+reads a result body from when you press **Show result**, which is why that works on a project
+collected here and not on one that arrived as an export. Collecting every project
 on a machine with a year of history took about 305 MB, of which the session copies were 284 MB and
 the normalized rounds 30 MB.
 

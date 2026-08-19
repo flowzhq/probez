@@ -8,12 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
-## [0.3.4] - 2026-08-18
+## [0.3.5] - 2026-08-19
 
-Work that was falling through the table now has a name, and every task says which commit it started
-from. Deploying a cluster reads as time on the machines the code runs on, a call to an MCP server
-reads as finding out what the repo does not hold, and a task carries the state of the tree it was
-asked against.
+A second agent, and two things the view could measure but not show. probez reads Cursor transcripts
+as well as Claude Code sessions, so a repository worked in both is one project rather than two. In
+the view, a tool call now shows the result it actually came back with, read out of the session copy
+when you ask for it, and the tasks table draws the whole spread of work instead of naming its
+largest slice.
 
 ### Added
 
@@ -24,6 +25,39 @@ asked against.
   than being guessed at. Nested subagent files are `agent: sub`, archived under a flat name. A
   project slug is resolved against the directories that still exist, so a name with dashes
   (`flowz-agentic-sdlc`) is not split into extra path segments.
+
+- **The tasks table shows the whole distribution, not the name of its largest slice.** The `Work`
+  column said `Recon 46%`, which named one category and discarded the other seven. It is now the
+  bar the projects table already used: one band per category, widest first by weight, no number.
+  The widest band is the same answer the old text gave — `spread` weighs categories the way
+  `dominant` does, so the bar and the name it replaced can never disagree about which is largest.
+  Percentages are still on each band's tooltip.
+
+- **Tool result bodies, in the view, on request.** `rounds.jsonl` records a result's size and not
+  its text, so the inspector could say a `Grep` returned 4.2K characters and never what they were.
+  Opening a tool call now offers **Show result**, which reads the body out of the verbatim session
+  copy `collect` already keeps beside the rounds and prints it under the call.
+
+  It is fetched per call, when you press the button, and never on the way to the page: a round of
+  twenty calls costs no reads until you ask for one, and a body already read is kept rather than
+  fetched twice. Results over 200,000 characters are cut, and say so with the path to the whole of
+  it. A result that was a screenshot says it was an image rather than showing an empty panel.
+
+  Behind it, `GET /api/projects/<slug>/sessions/<session>/results/<tool_use_id>`. The call is
+  resolved against the store before any file is opened, so the session named is one the project
+  recorded rather than a path arriving from the browser, and the id searched for is one the store
+  already holds. The route reads and never writes, and needs the token like everything else under
+  `/api`. Nothing about `collect`, the store's layout, or the extract changed — this reads what was
+  already on disk. An imported project has rounds and no session copies, and says so.
+
+## [0.3.4] - 2026-08-18
+
+Work that was falling through the table now has a name, and every task says which commit it started
+from. Deploying a cluster reads as time on the machines the code runs on, a call to an MCP server
+reads as finding out what the repo does not hold, and a task carries the state of the tree it was
+asked against.
+
+### Added
 
 - **Every task records the commit it started from.** A task is a piece of work asked against a
   particular state of the tree, and until now nothing said which one. `probez tasks` grows a `FROM`
@@ -526,7 +560,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/flowzhq/probez/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/flowzhq/probez/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/flowzhq/probez/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/flowzhq/probez/compare/v0.3.1...v0.3.2
