@@ -22,6 +22,7 @@ import {
   syncProject,
   taskPayload,
   toolsPayload,
+  trailsPayload,
 } from './viewdata.js'
 
 /**
@@ -262,6 +263,7 @@ async function serveApi(
   // /api/projects
   // /api/projects/<slug>
   // /api/projects/<slug>/tools
+  // /api/projects/<slug>/trails
   // /api/projects/<slug>/export?format=jsonl|json
   // /api/projects/<slug>/sync                                   POST
   // /api/projects/<slug>/rename                                 POST
@@ -355,6 +357,10 @@ async function serveApi(
   }
   if (kind === 'tools' && id === undefined) {
     sendJson(res, 200, await toolsPayload(dataDir, slug))
+    return
+  }
+  if (kind === 'trails' && id === undefined) {
+    sendJson(res, 200, await trailsPayload(dataDir, slug))
     return
   }
   if (kind !== 'sessions' || id === undefined) {

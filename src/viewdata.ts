@@ -12,6 +12,7 @@ import {
   taskRows,
   toolTally,
   traceOf,
+  trailShare,
   workIndex,
 } from './inspect.js'
 import type { Analysis, Dominant, RoundLabel, SessionRow, Share, TaskRow, ToolRow, Trace } from './inspect.js'
@@ -21,6 +22,7 @@ import {
   importProject,
   listStored,
   MAX_NAME,
+  readResultsIn,
   readRoundsIn,
   removeProject,
   renameProject,
@@ -67,6 +69,20 @@ function shown<T extends { path: string | null }>(project: T): T {
   return project.path === null ? project : { ...project, path: shorten(project.path) }
 }
 
+/**
+ * Trails as the view should print them, which means the one path they carry written `~/…`.
+ *
+ * The same argument `shown` makes for a project's path: paths in a store are absolute, so a table
+ * of them is a table of somebody's home directory, and every screenshot of that page carries it.
+ * The steps' own `sites` are left alone — the trace draws them nowhere, and shortening a field a
+ * caller might match against would be a quiet edit rather than a display choice.
+ */
+function shownTrails(trails: Trail[]): Trail[] {
+  return trails.map((trail) =>
+    trail.ended_on === '' ? trail : { ...trail, ended_on: shorten(trail.ended_on) },
+  )
+}
+
 /** A session as the view lists it: the stored row, plus what the tables around it need. */
 export interface ViewSession extends SessionRow {
   model: string | null
@@ -75,6 +91,8 @@ export interface ViewSession extends SessionRow {
   /** Time the model itself was generating, which `ms` undercounts badly. */
   active_ms: number
   work: Dominant | null
+  /** The whole distribution behind `work`, which the sessions table draws as a bar. */
+  mix: Share[]
 }
 
 /** A task as the view lists it. `ms` on the stored row is active time; elapsed is the other one. */
@@ -149,6 +167,14 @@ export interface ToolsPayload {
   project: StoredProject
   tools: ToolRow[]
   kinds: ToolRow[]
+}
+
+export interface TrailsPayload {
+  project: StoredProject
+  trails: Trail[]
+  /** Calls that were a step of some walk, over every call that was finding something out. */
+  steps: number
+  finding: number
 }
 
 /**
@@ -322,6 +348,7 @@ export async function projectPayload(dataDir: string, slug: string): Promise<Pro
       elapsed_ms: elapsedOf(mine),
       active_ms: mine.reduce((sum, round) => sum + (round.gen_ms ?? round.ms ?? 0), 0),
       work: work.session(row.session),
+      mix: work.sessionMix(row.session),
     }
   })
 
@@ -381,6 +408,7 @@ export async function sessionPayload(
       elapsed_ms: elapsedOf(mine),
       active_ms: mine.reduce((sum, round) => sum + (round.gen_ms ?? round.ms ?? 0), 0),
       work: work.session(session),
+      mix: work.sessionMix(session),
     },
     analysis: categoryTally(mine, pricing),
     tasks,
@@ -432,7 +460,7 @@ async function taskTrails(stored: StoredProject, rounds: Round[]): Promise<Trail
   if (session === undefined) return []
   const file = join(stored.dir, 'sessions', `${session}.jsonl`)
   const results = await readToolResults(file, idsToRead(rounds))
-  return trailsOf(rounds, { results })
+  return shownTrails(trailsOf(rounds, { results }))
 }
 
 export async function roundPayload(
@@ -508,6 +536,31 @@ export async function resultPayload(
     is_error: body.is_error,
     omitted: body.omitted,
     file: shorten(file),
+  }
+}
+
+/**
+ * Every walk in a project, read deep.
+ *
+ * This is the one payload that reads the archived sessions from end to end, which is why the page
+ * fetches it on the tab rather than on the way in — the same bargain `Tools` makes, for a bigger
+ * reason. Against probez's own store, twenty-nine sessions and six megabytes of rounds, that is
+ * under a second; on anything larger it is still one pass, since every session is read once and
+ * asked only for the ids it happens to hold.
+ *
+ * Shallow was never the right default here. It finds about a third of the steps and roots the walks
+ * it does find further forward, so a project page showing it would understate the thing the page
+ * exists to show — and unlike the CLI, there is no flag here to have got wrong.
+ */
+export async function trailsPayload(dataDir: string, slug: string): Promise<TrailsPayload> {
+  const { stored, rounds } = await open(dataDir, slug)
+  const results = await readResultsIn(stored.dir, idsToRead(rounds))
+  const share = trailShare(rounds, { results })
+  return {
+    project: shown(stored),
+    trails: shownTrails(trailsOf(rounds, { results })),
+    steps: share.steps,
+    finding: share.finding,
   }
 }
 

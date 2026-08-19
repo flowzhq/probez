@@ -5,7 +5,7 @@ import type { ToolRow } from '../api'
 import { Actions } from '../components/Actions'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
 import { InTokens, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
-import { WorkBars } from '../components/WorkBars'
+import { MixBar, WorkBars } from '../components/WorkBars'
 import { ago, count, duration, money, percent, shortId, shortModel, tokens, when } from '../format'
 import { go, href, linkProps } from '../router'
 import { useData } from '../useData'
@@ -22,6 +22,7 @@ export function Project({ slug }: { slug: string }): ReactElement {
   const [read, setRead] = useState(0)
   const { data, error, loading } = useData(() => api.project(slug), [slug, read])
   const [tab, setTab] = useState<'work' | 'tools'>('work')
+  const [list, setList] = useState<'sessions' | 'trails'>('sessions')
 
   return (
     <>
@@ -113,7 +114,19 @@ export function Project({ slug }: { slug: string }): ReactElement {
             </section>
 
             <section>
-              <h2>Sessions</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <h2 style={{ margin: 0 }}>{list === 'sessions' ? 'Sessions' : 'Trails'}</h2>
+                <span className="spacer" style={{ flex: 1 }} />
+                <div className="toggle">
+                  <button aria-pressed={list === 'sessions'} onClick={() => setList('sessions')}>
+                    sessions
+                  </button>
+                  <button aria-pressed={list === 'trails'} onClick={() => setList('trails')}>
+                    trails
+                  </button>
+                </div>
+              </div>
+              {list === 'trails' ? <Trails slug={slug} read={read} /> : (
               <table>
                 <thead>
                   <tr>
@@ -149,10 +162,27 @@ export function Project({ slug }: { slug: string }): ReactElement {
                         {session.tool_calls}
                         {session.errors > 0 ? <span className="bad"> ✗{session.errors}</span> : null}
                       </td>
-                      <td className="dim nowrap">
-                        {session.work === null
-                          ? '—'
-                          : `${session.work.short} ${percent(session.work.share)}`}
+                      {/* The distribution rather than the name of its largest slice, which is what
+                          the tasks table already does one level down. The widest band is the same
+                          answer the text gave; the rest of the bar is what a single name threw
+                          away. */}
+                      <td>
+                        {session.mix.length === 0 ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          /* Fixed, because the slices are flex-sized and give the column no width
+                             of their own: left to size itself it shrinks to the header. */
+                          <div
+                            style={{ width: 110 }}
+                            aria-label={
+                              session.work === null
+                                ? undefined
+                                : `mostly ${session.work.short}, ${session.mix.length} kinds of work`
+                            }
+                          >
+                            <MixBar mix={session.mix} />
+                          </div>
+                        )}
                       </td>
                       <TokenCells of={session} />
                       <td className="r num dim">{duration(session.active_ms)}</td>
@@ -161,10 +191,119 @@ export function Project({ slug }: { slug: string }): ReactElement {
                   ))}
                 </tbody>
               </table>
+              )}
             </section>
           </div>
         )}
       </main>
+    </>
+  )
+}
+
+/**
+ * Every walk in the project: runs of calls that followed one another into the repository.
+ *
+ * A row goes to the walk itself rather than to a page about it — clicking one opens the task it
+ * happened in with the round it started at selected, which is where the bracket over those rounds
+ * is drawn. There is no trail page, because a trail is a shape over rounds and the trace is where
+ * rounds are shown.
+ */
+function Trails({ slug, read }: { slug: string; read: number }): ReactElement {
+  const { data, error } = useData(() => api.trails(slug), [slug, read])
+
+  if (error !== null && data === null) return <Problem message={error} />
+  if (data === null) return <Loading what="the trails" />
+  if (data.trails.length === 0) {
+    return (
+      <p className="note">
+        No trails here: no run of calls in this project followed one into another. That is what an
+        agent working in a repository it already knows looks like.
+      </p>
+    )
+  }
+
+  const landed = data.trails.filter((trail) => trail.outcome === 'edit').length
+  return (
+    <>
+      <table>
+        <thead>
+          <tr>
+            <th>Trail</th>
+            <th className="r">Steps</th>
+            <th className="r" title="How far the search went: the longest chain of hops.">
+              Depth
+            </th>
+            <th className="r" title="How far it fanned from a single call. A listing feeding five reads is wide and shallow.">
+              Wide
+            </th>
+            <th className="r">Paths</th>
+            <th className="r" title="Paths it went back to after leaving them.">
+              Back
+            </th>
+            <th>Started from</th>
+            <th>Ended</th>
+            <th className="r">In</th>
+            <th className="r">Out</th>
+            <th className="r">Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.trails.map((trail) => (
+            <tr
+              key={`${trail.session}-${trail.ref}`}
+              className="row"
+              onClick={() =>
+                go(href.task(slug, trail.session, trail.task, trail.steps[0]?.round))
+              }
+            >
+              <td className="mono">
+                <a
+                  {...linkProps(
+                    href.task(slug, trail.session, trail.task, trail.steps[0]?.round),
+                  )}
+                >
+                  {shortId(trail.session)}#{trail.ref}
+                </a>
+              </td>
+              <td className="r num">{trail.steps.length}</td>
+              <td className="r num">{trail.depth}</td>
+              <td className="r num">{trail.breadth}</td>
+              <td className="r num">{trail.paths}</td>
+              <td className={`r num ${trail.revisits > 0 ? '' : 'muted'}`}>
+                {trail.revisits > 0 ? trail.revisits : '·'}
+              </td>
+              <td className="dim">{trail.root}</td>
+              {/* One cell, and it has to hold a word and a path that can be sixty characters. The
+                  word leads because it is the answer; the path is context and clips. */}
+              <td className="nowrap">
+                <span className={trail.outcome === 'edit' ? undefined : 'dim'}>
+                  {trail.outcome}
+                </span>
+                {trail.ended_on === '' ? null : (
+                  <span className="muted mono" title={trail.ended_on}>
+                    {' '}
+                    {trail.ended_on.split('/').slice(-2).join('/')}
+                  </span>
+                )}
+              </td>
+              <td className="r num dim">{tokens(trail.in_tokens)}</td>
+              <td className="r num dim">{tokens(trail.out_tokens)}</td>
+              <td className="r num dim">{duration(trail.ms)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="note" style={{ marginTop: 12 }}>
+        {data.trails.length} trails · {landed} ended in a change ·{' '}
+        {percent(data.finding === 0 ? 0 : data.steps / data.finding)} of the calls that were finding
+        something out happened inside one. An agent that does not know a repository finds its way
+        around it: it lists the tree, opens what the listing named, greps for a word, reads the lines
+        the grep hit. <em>Where this project's work goes</em> counts all of that as Reconstruction
+        and cannot tell five hops of one search from five unrelated file opens. Hops are read out of
+        the archived session results, so a walk is what the agent actually followed rather than what
+        the calls happen to look like. A row opens the task it happened in, on the round it started
+        at.
+      </p>
     </>
   )
 }

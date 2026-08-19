@@ -654,6 +654,8 @@ export interface WorkIndex {
   round(round: Round): Dominant | null
   /** The whole distribution behind `task`, for the bar the tasks table draws instead of a name. */
   taskMix(session: string, task: number): Share[]
+  /** The same, behind `session`. The two tables ask the same question at different sizes. */
+  sessionMix(id: string): Share[]
 }
 
 export function workIndex(rounds: Round[]): WorkIndex {
@@ -677,6 +679,7 @@ export function workIndex(rounds: Round[]): WorkIndex {
     task: (session, task) => dominant(byTask.get(`${session} ${task}`) ?? []),
     round: (round) => dominant(labelled.get(round) ?? []),
     taskMix: (session, task) => spread(byTask.get(`${session} ${task}`) ?? []),
+    sessionMix: (id) => spread(bySession.get(id) ?? []),
   }
 }
 

@@ -47,6 +47,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   deepest — with the id to open it. `--deep` there too. A low share is not a fault: it is what an
   agent working in a repository it already knows looks like.
 
+- **Trails in the view, as a tab beside Sessions.** Every walk in the project, with the same columns
+  the CLI prints, and a row opens the task it happened in with the round it started at selected —
+  which is where the bracket over those rounds is drawn. There is no trail page: a trail is a shape
+  over rounds, and the trace is where rounds are shown.
+
+  It reads deep, and it is fetched when the tab is opened rather than on the way to the page — the
+  same bargain the tools tab makes, for a bigger reason, since this reads every archived session in
+  the project. Shallow was never the right default here: it finds about a third of the steps and
+  roots the walks it does find further forward, and unlike the CLI there is no flag to have got
+  wrong. The one path a trail carries is written `~/…` before it leaves the server, for the reason
+  a project's path already was.
+
 - **A walks lane on the task trace.** Between the phase ribbon and the round strip, when a task made
   any: one bracket per trail, over the rounds it touched, labelled with how far it went. The ribbon
   cannot show this — a walk is not a stretch of rounds but what the evidence connects, so a search
@@ -56,6 +68,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   page is already reading.
 
 ### Fixed
+
+- **The sessions table draws its work, instead of naming the largest slice.** `Recon 57%` named one
+  category out of eight and discarded the rest. It is now the bar the tasks and projects tables
+  already used: one band per category, widest first, no number, percentages on each band's tooltip.
+  The widest band is the same answer the text gave, since `spread` weighs categories the way
+  `dominant` does, so the bar and the name it replaced can never disagree about which is largest.
+  0.3.5 did this one level down, for tasks, and left the level above it saying the old thing.
 
 - **A command now knows which side of a pipe it ran on.** `bash.ts` cut a command line into pieces
   and threw away what the shell put between them, so nothing downstream could tell

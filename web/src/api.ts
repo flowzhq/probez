@@ -233,6 +233,8 @@ export interface ViewSession extends Totals {
   elapsed_ms: number
   active_ms: number
   work: Dominant | null
+  /** The whole distribution behind `work`, which the sessions table draws as a bar. */
+  mix: Share[]
 }
 
 export interface ViewTask extends Totals {
@@ -402,6 +404,13 @@ export interface ToolsPayload {
   kinds: ToolRow[]
 }
 
+export interface TrailsPayload {
+  project: StoredProject
+  trails: Trail[]
+  steps: number
+  finding: number
+}
+
 /** One tool result's body, fetched on request. Nothing renders it until someone asks. */
 export interface ResultPayload {
   project: StoredProject
@@ -554,6 +563,9 @@ export const api = {
   round: (slug: string, session: string, round: number) =>
     get<RoundPayload>(`/projects/${slug}/sessions/${session}/rounds/${round}`),
   tools: (slug: string) => get<ToolsPayload>(`/projects/${slug}/tools`),
+  // Reads every archived session in the project, so like `tools` it is fetched on the tab rather
+  // than on the way to the page.
+  trails: (slug: string) => get<TrailsPayload>(`/projects/${slug}/trails`),
   // Deliberately not folded into `round`: the bodies are the bulk of a session file, and the
   // inspector opens without paying for any of them.
   result: (slug: string, session: string, toolUseId: string) =>
