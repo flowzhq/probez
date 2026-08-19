@@ -30,7 +30,9 @@ import {
 import type { CollectResult, ImportResult, RemoveResult, StoredProject } from './store.js'
 import { CONTROL, ImportError, parseExport } from './import.js'
 import { shorten } from './format.js'
-import { MAX_RESULT_CHARS, readToolResult } from './result.js'
+import { MAX_RESULT_CHARS, readToolResult, readToolResults } from './result.js'
+import { idsToRead, trailsOf } from './trail.js'
+import type { Trail } from './trail.js'
 import {
   costOf,
   defaultPricing,
@@ -127,6 +129,14 @@ export interface TaskPayload {
   task: ViewTask
   analysis: Analysis
   trace: Trace
+  /**
+   * The walks this task made through the repository, read deep.
+   *
+   * The CLI makes the deep read opt-in because it is a second pass over the logs and a whole
+   * project is a lot of them. A task is one session, and the page is already reading that session's
+   * store, so here the honest answer is the affordable one and there is no flag to get it wrong.
+   */
+  trails: Trail[]
 }
 
 export interface RoundPayload {
@@ -406,7 +416,23 @@ export async function taskPayload(
     },
     analysis: categoryTally(mine, pricing),
     trace: traceOf(mine),
+    trails: await taskTrails(stored, mine),
   }
+}
+
+/**
+ * A task's walks, with their hops read out of the archived session rather than inferred.
+ *
+ * One file, one pass, and only the calls that were finding something out. A project with no
+ * archived sessions — an import — falls back to what the inputs alone can show, which is fewer
+ * walks and says so through each trail's `confidence` rather than through an empty section.
+ */
+async function taskTrails(stored: StoredProject, rounds: Round[]): Promise<Trail[]> {
+  const session = rounds[0]?.session
+  if (session === undefined) return []
+  const file = join(stored.dir, 'sessions', `${session}.jsonl`)
+  const results = await readToolResults(file, idsToRead(rounds))
+  return trailsOf(rounds, { results })
 }
 
 export async function roundPayload(

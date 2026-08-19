@@ -163,6 +163,48 @@ export interface Trace {
   span: { first: string | null; last: string | null; elapsed_ms: number; active_ms: number }
 }
 
+/** One call as a node in a walk. Mirrors `Step` in src/trail.ts. */
+export interface TrailStep {
+  session: string
+  round: number
+  task: number
+  ref: string
+  at: number
+  id: string | null
+  tool: string
+  name: string
+  verb: string
+  scope: 'tree' | 'dir' | 'file' | 'span'
+  sites: string[]
+  probes: string[]
+  source: number | null
+  edge: 'listed' | 'probe' | 'narrow' | null
+  via: string
+  share: number
+  ms: number | null
+  result_chars: number | null
+}
+
+/** A run of calls that followed one another into the repository. Mirrors `Trail` in src/trail.ts. */
+export interface Trail {
+  session: string
+  task: number
+  ref: string
+  last: string
+  steps: TrailStep[]
+  depth: number
+  breadth: number
+  root: 'listing' | 'probe' | 'doc' | 'path'
+  paths: number
+  revisits: number
+  outcome: 'edit' | 'test' | 'abandoned'
+  ended_on: string
+  ms: number
+  in_tokens: number
+  out_tokens: number
+  confidence: 'proven' | 'inferred'
+}
+
 /** What a span of rounds cost and changed. Mirrors `Totals` in src/inspect.ts. */
 export interface Totals {
   in_tokens: number
@@ -345,6 +387,7 @@ export interface TaskPayload {
   task: ViewTask
   analysis: Analysis
   trace: Trace
+  trails: Trail[]
 }
 
 export interface RoundPayload {

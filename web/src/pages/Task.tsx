@@ -137,6 +137,7 @@ export function Task({
               <h2>Trace</h2>
               <Trace
                 trace={data.trace}
+                trails={data.trails}
                 selected={round}
                 onSelect={(picked) => select(picked.round)}
               />

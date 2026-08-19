@@ -5,7 +5,7 @@ import { scaleLinear } from '@visx/scale'
 import { Bar } from '@visx/shape'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
-import type { Trace as TraceData, TraceRound } from '../api'
+import type { Trace as TraceData, TraceRound, Trail } from '../api'
 import { fillOf, orderOf, styleOf } from '../categories'
 import { duration, percent, tokens } from '../format'
 import { Tip, useTip } from './Tip'
@@ -26,6 +26,12 @@ import type { ReactElement } from 'react'
  * you cannot point at. Round index makes every round clickable and hides the gaps; the toggle says
  * which one you are looking at, and the header carries both totals either way.
  *
+ * Between the two, when a task made any, is the **walks** lane: runs of calls that followed one
+ * another into the repository — a listing, then the files it named, then a grep, then the lines the
+ * grep hit. The ribbon cannot show one, because a walk is not a stretch of rounds: it is what the
+ * evidence connects, and a walk interrupted by an edit and resumed four rounds later is still one
+ * walk. Drawing it as a bracket over the rounds it touched is the only way to see that.
+ *
  * Past a few dozen rounds an overview lane appears with a brush on it, and the main rows draw only
  * the brushed range. That is the Performance-panel arrangement, for the same reason it exists
  * there: the whole span has to stay visible while you look closely at part of it.
@@ -35,6 +41,10 @@ import type { ReactElement } from 'react'
 const OVERVIEW_AT = 60
 
 const RIBBON_H = 18
+/** One row of the walks lane. Two walks that overlap in rounds get a row each rather than a pile. */
+const WALK_H = 15
+/** Rows of walks drawn before the rest are folded into the last one. */
+const WALK_ROWS = 3
 const STRIP_H = 54
 const OVERVIEW_H = 22
 const AXIS_H = 22
@@ -46,11 +56,14 @@ export type Axis = 'round' | 'time'
 
 export function Trace({
   trace,
+  trails,
   selected,
   onSelect,
   onOpenTask,
 }: {
   trace: TraceData
+  /** The walks over these rounds, when the payload carries any. */
+  trails?: Trail[]
   selected: number | null
   onSelect: (round: TraceRound) => void
   /** Set on a session trace, where a round names a task you can open. */
@@ -88,14 +101,18 @@ export function Trace({
     () => positions(visible, axis, inner),
     [visible, axis, inner],
   )
+  const walks = useMemo(() => packed(trails ?? [], all), [trails, all])
 
   if (all.length === 0) {
     return <p className="note">Nothing to trace: this span has no rounds.</p>
   }
 
+  const walkRows = walks.length === 0 ? 0 : Math.max(...walks.map((walk) => walk.row)) + 1
+  const laneH = walkRows === 0 ? 0 : walkRows * WALK_H + GAP
   const height =
-    RIBBON_H + GAP + STRIP_H + AXIS_H + (zoomable ? OVERVIEW_H + GAP * 2 : 0)
-  const stripY = RIBBON_H + GAP
+    RIBBON_H + GAP + laneH + STRIP_H + AXIS_H + (zoomable ? OVERVIEW_H + GAP * 2 : 0)
+  const walkY = RIBBON_H + GAP
+  const stripY = walkY + laneH
   const axisY = stripY + STRIP_H
   const overviewY = axisY + AXIS_H + GAP
 
@@ -168,6 +185,79 @@ export function Trace({
               })}
             </Group>
 
+            {/* Walks: what the agent followed into, over the rounds it took to do it. */}
+            <Group top={walkY} left={PAD}>
+              {walks.map((walk) => {
+                if (walk.to < lo || walk.from > hi) return null
+                const a = Math.max(walk.from, lo) - lo
+                const b = Math.min(walk.to, hi) - lo
+                const x = place.x(a)
+                const w = Math.max(2, place.x(b) + place.w(b) - x)
+                const trail = walk.trail
+                return (
+                  <Group
+                    key={`${trail.session}-${trail.ref}`}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      const first = all.find((round) => round.round === trail.steps[0]!.round)
+                      if (first !== undefined) onSelect(first)
+                    }}
+                    onMouseMove={(event) =>
+                      show(
+                        event,
+                        <>
+                          <strong className="mono">
+                            trail {trail.ref} → {trail.last}
+                          </strong>
+                          <br />
+                          <span className="tip-key">went </span>
+                          {trail.depth} hops from a {trail.root} · {trail.breadth} wide ·{' '}
+                          {trail.paths} paths
+                          <br />
+                          <span className="tip-key">ended </span>
+                          {trail.outcome}
+                          {trail.ended_on === '' ? '' : ` ${trail.ended_on}`}
+                          <br />
+                          <span className="tip-key">cost </span>
+                          {duration(trail.ms)} · {tokens(trail.in_tokens)} in ·{' '}
+                          {tokens(trail.out_tokens)} out
+                          <br />
+                          <span className="tip-key">hops </span>
+                          {trail.confidence === 'proven'
+                            ? 'read out of the results'
+                            : 'inferred from what the calls asked for'}
+                        </>,
+                      )
+                    }
+                    onMouseLeave={hide}
+                  >
+                    <Bar
+                      x={x}
+                      y={walk.row * WALK_H}
+                      width={w}
+                      height={WALK_H - 4}
+                      rx={2}
+                      fill={trail.outcome === 'abandoned' ? 'url(#probez-hatch)' : 'var(--ink-3)'}
+                      opacity={trail.outcome === 'edit' ? 0.85 : 0.5}
+                    />
+                    {w > 58 ? (
+                      <text
+                        x={x + 5}
+                        y={walk.row * WALK_H + WALK_H - 8}
+                        fontSize={9}
+                        fontWeight={600}
+                        letterSpacing={0.3}
+                        fill={trail.outcome === 'abandoned' ? 'var(--ink-3)' : 'var(--surface)'}
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        {trail.depth} hops
+                      </text>
+                    ) : null}
+                  </Group>
+                )
+              })}
+            </Group>
+
             {/* Rounds: what actually happened, unsmoothed. */}
             <Group top={stripY} left={PAD}>
               {visible.map((round, at) => (
@@ -227,6 +317,9 @@ export function Trace({
       <p className="note" style={{ margin: '2px 0 10px' }}>
         Phases are the dominant category over {trace.window} rounds, which is a choice and not a
         measurement; each cell below shows what its own round actually was.
+        {walks.length === 0
+          ? ''
+          : ` The ${walks.length === 1 ? 'bracket' : 'brackets'} between them ${walks.length === 1 ? 'is a walk' : 'are walks'}: a run of calls that followed one another into the repository. Hatched means it ended without changing anything it had been to.`}
         {zoomable ? ' Drag the lane at the bottom to look closer.' : ''}
       </p>
       <Tip tip={tip} />
@@ -515,4 +608,47 @@ function runsIn(trace: TraceData, lo: number, hi: number): TraceData['runs'] {
       from: Math.max(run.from, lo),
       to: Math.min(run.to, hi),
     }))
+}
+
+/** One walk placed over the rounds it touched, and which row of the lane it draws in. */
+interface Walk {
+  trail: Trail
+  from: number
+  to: number
+  row: number
+}
+
+/**
+ * Place each walk over the rounds it touched, stacking the ones that overlap.
+ *
+ * A walk is not a stretch of rounds — it is what the evidence connects — so two of them can share
+ * rounds, and drawing both on one line would put one on top of the other. Rows are assigned
+ * greedily, longest first so the span you notice is the one that spans the most, and everything
+ * past the third row folds into it: a lane taller than the strip below it would be a legend for a
+ * chart rather than part of one.
+ */
+function packed(trails: Trail[], all: TraceRound[]): Walk[] {
+  const at = new Map<number, number>()
+  all.forEach((round, index) => at.set(round.round, index))
+
+  const spans = trails
+    .map((trail) => {
+      const indices = trail.steps.map((step) => at.get(step.round)).filter((i): i is number => i !== undefined)
+      if (indices.length === 0) return null
+      return { trail, from: Math.min(...indices), to: Math.max(...indices) }
+    })
+    .filter((span): span is { trail: Trail; from: number; to: number } => span !== null)
+    .sort((a, b) => b.to - b.from - (a.to - a.from) || a.from - b.from)
+
+  // The rightmost round each row has been filled to, which is all a greedy packer needs.
+  const filled: number[] = []
+  return spans.map((span) => {
+    let row = filled.findIndex((end) => end < span.from)
+    if (row === -1) {
+      row = Math.min(filled.length, WALK_ROWS - 1)
+      if (row === filled.length) filled.push(span.to)
+    }
+    filled[row] = Math.max(filled[row] ?? span.to, span.to)
+    return { ...span, row }
+  })
 }
