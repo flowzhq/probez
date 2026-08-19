@@ -148,6 +148,7 @@ test('a call parses to verbs before anything decides what kind of work they are'
   assert.deepEqual(verbs(bash('npm test')), ['test'])
   assert.deepEqual(verbs(bash('cat README.md')), ['read'])
   assert.deepEqual(verbs(tool('Edit', { file_path: '/repo/src/a.ts' })), ['write'])
+  assert.deepEqual(verbs(tool('StrReplace', { path: '/repo/src/a.ts' })), ['write'])
   assert.deepEqual(verbs(tool('Grep', { pattern: 'flush' })), ['search'])
 })
 

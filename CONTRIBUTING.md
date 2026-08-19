@@ -96,6 +96,10 @@ output in `dist/test/`, which is why `npm test` builds first.
 - `test/extract.test.ts` covers the extractor with a golden test over a fixture session in
   `test/fixtures/`. If you change how a round is assembled, add a fixture case that fails without
   your change.
+- `test/extract-cursor.test.ts` covers Cursor transcripts: one round per assistant row, tasks from
+  `<user_query>`, synthetic tool ids, null usage, and subagent paths.
+- `test/discover.test.ts` covers Cursor nested transcripts and merging Claude and Cursor checkouts
+  of the same path into one project.
 - `test/inspect.test.ts` covers the read side — session, task and tool aggregation, the work
   taxonomy's fractional split, the trace and its phase smoothing, round filters, and selector
   parsing — against rounds built in the test file itself, so it needs no fixture.
@@ -105,7 +109,7 @@ output in `dist/test/`, which is why `npm test` builds first.
   of the taxonomy matches this one, and that a round's labels always account for exactly one round.
 - `test/bash.test.ts` covers reading a shell command into the commands it ran.
 - `test/cli.test.ts` runs the built CLI end to end in a temporary store, so it touches neither
-  `~/.claude` nor `~/.probez`.
+  `~/.claude`, `~/.cursor` nor `~/.probez`.
 - `test/view.test.ts` runs the local server in-process against a temporary store. The refusals are
   the reason it exists: no token, wrong `Host`, and the method rules — every write path refuses
   `GET` and every read path refuses everything but it. Beside them sit the assertion that the store

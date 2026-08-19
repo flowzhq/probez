@@ -27,8 +27,9 @@ These are choices, not omissions:
   shipped in v0.2 against a schema that was already stable, and needed no new collection.
 - **Nothing leaves the machine.** No network calls, no telemetry, no account, no upload. This is a
   property of the codebase, not a setting.
-- **Claude Code only, for now.** Other agents follow once the round schema has proven itself against
-  one format.
+- **Claude Code and Cursor.** Other agents follow once the round schema has proven itself against
+  these two formats. Cursor transcripts do not record token usage or model names; those rounds are
+  collected and classified, and cost stays blank rather than invented.
 
 ## Users
 

@@ -1,14 +1,27 @@
 import { open, readdir, stat } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
-import { basename, join, resolve, sep } from 'node:path'
+import { tmpdir } from 'node:os'
+import { basename, join, relative, resolve, sep } from 'node:path'
 
-import type { Project, SessionFile } from './types.js'
+import {
+  defaultClaudeDir,
+  defaultCursorDir,
+  pathFromCursorSlug,
+  wantsClaude,
+  wantsCursor,
+} from './agents/paths.js'
+import type { SourceFilter } from './agents/paths.js'
+import type { AgentSource, Project, SessionFile } from './types.js'
+
+export { defaultClaudeDir, defaultCursorDir }
+export type { SourceFilter }
 
 /** How much of a session file to scan for the record carrying `cwd`. */
 const CWD_SCAN_BYTES = 256 * 1024
 
-export function defaultClaudeDir(): string {
-  return join(homedir(), '.claude', 'projects')
+export interface DiscoverOptions {
+  claudeDir: string
+  cursorDir: string
+  source?: SourceFilter
 }
 
 /**
@@ -47,7 +60,7 @@ async function readCwd(file: string): Promise<string | null> {
   }
 }
 
-async function readSessions(dir: string): Promise<SessionFile[]> {
+async function readFlatSessions(dir: string, source: AgentSource): Promise<SessionFile[]> {
   let names: string[]
   try {
     names = await readdir(dir)
@@ -66,6 +79,7 @@ async function readSessions(dir: string): Promise<SessionFile[]> {
         file,
         size: info.size,
         mtimeMs: info.mtimeMs,
+        source,
       })
     } catch {
       // vanished between readdir and stat
@@ -75,8 +89,44 @@ async function readSessions(dir: string): Promise<SessionFile[]> {
   return sessions
 }
 
-/** Every project the agent has recorded, newest activity first. */
-export async function discoverProjects(claudeDir: string): Promise<Project[]> {
+async function walkJsonl(dir: string, root: string, source: AgentSource, out: SessionFile[]): Promise<void> {
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      await walkJsonl(path, root, source, out)
+      continue
+    }
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
+    try {
+      const info = await stat(path)
+      const rel = relative(root, path).replaceAll('\\', '/')
+      out.push({
+        id: rel.slice(0, -'.jsonl'.length),
+        file: path,
+        size: info.size,
+        mtimeMs: info.mtimeMs,
+        source,
+      })
+    } catch {
+      // vanished between readdir and stat
+    }
+  }
+}
+
+async function readNestedSessions(dir: string, source: AgentSource): Promise<SessionFile[]> {
+  const sessions: SessionFile[] = []
+  await walkJsonl(dir, dir, source, sessions)
+  sessions.sort((a, b) => a.mtimeMs - b.mtimeMs)
+  return sessions
+}
+
+export async function discoverClaudeProjects(claudeDir: string): Promise<Project[]> {
   let entries
   try {
     entries = await readdir(claudeDir, { withFileTypes: true })
@@ -88,7 +138,7 @@ export async function discoverProjects(claudeDir: string): Promise<Project[]> {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     const dir = join(claudeDir, entry.name)
-    const sessions = await readSessions(dir)
+    const sessions = await readFlatSessions(dir, 'claude-code')
     if (sessions.length === 0) continue
 
     // Newest first: the most recent session is likeliest to carry a usable cwd.
@@ -103,11 +153,105 @@ export async function discoverProjects(claudeDir: string): Promise<Project[]> {
       dir,
       sessions,
       lastActivity: sessions[sessions.length - 1]!.mtimeMs,
+      sources: ['claude-code'],
     })
   }
-
-  projects.sort((a, b) => b.lastActivity - a.lastActivity)
   return projects
+}
+
+export async function discoverCursorProjects(cursorDir: string): Promise<Project[]> {
+  let entries
+  try {
+    entries = await readdir(cursorDir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+
+  const projects: Project[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const transcripts = join(cursorDir, entry.name, 'agent-transcripts')
+    const sessions = await readNestedSessions(transcripts, 'cursor')
+    if (sessions.length === 0) continue
+
+    projects.push({
+      key: entry.name,
+      path: pathFromCursorSlug(entry.name),
+      path_inferred: true,
+      dir: transcripts,
+      sessions,
+      lastActivity: sessions[sessions.length - 1]!.mtimeMs,
+      sources: ['cursor'],
+    })
+  }
+  return projects
+}
+
+function mergeSources(a: AgentSource[] | undefined, b: AgentSource[] | undefined): AgentSource[] {
+  const out: AgentSource[] = []
+  for (const source of [...(a ?? []), ...(b ?? [])]) {
+    if (!out.includes(source)) out.push(source)
+  }
+  return out
+}
+
+/**
+ * Fold Claude and Cursor discoveries that name the same checkout into one project.
+ *
+ * A measured `cwd` outranks a path decoded from a Cursor slug. Sessions are concatenated; the
+ * store hashes the path, so both agents land in the same directory.
+ */
+export function mergeProjects(projects: Project[]): Project[] {
+  const byPath = new Map<string, Project>()
+  const noPath: Project[] = []
+
+  for (const project of projects) {
+    if (project.path === null) {
+      noPath.push({
+        ...project,
+        sessions: [...project.sessions],
+        sources: mergeSources(undefined, project.sources),
+      })
+      continue
+    }
+    const key = resolve(project.path)
+    const existing = byPath.get(key)
+    if (existing === undefined) {
+      byPath.set(key, {
+        ...project,
+        path: key,
+        sessions: [...project.sessions],
+        sources: mergeSources(undefined, project.sources),
+      })
+      continue
+    }
+
+    existing.sessions.push(...project.sessions)
+    existing.sessions.sort((a, b) => a.mtimeMs - b.mtimeMs)
+    existing.lastActivity = Math.max(existing.lastActivity, project.lastActivity)
+    existing.sources = mergeSources(existing.sources, project.sources)
+    if (existing.path_inferred && !project.path_inferred) {
+      existing.path = key
+      existing.key = project.key
+      existing.dir = project.dir
+    }
+    // A measured cwd outranks a slug decode, whichever side arrived first. The flag is false
+    // rather than absent so a mixed project is not mistaken for a Cursor-only inferred one.
+    existing.path_inferred = Boolean(existing.path_inferred) && Boolean(project.path_inferred)
+  }
+
+  const merged = [...byPath.values(), ...noPath]
+  merged.sort((a, b) => b.lastActivity - a.lastActivity)
+  return merged
+}
+
+/** Every project either agent has recorded, newest activity first. */
+export async function discoverProjects(options: DiscoverOptions): Promise<Project[]> {
+  const source = options.source ?? 'both'
+  const found: Project[] = []
+  if (wantsClaude(source)) found.push(...(await discoverClaudeProjects(options.claudeDir)))
+  if (wantsCursor(source)) found.push(...(await discoverCursorProjects(options.cursorDir)))
+  return mergeProjects(found)
 }
 
 /**

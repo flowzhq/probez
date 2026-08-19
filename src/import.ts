@@ -41,6 +41,11 @@ function strOrNull(value: unknown): string | null {
   return text === '' ? null : text
 }
 
+function tokenField(value: unknown): number | null {
+  if (value === null || value === undefined) return null
+  return numOrNull(value)
+}
+
 function num(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
@@ -132,18 +137,26 @@ export function normalizeRound(value: unknown): Round | null {
   if (typeof r.session !== 'string' || session === '') return null
   if (typeof r.id !== 'string' || id === '') return null
 
-  const uncached = num(r.in_uncached)
-  const cacheRead = num(r.in_cache_read)
-  const cacheWrite = num(r.in_cache_write)
+  const uncached = tokenField(r.in_uncached)
+  const cacheRead = tokenField(r.in_cache_read)
+  const cacheWrite = tokenField(r.in_cache_write)
+  const outTokens = tokenField(r.out_tokens)
 
-  // A cache write has two prices, and an export written before probez recorded which kind it was
-  // carries only the total. The 5-minute entry is the documented default, so an unsplit total is
-  // charged there rather than at the dearer rate — the same rule extraction applies.
-  let write1h = num(r.in_cache_write_1h)
-  let write5m = num(r.in_cache_write_5m)
-  if (write5m + write1h !== cacheWrite) {
-    write1h = Math.min(write1h, cacheWrite)
-    write5m = cacheWrite - write1h
+  // Null on every field is Cursor (or any agent that never recorded usage). A number on any of
+  // them is Claude's split, which is recomputed so the parts still sum to the total.
+  const known =
+    uncached !== null || cacheRead !== null || cacheWrite !== null || outTokens !== null
+
+  let write1h = tokenField(r.in_cache_write_1h)
+  let write5m = tokenField(r.in_cache_write_5m)
+  if (known) {
+    const write = cacheWrite ?? 0
+    write1h = write1h ?? 0
+    write5m = write5m ?? 0
+    if (write5m + write1h !== write) {
+      write1h = Math.min(write1h, write)
+      write5m = write - write1h
+    }
   }
 
   const first = r.first_input
@@ -161,15 +174,13 @@ export function normalizeRound(value: unknown): Round | null {
     first_input:
       first === 'user_message' || first === 'tool_result' ? (first as 'user_message' | 'tool_result') : null,
     model: strOrNull(r.model),
-    // The total is recomputed from its parts rather than trusted, so the invariant every share
-    // depends on holds even if the file says otherwise.
-    in_tokens: uncached + cacheWrite + cacheRead,
-    in_uncached: uncached,
-    in_cache_write: cacheWrite,
-    in_cache_write_5m: write5m,
-    in_cache_write_1h: write1h,
-    in_cache_read: cacheRead,
-    out_tokens: num(r.out_tokens),
+    in_tokens: known ? (uncached ?? 0) + (cacheWrite ?? 0) + (cacheRead ?? 0) : null,
+    in_uncached: known ? (uncached ?? 0) : null,
+    in_cache_write: known ? (cacheWrite ?? 0) : null,
+    in_cache_write_5m: known ? (write5m ?? 0) : null,
+    in_cache_write_1h: known ? (write1h ?? 0) : null,
+    in_cache_read: known ? (cacheRead ?? 0) : null,
+    out_tokens: known ? (outTokens ?? 0) : null,
     mcp_server: strOrNull(r.mcp_server),
     mcp_tool: strOrNull(r.mcp_tool),
     skill: strOrNull(r.skill),
@@ -185,8 +196,12 @@ export function normalizeRound(value: unknown): Round | null {
 
 /** A round that predates the token split cannot be priced, and inventing the split would be a lie. */
 function hasTokenSplit(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
   const r = value as Record<string, unknown>
   return (
+    r.in_uncached === null ||
+    r.in_cache_read === null ||
+    r.in_cache_write === null ||
     typeof r.in_uncached === 'number' ||
     typeof r.in_cache_read === 'number' ||
     typeof r.in_cache_write === 'number'

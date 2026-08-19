@@ -621,3 +621,27 @@ test('a model with no rate is named rather than counted as free', () => {
   assert.equal(analysis.coverage.unpriced, 1)
   assert.deepEqual(analysis.unpriced, [{ model: 'some-model-nobody-priced', rounds: 1 }])
 })
+
+test('a round with no model is unpriced rather than a $0 share', () => {
+  const analysis = categoryTally(
+    [
+      round({
+        session: 'hhhh8888',
+        round: 0,
+        model: null,
+        in_tokens: null,
+        in_uncached: null,
+        in_cache_write: null,
+        in_cache_write_5m: null,
+        in_cache_write_1h: null,
+        in_cache_read: null,
+        out_tokens: null,
+        tools: [tool('Read')],
+      }),
+    ],
+    PRICING,
+  )
+  assert.equal(analysis.coverage.cost, 0)
+  assert.equal(analysis.coverage.unpriced, 1)
+  assert.deepEqual(analysis.unpriced, [{ model: '(no model recorded)', rounds: 1 }])
+})

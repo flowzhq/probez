@@ -55,9 +55,21 @@ function makeStore(): {
     join(sourceDir, `${session}.jsonl`),
     readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', project),
   )
+  const cursorDir = join(root, 'cursor')
+  mkdirSync(cursorDir, { recursive: true })
   execFileSync(
     process.execPath,
-    [CLI, 'collect', project, '--data-dir', dataDir, '--claude-dir', claudeDir],
+    [
+      CLI,
+      'collect',
+      project,
+      '--data-dir',
+      dataDir,
+      '--claude-dir',
+      claudeDir,
+      '--cursor-dir',
+      cursorDir,
+    ],
     { encoding: 'utf8' },
   )
 
@@ -84,7 +96,7 @@ function snapshot(dir: string): Record<string, string> {
 
 async function serving(dataDir: string, claudeDir = ''): Promise<Serving> {
   forgetRounds()
-  return startServer({ dataDir, claudeDir, port: 0, pinned: true })
+  return startServer({ dataDir, claudeDir, cursorDir: '', port: 0, pinned: true })
 }
 
 const get = (server: Serving, path: string, init?: RequestInit): Promise<Response> =>

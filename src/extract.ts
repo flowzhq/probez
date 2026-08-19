@@ -26,7 +26,7 @@ export function contentChars(value: unknown): number {
 }
 
 /** Flatten a content value to plain text, for user and assistant messages. */
-function toText(value: unknown): string {
+export function toText(value: unknown): string {
   if (value == null) return ''
   if (typeof value === 'string') return value
   if (Array.isArray(value)) {
@@ -83,7 +83,7 @@ function asText(value: unknown): string | null {
  * reading for a message body and the wrong one for a `Write` call, where `content` is one argument
  * among several. What is wanted here is how big the whole call was before truncation.
  */
-function inputChars(value: unknown): number {
+export function inputChars(value: unknown): number {
   if (value === undefined) return 0
   try {
     return JSON.stringify(value)?.length ?? 0
@@ -425,7 +425,7 @@ const INPUT_EVENTS = new Set<RoundEvent['type']>(['user_message', 'tool_result']
  * covers the wait before the model said anything. That wait is the bulk of a round and sits outside
  * `ms`, which spans only the records the round itself wrote.
  */
-function applyTiming(round: Round): void {
+export function applyTiming(round: Round): void {
   let lastInput: number | null = null
   let lastOutput: number | null = null
   for (const event of round.events) {

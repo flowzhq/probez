@@ -38,9 +38,11 @@ cd ~/any/project-you-work-in
 probez collect
 ```
 
-It reads [Claude Code](https://claude.com/claude-code) sessions from `~/.claude/projects` and writes
+It reads [Claude Code](https://claude.com/claude-code) sessions from `~/.claude/projects` and [Cursor](https://cursor.com) transcripts from `~/.cursor/projects`, then writes
 one record per LLM round under `~/.probez`. Run it again whenever you want to catch up — it reads
-only what changed. `probez collect --all` does every project on the machine at once.
+only what changed. `probez collect --all` does every project on the machine at once. A repository
+used in both agents is one project. Cursor transcripts do not include token usage, so those rounds
+have no cost.
 
 **3. Look at what came back**, in the browser or in the terminal:
 
@@ -125,8 +127,8 @@ project                a directory an agent was started in    its name, or its p
 
 Lists take `--limit` and always say how many rows they withheld. `rounds` filters by `--session`,
 `--task`, `--tool`, `--command`, `--kind`, `--category`, `--target`, `--agent` and `--errors`.
-`analyze` takes `--by`, `--split` and `--unclassified`. `--json` works everywhere.
-`probez --help` lists every flag under the command it belongs to.
+`analyze` takes `--by`, `--split` and `--unclassified`. `--source` selects Claude Code, Cursor, or
+both. `--json` works everywhere. `probez --help` lists every flag under the command it belongs to.
 
 ```console
 $ probez
