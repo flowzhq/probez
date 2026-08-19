@@ -295,6 +295,13 @@ function nameSegment(segment: string): Command | null {
   return { name, kind: kindOf(name, head, label, tokens) }
 }
 
+/** One piece of a command line, with what the shell put in front of it. */
+interface Segment {
+  text: string
+  /** Whether a single `|` preceded this piece, which makes whatever runs here read a stream. */
+  piped: boolean
+}
+
 /**
  * Cut a command line into the pieces that each begin a command.
  *
@@ -306,12 +313,23 @@ function nameSegment(segment: string): Command | null {
  * Two things are skipped whole rather than read. A command substitution runs real commands, but
  * they decorate the call rather than being it, and reading them costs more than it is worth. A
  * heredoc body is data outright, and its lines otherwise segment into convincing nonsense.
+ *
+ * Each piece carries whether a pipe preceded it, because the same program is different work on
+ * either side of one: `grep -rn flush src` searches a tree, and the `grep` in
+ * `npm test | grep "^not ok"` reads output that has already been produced. `||` is not a pipe.
  */
-function segments(source: string): string[] {
-  const out: string[] = []
+function segments(source: string): Segment[] {
+  const out: Segment[] = []
   let start = 0
   let quote: string | null = null
   let depth = 0
+  let piped = false
+
+  /** Close the piece that ends here, and say whether the delimiter opens a piped one. */
+  const cut = (end: number, next: boolean): void => {
+    out.push({ text: source.slice(start, end), piped })
+    piped = next
+  }
 
   for (let i = 0; i < source.length; i++) {
     const ch = source[i]!
@@ -338,17 +356,45 @@ function segments(source: string): string[] {
       continue
     }
     if (ch === '<' && source[i + 1] === '<') {
-      out.push(source.slice(start, i))
+      cut(i, false)
       return out
     }
     if (ch === '\n' || ch === ';' || ch === '|' || ch === '&') {
-      out.push(source.slice(start, i))
-      if (source[i + 1] === ch) i += 1
+      const doubled = source[i + 1] === ch
+      cut(i, ch === '|' && !doubled)
+      if (doubled) i += 1
       start = i + 1
     }
   }
-  out.push(source.slice(start))
+  cut(source.length, false)
   return out
+}
+
+/**
+ * A command, and where in the line it ran.
+ *
+ * `parseCommands` answers "what did this call use", which is what a tally wants and is why it
+ * deduplicates. Reading a call as a step in a search needs the other question — what ran, in order,
+ * and on which side of a pipe — so this is the primitive and `parseCommands` folds it.
+ */
+export interface Placed extends Command {
+  /** Whether this command reads a stream rather than the tree. See `segments`. */
+  piped: boolean
+  /** The piece it was read out of, so a caller can read its arguments without splitting again. */
+  text: string
+}
+
+/** Every command a Bash invocation runs, in order, undeduplicated and placed. */
+export function parsePlaced(command: unknown): Placed[] {
+  if (typeof command !== 'string' || command.trim() === '') return []
+
+  const found: Placed[] = []
+  for (const segment of segments(command)) {
+    const parsed = nameSegment(segment.text)
+    if (parsed === null) continue
+    found.push({ ...parsed, piped: segment.piped, text: segment.text })
+  }
+  return found
 }
 
 /**
@@ -359,15 +405,12 @@ function segments(source: string): string[] {
  * pick a "primary" would be a guess about which mattered.
  */
 export function parseCommands(command: unknown): Command[] {
-  if (typeof command !== 'string' || command.trim() === '') return []
-
   const found: Command[] = []
   const seen = new Set<string>()
-  for (const segment of segments(command)) {
-    const parsed = nameSegment(segment)
-    if (parsed === null || seen.has(parsed.name)) continue
-    seen.add(parsed.name)
-    found.push(parsed)
+  for (const placed of parsePlaced(command)) {
+    if (seen.has(placed.name)) continue
+    seen.add(placed.name)
+    found.push({ name: placed.name, kind: placed.kind })
   }
   return found
 }
