@@ -16,12 +16,14 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { isAgentSource, safeSessionFilename, sessionIdFromFilename } from './agents/paths.js'
+import { extractCursorSession } from './extract-cursor.js'
 import { extractSession } from './extract.js'
 import { readHeadHistory } from './git.js'
 import { CONTROL } from './import.js'
-import type { Project, Round, SessionFile } from './types.js'
+import type { AgentSource, Project, Round, SessionFile } from './types.js'
 
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 
 export interface Summary {
   project: string
@@ -85,6 +87,8 @@ export interface StoredProject {
   collected_at: string | null
   /** When this arrived as an export, or null when it was collected on this machine. */
   imported_at: string | null
+  /** Which agents contributed sessions. Absent on stores written before sources were recorded. */
+  sources: AgentSource[]
 }
 
 interface Manifest {
@@ -116,6 +120,7 @@ interface Manifest {
   out_tokens?: number
   first_ts?: string | null
   last_ts?: string | null
+  sources?: AgentSource[]
 }
 
 /** Longest name a project may be given. A label, not a description. */
@@ -171,6 +176,7 @@ function asStored(slug: string, dir: string, manifest: Manifest): StoredProject 
     last_ts: manifest.last_ts ?? null,
     collected_at: manifest.collected_at ?? null,
     imported_at: manifest.imported_at ?? null,
+    sources: (manifest.sources ?? []).filter(isAgentSource),
   }
 }
 
@@ -205,9 +211,15 @@ export async function findStored(dataDir: string, slug: string): Promise<StoredP
   return manifest === null ? null : asStored(slug, dir, manifest)
 }
 
+interface SessionState {
+  size: number
+  mtimeMs: number
+  source?: AgentSource
+}
+
 interface State {
   schema_version: number
-  sessions: Record<string, { size: number; mtimeMs: number }>
+  sessions: Record<string, SessionState>
 }
 
 export function defaultDataDir(): string {
@@ -442,17 +454,37 @@ export async function summarize(project: Project, dataDir: string): Promise<Summ
  * agent's directory alone would quietly drop every round belonging to a session that has since been
  * pruned — the store would come back smaller than it went in.
  */
-async function withArchived(live: SessionFile[], sessionsDir: string): Promise<SessionFile[]> {
+async function withArchived(
+  live: SessionFile[],
+  sessionsDir: string,
+  stored: State | null,
+): Promise<SessionFile[]> {
   const out = [...live]
   const known = new Set(live.map((session) => session.id))
+  const liveFiles = new Set(live.map((session) => safeSessionFilename(session.id)))
+  const idByFile = new Map<string, string>()
+  if (stored !== null) {
+    for (const id of Object.keys(stored.sessions)) {
+      idByFile.set(safeSessionFilename(id), id)
+    }
+  }
   for (const name of await readdir(sessionsDir).catch(() => [] as string[])) {
     if (!name.endsWith('.jsonl')) continue
-    const id = name.slice(0, -'.jsonl'.length)
+    if (liveFiles.has(name)) continue
+    const id = idByFile.get(name) ?? sessionIdFromFilename(name)
     if (known.has(id)) continue
     const file = join(sessionsDir, name)
     const info = await stat(file).catch(() => null)
     if (info === null) continue
-    out.push({ id, file, size: info.size, mtimeMs: info.mtimeMs })
+    const recorded = stored?.sessions[id]?.source
+    const source: AgentSource =
+      recorded !== undefined && isAgentSource(recorded)
+        ? recorded
+        : id.includes('/')
+          ? 'cursor'
+          : 'claude-code'
+    out.push({ id, file, size: info.size, mtimeMs: info.mtimeMs, source })
+    known.add(id)
   }
   return out
 }
@@ -486,7 +518,7 @@ export async function collectProject(
   // already in the file are the old shape, and the `session+id` filter below would drop every
   // replacement as a duplicate of the record it was meant to replace. So the file is rebuilt.
   const outdated = stored !== null && stored.schema_version !== SCHEMA_VERSION
-  const sources = outdated ? await withArchived(project.sessions, sessionsDir) : project.sessions
+  const sources = outdated ? await withArchived(project.sessions, sessionsDir, stored) : project.sessions
   // Rebuilding needs something to rebuild from. Discovery never yields a project with no sessions,
   // so this only guards a caller that built a `Project` by hand: with nothing to read, the old
   // rounds are all there is, and keeping them at the version they were written for beats replacing
@@ -524,7 +556,10 @@ export async function collectProject(
 
   let newRounds = 0
   for (const session of stale) {
-    const rounds = await extractSession(session.file, session.id, head)
+    const rounds =
+      session.source === 'cursor'
+        ? await extractCursorSession(session.file, session.id, head)
+        : await extractSession(session.file, session.id, head)
     const lines: string[] = []
     for (const round of rounds) {
       const key = `${round.session}\u0000${round.id}`
@@ -538,9 +573,13 @@ export async function collectProject(
     }
     // The raw copy is what keeps every field probez does not normalize re-derivable locally. A
     // rebuild may be reading that copy already, in which case there is nothing to copy.
-    const archived = join(sessionsDir, `${session.id}.jsonl`)
+    const archived = join(sessionsDir, safeSessionFilename(session.id))
     if (session.file !== archived) await copyFile(session.file, archived)
-    state.sessions[session.id] = { size: session.size, mtimeMs: session.mtimeMs }
+    state.sessions[session.id] = {
+      size: session.size,
+      mtimeMs: session.mtimeMs,
+      source: session.source,
+    }
   }
 
   if (rebuild) {
@@ -588,6 +627,7 @@ export async function collectProject(
         out_tokens: summary.out_tokens,
         first_ts: summary.first_ts,
         last_ts: summary.last_ts,
+        sources: project.sources ?? [...new Set(project.sessions.map((session) => session.source))],
       },
       null,
       2,
@@ -677,13 +717,13 @@ export async function importProject(
   for (const round of rounds) {
     sessions.add(round.session)
     tasks.add(`${round.session} ${round.task}`)
-    inTokens += round.in_tokens
-    uncached += round.in_uncached
-    cacheWrite += round.in_cache_write
-    write5m += round.in_cache_write_5m
-    write1h += round.in_cache_write_1h
-    cacheRead += round.in_cache_read
-    outTokens += round.out_tokens
+    inTokens += round.in_tokens || 0
+    uncached += round.in_uncached || 0
+    cacheWrite += round.in_cache_write || 0
+    write5m += round.in_cache_write_5m || 0
+    write1h += round.in_cache_write_1h || 0
+    cacheRead += round.in_cache_read || 0
+    outTokens += round.out_tokens || 0
     if (typeof round.ts === 'string') {
       if (first === null || round.ts < first) first = round.ts
       if (last === null || round.ts > last) last = round.ts

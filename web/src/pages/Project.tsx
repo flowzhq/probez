@@ -40,6 +40,14 @@ export function Project({ slug }: { slug: string }): ReactElement {
                   imported
                 </span>
               )}
+              {(data.project.sources ?? []).includes('cursor') ? (
+                <span
+                  className="mark"
+                  title="Includes Cursor sessions. Cursor transcripts do not record token usage or cost."
+                >
+                  cursor
+                </span>
+              ) : null}
               <span className="muted mono clip">{data.project.path ?? data.project.key}</span>
               <span className="spacer" style={{ flex: 1 }} />
               {/*
@@ -79,6 +87,12 @@ export function Project({ slug }: { slug: string }): ReactElement {
                 ['cost', money(data.cost), "What this cost at the rates under Settings, worked out per round from its own model's prices and summed. Rounds whose model has no rate are left out."],
               ]}
             />
+            {(data.project.sources ?? []).includes('cursor') ? (
+              <p className="note">
+                Cursor transcripts do not record token usage or model names, so those rounds have no
+                cost. Shares are of the Claude rounds that do.
+              </p>
+            ) : null}
 
             <section>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>

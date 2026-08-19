@@ -23,12 +23,14 @@ import { fileURLToPath } from 'node:url'
  * The rules these cover live in `main()`'s dispatch rather than in a pure function, so they are
  * exercised the way a user meets them: by running the command and reading what came back. Every
  * test builds its own source directory and store, so nothing depends on the machine's real
- * `~/.claude` or `~/.probez`.
+ * `~/.claude`, `~/.cursor` or `~/.probez`.
  */
 
 const here = dirname(fileURLToPath(import.meta.url))
 const CLI = join(here, '..', 'src', 'cli.js')
 const FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'session.jsonl')
+const CURSOR_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'cursor-session.jsonl')
+const CURSOR_SUB = join(here, '..', '..', 'test', 'fixtures', 'cursor-subagent.jsonl')
 
 interface Run {
   status: number
@@ -50,14 +52,21 @@ function run(args: string[]): Run {
  * A source tree of `sessions` sessions, each a copy of the fixture rewritten to a fresh id and to a
  * working directory this test owns.
  */
-function makeSource(sessions: number): { claudeDir: string; dataDir: string; project: string } {
+function makeSource(sessions: number): {
+  claudeDir: string
+  cursorDir: string
+  dataDir: string
+  project: string
+} {
   // The agent records `cwd` with symlinks already resolved, and on macOS the temp directory is one
   // (/var -> /private/var). Without this the stored path would never match the target.
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'probez-cli-test-')))
   const claudeDir = join(root, 'claude')
+  const cursorDir = join(root, 'cursor')
   const dataDir = join(root, 'data')
   const project = join(root, 'work')
   mkdirSync(project, { recursive: true })
+  mkdirSync(cursorDir, { recursive: true })
   const sourceDir = join(claudeDir, 'encoded-project-name')
   mkdirSync(sourceDir, { recursive: true })
 
@@ -66,11 +75,21 @@ function makeSource(sessions: number): { claudeDir: string; dataDir: string; pro
     const id = `${String(i).repeat(8)}-0000-0000-0000-000000000000`
     writeFileSync(join(sourceDir, `${id}.jsonl`), template.replaceAll('/tmp/demo', project))
   }
-  return { claudeDir, dataDir, project }
+  return { claudeDir, cursorDir, dataDir, project }
 }
 
 function collect(env: ReturnType<typeof makeSource>, extra: string[] = []): Run {
-  return run(['collect', env.project, '--data-dir', env.dataDir, '--claude-dir', env.claudeDir, ...extra])
+  return run([
+    'collect',
+    env.project,
+    '--data-dir',
+    env.dataDir,
+    '--claude-dir',
+    env.claudeDir,
+    '--cursor-dir',
+    env.cursorDir,
+    ...extra,
+  ])
 }
 
 /** `<command> <project> [id] [flags]`, which is the order the detail commands expect. */
@@ -84,6 +103,8 @@ function read(env: ReturnType<typeof makeSource>, args: string[]): Run {
     env.dataDir,
     '--claude-dir',
     env.claudeDir,
+    '--cursor-dir',
+    env.cursorDir,
   ])
 }
 
@@ -453,7 +474,16 @@ test('a project exported from one store imports into another and reads the same'
 
   // Read back by the name it arrived under, on a machine with no agent directory at all — which is
   // exactly the machine someone who was only ever sent a file is sitting at.
-  const after = run(['analyze', 'work', '--data-dir', theirs, '--claude-dir', join(theirs, 'none')])
+  const after = run([
+    'analyze',
+    'work',
+    '--data-dir',
+    theirs,
+    '--claude-dir',
+    join(theirs, 'none'),
+    '--cursor-dir',
+    join(theirs, 'none-cursor'),
+  ])
   assert.equal(after.status, 0, after.stderr)
   // Every figure the analysis prints, in order. The first line names the project and differs: one
   // of these has a path on this machine and the other does not.
@@ -489,3 +519,85 @@ test('a file that is not an export is refused with a reason', () => {
   assert.equal(missing.status, 2)
   assert.match(missing.stderr, /cannot read/)
 })
+
+function makeCursorSource(): ReturnType<typeof makeSource> & { sessionDir: string } {
+  const env = makeSource(0)
+  // Cursor has no cwd in the file, so discovery infers the path from the folder name. Dashes in
+  // a temp directory would decode as extra path segments, so this checkout is dash-free.
+  const project = realpathSync(mkdtempSync(join('/tmp', 'probezwork')))
+  const slug = project.replaceAll('/', '-').replace(/^-/, '')
+  const sessionId = 'aaaa1111-0000-0000-0000-000000000000'
+  const sessionDir = join(env.cursorDir, slug, 'agent-transcripts', sessionId)
+  mkdirSync(join(sessionDir, 'subagents'), { recursive: true })
+  writeFileSync(join(sessionDir, `${sessionId}.jsonl`), readFileSync(CURSOR_FIXTURE, 'utf8'))
+  writeFileSync(join(sessionDir, 'subagents', 'bbbb2222.jsonl'), readFileSync(CURSOR_SUB, 'utf8'))
+  return { ...env, project, sessionDir }
+}
+
+test('collect --source cursor reads Cursor transcripts and not Claude', () => {
+  const env = makeCursorSource()
+  const onlyCursor = collect(env, ['--source', 'cursor', '--json'])
+  assert.equal(onlyCursor.status, 0, onlyCursor.stderr)
+  const result = JSON.parse(onlyCursor.stdout) as { rounds: number; sessions: number }
+  assert.equal(result.sessions, 2)
+  assert.equal(result.rounds, 4)
+
+  const store = join(env.dataDir, 'projects', readdirSync(join(env.dataDir, 'projects'))[0]!)
+  const stored = storedRounds(store)
+  assert.ok(stored.every((round) => round.model === null && round.in_tokens === null))
+  const manifest = JSON.parse(readFileSync(join(store, 'manifest.json'), 'utf8')) as { sources: string[] }
+  assert.deepEqual(manifest.sources, ['cursor'])
+
+  const onlyClaude = collect(env, ['--source', 'claude', '--json'])
+  assert.equal(onlyClaude.status, 1)
+  assert.match(onlyClaude.stderr, /no project matched|no agent sessions/)
+})
+
+test('collect merges Claude and Cursor sessions for the same checkout', () => {
+  const env = makeCursorSource()
+  const sourceDir = join(env.claudeDir, 'encoded-project-name')
+  writeFileSync(
+    join(sourceDir, '11111111-0000-0000-0000-000000000000.jsonl'),
+    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', env.project),
+  )
+  const both = collect(env, ['--json'])
+  assert.equal(both.status, 0, both.stderr)
+  const result = JSON.parse(both.stdout) as { rounds: number; sessions: number }
+  assert.equal(result.sessions, 3)
+  assert.equal(result.rounds, 9)
+
+  const store = join(env.dataDir, 'projects', readdirSync(join(env.dataDir, 'projects'))[0]!)
+  const manifest = JSON.parse(readFileSync(join(store, 'manifest.json'), 'utf8')) as { sources: string[] }
+  assert.deepEqual(manifest.sources.slice().sort(), ['claude-code', 'cursor'])
+})
+
+test('--help names both agents', () => {
+  const help = run(['--help'])
+  assert.equal(help.status, 0, help.stderr)
+  assert.match(help.stdout, /--source claude\|cursor\|both/)
+  assert.match(help.stdout, /--cursor-dir/)
+  assert.match(help.stdout, /Cursor transcripts/)
+})
+
+test('collecting a Cursor project twice does not duplicate rounds', () => {
+  const env = makeCursorSource()
+  assert.equal(collect(env, ['--source', 'cursor']).status, 0)
+  const again = collect(env, ['--source', 'cursor', '--json'])
+  assert.equal(again.status, 0, again.stderr)
+  const result = JSON.parse(again.stdout) as { new_rounds: number; rounds: number }
+  assert.equal(result.new_rounds, 0)
+  assert.equal(result.rounds, 4)
+})
+
+test('a nested Cursor session is archived under a flat filename', () => {
+  const env = makeCursorSource()
+  assert.equal(collect(env, ['--source', 'cursor']).status, 0)
+  const store = join(env.dataDir, 'projects', readdirSync(join(env.dataDir, 'projects'))[0]!, 'sessions')
+  const names = readdirSync(store)
+  assert.ok(
+    names.includes('aaaa1111-0000-0000-0000-000000000000__aaaa1111-0000-0000-0000-000000000000.jsonl'),
+  )
+  assert.ok(names.includes('aaaa1111-0000-0000-0000-000000000000__subagents__bbbb2222.jsonl'))
+  assert.ok(names.every((name) => !name.includes('/')))
+})
+
