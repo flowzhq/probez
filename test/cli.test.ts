@@ -31,6 +31,7 @@ const CLI = join(here, '..', 'src', 'cli.js')
 const FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'session.jsonl')
 const CURSOR_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'cursor-session.jsonl')
 const CURSOR_SUB = join(here, '..', '..', 'test', 'fixtures', 'cursor-subagent.jsonl')
+const WALK_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'walk-session.jsonl')
 
 interface Run {
   status: number
@@ -601,3 +602,79 @@ test('a nested Cursor session is archived under a flat filename', () => {
   assert.ok(names.every((name) => !name.includes('/')))
 })
 
+/**
+ * A source tree holding the one session that contains a walk.
+ *
+ * Separate from `makeSource` because the shape is the point: the listing's output is the only place
+ * the paths it fed exist, so the same session answers differently with `--deep` and without it, and
+ * a test that could not tell the two apart would not be testing the flag.
+ */
+function makeWalkSource(): ReturnType<typeof makeSource> {
+  const env = makeSource(0)
+  const dir = join(env.claudeDir, 'encoded-project-name')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, 'aaaaaaaa-0000-0000-0000-00000000000a.jsonl'),
+    readFileSync(WALK_FIXTURE, 'utf8').replaceAll('/tmp/demo', env.project),
+  )
+  return env
+}
+
+test('trails finds the walk a run of calls made, and names how far it went', () => {
+  const env = makeWalkSource()
+  collect(env)
+
+  const shallow = read(env, ['trails'])
+  assert.equal(shallow.status, 0)
+  // Without the logs, the hop from the listing to the files it named is not visible, so the only
+  // walk left is the grep into the file it hit — two calls, which is not a walk at all.
+  assert.match(shallow.stdout, /no trails from inputs alone/)
+
+  const deep = read(env, ['trails', '--deep'])
+  assert.equal(deep.status, 0)
+  assert.match(deep.stdout, /listing/)
+  assert.match(deep.stdout, /edit/)
+  assert.match(deep.stdout, /1 proven from result bodies/)
+})
+
+test('trail draws the walk hop by hop, named by any round it passed through', () => {
+  const env = makeWalkSource()
+  collect(env)
+
+  const one = read(env, ['trail', '1.0', '--deep'])
+  assert.equal(one.status, 0)
+  assert.match(one.stdout, /started here/)
+  assert.match(one.stdout, /listed/)
+  // A round in the middle of the walk finds the same walk, which is the question a round listing
+  // leaves you with.
+  const middle = read(env, ['trail', '1.3', '--deep'])
+  assert.equal(middle.status, 0)
+  assert.equal(middle.stdout.trim(), one.stdout.trim())
+})
+
+test('a round outside every walk says so rather than picking a nearby one', () => {
+  const env = makeWalkSource()
+  collect(env)
+  const missed = read(env, ['trail', '1.6', '--deep'])
+  assert.equal(missed.status, 2)
+  assert.match(missed.stderr, /not part of a trail/)
+})
+
+test('trails takes only the flags it reads', () => {
+  const env = makeWalkSource()
+  collect(env)
+  assert.match(read(env, ['trails', '--outcome', 'sideways']).stderr, /--outcome takes one of/)
+  assert.match(read(env, ['tools', '--min-depth', '3']).stderr, /--min-depth does not apply/)
+  const filtered = read(env, ['trails', '--deep', '--outcome', 'abandoned'])
+  assert.equal(filtered.status, 0)
+  assert.match(filtered.stdout, /no trails matched those filters/)
+})
+
+test('analyze says how much of the finding happened inside a walk', () => {
+  const env = makeWalkSource()
+  collect(env)
+  const out = read(env, ['analyze', '--deep'])
+  assert.equal(out.status, 0)
+  assert.match(out.stdout, /of the finding was inside 1 trail/)
+  assert.match(out.stdout, /The deepest went \d+ hops from a listing/)
+})

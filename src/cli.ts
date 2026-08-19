@@ -43,6 +43,7 @@ import type {
   SessionRow,
   TaskRow,
   ToolRow,
+  TrailShare,
 } from './inspect.js'
 import { MIN_DEPTH, trailsOf } from './trail.js'
 import type { Trail } from './trail.js'
@@ -125,7 +126,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   trails: ['limit', 'session', 'task', 'deep', 'min-depth', 'outcome'],
   trail: ['session', 'deep'],
   tools: ['limit', 'kinds'],
-  analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified'],
+  analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified', 'deep'],
   view: ['port', 'no-open'],
   help: [],
 }
@@ -233,6 +234,8 @@ Analysis
   --by <level>                 One table per project (default), session or task
   --split <axis>               What the second level counts: sub (default) or target
   --unclassified               List what did not classify, most of it first
+  --deep                       Read the archived results, so the trail line counts the walks
+                               that inputs alone cannot show. See \`probez trails\`
   --session <id>               Only this session
   --task <n>                   Only this task number
   --limit <n>                  How many sub-rows to list under each category
@@ -1033,7 +1036,12 @@ export function money(value: number): string {
  * models with no rate. Printing the percentages without them would invite the reader to assume they
  * are not there.
  */
-function printAnalysis(analysis: Analysis, subLimit: number, axis: string): void {
+function printAnalysis(
+  analysis: Analysis,
+  subLimit: number,
+  axis: string,
+  walks: TrailShare | null,
+): void {
   const { coverage } = analysis
   const whole = coverage.cost
   console.log(
@@ -1080,6 +1088,21 @@ function printAnalysis(analysis: Analysis, subLimit: number, axis: string): void
   if (axis === 'sub' && analysis.unknown.length > 0) {
     const top = analysis.unknown.slice(0, 3).map((row) => row.name).join(', ')
     console.log(`  Unclassified is mostly ${top}. --unclassified lists it`)
+  }
+  // Reconstruction says how much of the work was finding things out. This says how much of that
+  // finding was *directed* — a search that led somewhere — as against calls that stand alone. A
+  // low share is not a fault; it is what an agent working in a repository it knows looks like.
+  if (walks !== null && walks.finding > 0) {
+    const deepest = walks.deepest
+    const led = walks.trails === 0 ? '' : `, ${walks.landed} of which ended in a change`
+    console.log(
+      `  ${percent(walks.steps, walks.finding)} of the finding was inside ${walks.trails} trail${walks.trails === 1 ? '' : 's'}${led}`,
+    )
+    if (deepest !== null) {
+      console.log(
+        `  The deepest went ${deepest.depth} hops from a ${deepest.root}: \`probez trail ${deepest.session.slice(0, 8)}#${deepest.ref}\``,
+      )
+    }
   }
   console.log('')
 }
@@ -1560,6 +1583,16 @@ async function main(): Promise<void> {
           analysis: categoryTally(group.rounds, pricing, axis),
         }))
 
+        // Trails are per group for the same reason the table is: a share of finding inside a
+        // session says something a share across the project averages away. The deep read is one
+        // pass over the archived sessions, done once for every group rather than per group.
+        const walkResults = values.deep
+          ? await readResults(project, dataDir, idsToRead(scope))
+          : undefined
+        const walks = new Map<string, TrailShare>(
+          groups.map((group) => [group.name, trailShare(group.rounds, { results: walkResults })]),
+        )
+
         // The cache always describes the whole project, whatever slice was asked to be printed.
         const whole = values.by === undefined && scope === rounds ? analyses[0]!.analysis : categoryTally(rounds, pricing, axis)
         await writeAnalysis(
@@ -1587,7 +1620,7 @@ async function main(): Promise<void> {
         for (const entry of analyses) {
           if (groups.length > 1) console.log(`  ${entry.name}`)
           if (values.unclassified) printUnclassified(entry.analysis, limit)
-          else printAnalysis(entry.analysis, subLimit, axis)
+          else printAnalysis(entry.analysis, subLimit, axis, walks.get(entry.name) ?? null)
         }
         continue
       }
