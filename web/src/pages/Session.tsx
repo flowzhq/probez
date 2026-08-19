@@ -68,6 +68,11 @@ export function Session({ slug, session }: { slug: string; session: string }): R
             />
 
             <section>
+              <h2>Work profile</h2>
+              <WorkBars analysis={data.analysis} />
+            </section>
+
+            <section>
               <h2>The session, round by round</h2>
               <Trace
                 trace={data.trace}
@@ -75,11 +80,6 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                 onSelect={(round) => setSelected(round.round)}
                 onOpenTask={(task) => go(href.task(slug, session, task))}
               />
-            </section>
-
-            <section>
-              <h2>Work profile</h2>
-              <WorkBars analysis={data.analysis} />
             </section>
 
             <section>
