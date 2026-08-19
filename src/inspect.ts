@@ -4,6 +4,8 @@ import { CATEGORIES, categoryInfo, classifyCall } from './classify.js'
 import type { Category, Label } from './classify.js'
 import { costOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
+import { isFinding, trailsOf } from './trail.js'
+import type { Trail, TrailOptions } from './trail.js'
 import type { Round, ToolCall } from './types.js'
 
 /**
@@ -1081,4 +1083,87 @@ export function findTask(rounds: Round[], selector: string, sessionHint?: string
     )
   }
   return found
+}
+
+// ---------------------------------------------------------------------------------------------
+// Trails
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Find the walk a selector names.
+ *
+ * A trail has no id of its own. It is named by the round it starts at, which is already a selector
+ * `probez round` takes, and asking for any round the walk passed through finds it — that is the
+ * question someone reading a round listing actually has. Inventing a fifth kind of id to sit beside
+ * session, task and round would buy nothing and would be one more thing to mistake for the others.
+ */
+export function findTrail(
+  rounds: Round[],
+  trails: Trail[],
+  selector: string,
+  sessionHint?: string,
+): Trail {
+  const round = findRound(rounds, selector, sessionHint)
+  const mine = trails.filter(
+    (trail) =>
+      trail.session === round.session && trail.steps.some((step) => step.round === round.round),
+  )
+  const starts = mine.find((trail) => trail.steps[0]?.round === round.round)
+  if (starts !== undefined) return starts
+  if (mine.length > 0) return mine[0]!
+  throw new SelectorError(
+    `round ${round.task}.${round.round} is not part of a trail. \`probez trails\` lists them`,
+  )
+}
+
+/** How much of a project's finding was done inside a walk rather than scattered. */
+export interface TrailShare {
+  trails: number
+  /** Calls that were a step of some walk. */
+  steps: number
+  /** Every call that was finding something out, walk or not. The denominator. */
+  finding: number
+  /** Walks whose edges were read out of result bodies rather than inferred from inputs. */
+  proven: number
+  /** Walks that ended in a change to somewhere they visited. */
+  landed: number
+  /** The deepest walk in the span, which is the one worth looking at first. */
+  deepest: Trail | null
+}
+
+/**
+ * What share of the finding happened inside a walk.
+ *
+ * The number this exists to make available is the one a tally of `reconstruction` cannot give: not
+ * how much time went on finding things out, but how much of that finding was *directed* — a search
+ * that led somewhere — against how much was calls that stand alone. A low share is not a fault; it
+ * is what an agent working in a repository it already knows looks like.
+ */
+export function trailShare(rounds: Round[], options: TrailOptions = {}): TrailShare {
+  const trails = trailsOf(rounds, options)
+  const inTrail = new Set<string>()
+  for (const trail of trails) {
+    for (const step of trail.steps) inTrail.add(`${step.session}\0${step.at}`)
+  }
+
+  let finding = 0
+  for (const round of rounds) {
+    for (const tool of round.tools ?? []) {
+      if (isFinding(tool)) finding += 1
+    }
+  }
+
+  let deepest: Trail | null = null
+  for (const trail of trails) {
+    if (deepest === null || trail.depth > deepest.depth) deepest = trail
+  }
+
+  return {
+    trails: trails.length,
+    steps: trails.reduce((sum, trail) => sum + trail.steps.length, 0),
+    finding,
+    proven: trails.filter((trail) => trail.confidence === 'proven').length,
+    landed: trails.filter((trail) => trail.outcome === 'edit').length,
+    deepest,
+  }
 }

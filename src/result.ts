@@ -103,6 +103,77 @@ function fold(block: Json, cap: number): ToolResultBody {
 }
 
 /**
+ * How much of each result a bulk read keeps.
+ *
+ * `readToolResult` answers a click and can afford the whole thing. A bulk read holds every result
+ * it was asked for at once, so the cap is what bounds the memory: a thousand results at the
+ * single-result cap would be two hundred megabytes. Twenty thousand characters is a listing of a
+ * few hundred paths, which is what the caller is looking through them for.
+ *
+ * The cost of the cut is real and worth naming: a `find` over a very large tree can name a file
+ * past the cap, and an edge that would have been proof is then merely not found. That fails in the
+ * safe direction — a missing edge, never an invented one.
+ */
+export const MAX_BULK_CHARS = 20_000
+
+/**
+ * Every named call's result, in one pass over an archived session file.
+ *
+ * `readToolResult` streams and stops at the first match, which is right for one call and quadratic
+ * for a thousand. This reads the file once and collects whatever it was asked for, which is what a
+ * whole-session analysis needs. Ids with no result are simply absent from the map, the same real
+ * answer `readToolResult` gives as null.
+ */
+export async function readToolResults(
+  file: string,
+  ids: ReadonlySet<string>,
+  cap = MAX_BULK_CHARS,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  if (ids.size === 0) return out
+
+  let stream
+  try {
+    stream = createReadStream(file, { encoding: 'utf8' })
+  } catch {
+    return out
+  }
+  const lines = createInterface({ input: stream, crlfDelay: Infinity })
+  try {
+    for await (const line of lines) {
+      // Every result carries the marker, so this keeps the scan to a substring search across the
+      // file and a parse of only the lines that could hold one. Matching each id separately would
+      // be a thousand substring searches per line.
+      if (!line.includes('tool_use_id')) continue
+      let record: Json
+      try {
+        record = JSON.parse(line) as Json
+      } catch {
+        continue
+      }
+      const message = record.message
+      if (message === null || typeof message !== 'object') continue
+      const content = (message as Json).content
+      if (!Array.isArray(content)) continue
+      for (const block of content) {
+        if (block === null || typeof block !== 'object') continue
+        const it = block as Json
+        if (it.type !== 'tool_result') continue
+        const id = it.tool_use_id
+        if (typeof id !== 'string' || !ids.has(id) || out.has(id)) continue
+        out.set(id, fold(it, cap).body)
+      }
+    }
+  } catch {
+    // absent, or unreadable partway through; what was collected before that still stands
+  } finally {
+    lines.close()
+    stream.destroy()
+  }
+  return out
+}
+
+/**
  * Find one call's result in an archived session file.
  *
  * Returns null when the file holds no result for that id, which is a real answer rather than a

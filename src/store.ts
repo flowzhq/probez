@@ -17,6 +17,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { isAgentSource, safeSessionFilename, sessionIdFromFilename } from './agents/paths.js'
+import { readToolResults } from './result.js'
 import { extractCursorSession } from './extract-cursor.js'
 import { extractSession } from './extract.js'
 import { readHeadHistory } from './git.js'
@@ -366,7 +367,44 @@ export async function readRounds(project: Project, dataDir: string): Promise<Rou
   return readRoundsIn(projectDir(dataDir, project))
 }
 
+/** `readResultsIn` for a project the CLI has already resolved. */
+export async function readResults(
+  project: Project,
+  dataDir: string,
+  ids: ReadonlySet<string>,
+): Promise<Map<string, string>> {
+  return readResultsIn(projectDir(dataDir, project), ids)
+}
+
 /** The same read, addressed by the store directory itself, which is all a slug resolves to. */
+/**
+ * Result bodies for a named set of calls, out of the session copies `collect` archived.
+ *
+ * `rounds.jsonl` keeps a result's size and not its text, which is what makes browsing cheap. Some
+ * questions need the text anyway — whether a path a later call opened was one an earlier call's
+ * output named is not answerable from inputs alone — so this is the way back to it, and it stays
+ * opt-in for the reason the extract dropped the bodies in the first place.
+ *
+ * Every archived session is read once, and each is asked only for the ids it happens to hold, so
+ * this costs one pass over the copies rather than one per call. A project with no `sessions/`
+ * directory returns nothing: an import carries the rounds probez normalized and not the logs
+ * behind them, which is a real answer and not a failure.
+ */
+export async function readResultsIn(
+  dir: string,
+  ids: ReadonlySet<string>,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  if (ids.size === 0) return out
+  const sessions = join(dir, 'sessions')
+  const files = await readdir(sessions).catch(() => [])
+  for (const name of files) {
+    if (!name.endsWith('.jsonl')) continue
+    for (const [id, body] of await readToolResults(join(sessions, name), ids)) out.set(id, body)
+  }
+  return out
+}
+
 export async function readRoundsIn(dir: string): Promise<Round[]> {
   const rounds: Round[] = []
   await eachRound(join(dir, 'rounds.jsonl'), (round) => {

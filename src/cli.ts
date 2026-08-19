@@ -22,6 +22,7 @@ import {
   filterRounds,
   findRound,
   findTask,
+  findTrail,
   labelRounds,
   looksLikeSelector,
   matchSession,
@@ -30,6 +31,7 @@ import {
   taskRows,
   toolSummary,
   toolTally,
+  trailShare,
   workIndex,
 } from './inspect.js'
 import type {
@@ -42,6 +44,9 @@ import type {
   TaskRow,
   ToolRow,
 } from './inspect.js'
+import { MIN_DEPTH, trailsOf } from './trail.js'
+import type { Trail } from './trail.js'
+import { idsToRead } from './trail.js'
 import { CONTROL, ImportError, parseExport } from './import.js'
 import { openInBrowser } from './open.js'
 import { readPricing } from './pricing.js'
@@ -53,6 +58,7 @@ import {
   findStored,
   importProject,
   listStored,
+  readResults,
   readRounds,
   slugFor,
   writeAnalysis,
@@ -72,6 +78,8 @@ const COMMANDS = new Set([
   'task',
   'rounds',
   'round',
+  'trails',
+  'trail',
   'tools',
   'analyze',
   'view',
@@ -114,6 +122,8 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   task: ['limit', 'session'],
   rounds: ['limit', 'session', 'task', 'tool', 'command', 'kind', 'category', 'target', 'agent', 'errors'],
   round: ['session'],
+  trails: ['limit', 'session', 'task', 'deep', 'min-depth', 'outcome'],
+  trail: ['session', 'deep'],
   tools: ['limit', 'kinds'],
   analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified'],
   view: ['port', 'no-open'],
@@ -124,6 +134,9 @@ const COMMAND_FLAGS: Record<string, string[]> = {
 function acceptedBy(flag: string): string[] {
   return Object.keys(COMMAND_FLAGS).filter((name) => COMMAND_FLAGS[name]!.includes(flag))
 }
+
+/** How a walk can end, for the flag that filters on it. Mirrors `Outcome` in `trail.ts`. */
+const OUTCOMES = ['edit', 'test', 'abandoned']
 
 /** Rounds listed before `--limit` has to withhold any. */
 const DEFAULT_LIMIT = 50
@@ -183,6 +196,31 @@ Rounds
   --limit <n>                  How many rounds to list (default ${DEFAULT_LIMIT}, 0 for all)
 
 \`--session\` also disambiguates \`probez task\` and \`probez round\` when a prefix is ambiguous.
+
+Trails
+  probez trails [project]      Runs of calls that followed one another into the repository
+  probez trail <id>            One of them, hop by hop, named by any round it passed through
+  --deep                       Read the archived session results, which is the only way to
+                               see that a call opened a path an earlier call's output named
+  --min-depth <n>              Only walks that went at least this many hops (default ${MIN_DEPTH})
+  --outcome <name>             Only walks that ended this way: ${OUTCOMES.join(' · ')}
+  --session <id>               Only this session
+  --task <n>                   Only this task number
+  --limit <n>                  How many walks to list (default ${DEFAULT_LIMIT}, 0 for all)
+
+  An agent that does not know a repository finds its way around it: it lists the tree, opens
+  what the listing named, greps for a word, reads the lines the grep hit. \`analyze\` counts all
+  of that as Reconstruction and cannot tell nine hops of one search from nine unrelated file
+  opens. A trail is that search: DEPTH is how far it went, WIDE how far it fanned from a single
+  call, ROOT what it started from and OUTCOME whether it ended in a change to somewhere it had
+  been. Every hop names its evidence, and \`probez trail <id>\` prints them.
+
+  Without \`--deep\` a hop is inferred from what the calls asked for — a search for a word, then
+  a file carrying that word; a file under a directory already reached. With it, a hop can be
+  read out of the earlier call's own output, which is the only way to see that \`find .\` is why
+  the next five files were opened. Deep never invents a hop the shallow read had; it finds ones
+  it could not. An imported project carries its rounds and not the logs behind them, so
+  \`--deep\` finds nothing there and says so.
 
 Tools
   probez tools [project]       Every tool called, and what Bash actually ran
@@ -786,6 +824,73 @@ function outcome(tool: ToolCall): string {
   return parts.length === 0 ? '' : ` · ${parts.join(' · ')}`
 }
 
+/** How a trail is named on screen, and typed back: `504799b8#1.7`, or `1.7` in a lone session. */
+function trailId(trail: Trail, showSession: boolean): string {
+  return showSession ? `${trail.session.slice(0, 8)}#${trail.ref}` : trail.ref
+}
+
+/** The walk drawn as what it is: where it started, and what each hop had to go on. */
+function printTrail(trail: Trail, width: number, showSession: boolean): void {
+  console.log('')
+  console.log(
+    `  trail ${trailId(trail, showSession)} → ${trail.last} · ${trail.steps.length} steps · ${trail.confidence}`,
+  )
+  console.log(
+    `  depth ${trail.depth} · breadth ${trail.breadth} · ${trail.paths} paths${trail.revisits > 0 ? ` · ${trail.revisits} revisited` : ''}`,
+  )
+  console.log(
+    `  from a ${trail.root} · ${trail.outcome}${trail.ended_on === '' ? '' : ` ${shorten(trail.ended_on)}`} · ${tokens(trail.in_tokens)} in · ${tokens(trail.out_tokens)} out · ${duration(trail.ms)}`,
+  )
+  console.log('')
+
+  // Where in the walk each step sits, so a fan-out reads as a fan-out rather than as a list.
+  const depths = new Map<number, number>()
+  for (const step of trail.steps) {
+    depths.set(step.at, step.source === null ? 0 : (depths.get(step.source) ?? 0) + 1)
+  }
+  // The indent sits inside the STEP column rather than widening it, or every column after it
+  // steps right with the walk and the table stops being one.
+  const STEP = 20
+  const room = Math.max(24, width - 54)
+  console.log(`  ${pad('ROUND', 8)}${pad('STEP', STEP)}${pad('REACHED', 8)}${pad('FOLLOWED', 24)}WHERE`)
+  for (const step of trail.steps) {
+    const indent = '  '.repeat(Math.min(depths.get(step.at) ?? 0, 5))
+    // `clip` trims, which is right for prose and would eat the indent that is the whole point here.
+    const label = `${indent}${step.name}`
+    const came = step.source === null ? 'started here' : `${step.edge} ${clip(shorten(step.via), 14)}`
+    console.log(
+      `  ${pad(step.ref, 8)}${pad(label.length < STEP ? label : `${label.slice(0, STEP - 2)}…`, STEP)}${pad(step.scope, 8)}${pad(came, 24)}${clip(step.sites.map(shorten).join(' ') || '—', room)}`,
+    )
+  }
+  console.log('')
+  console.log(`  \`probez round ${trail.ref}\` shows any one of these calls in full.`)
+  console.log('')
+}
+
+function printTrails(all: Trail[], limit: number, showSession: boolean, deep: boolean): void {
+  const rows = shown(all, limit)
+  console.log(
+    `  ${pad('TRAIL', showSession ? 14 : 8)}${padStart('STEPS', 6)}  ${padStart('DEPTH', 5)}  ${padStart('WIDE', 4)}  ${padStart('PATHS', 5)}  ${pad('ROOT', 9)}${pad('OUTCOME', 10)}${padStart('IN', 7)}  ${padStart('TIME', 6)}`,
+  )
+  for (const trail of rows) {
+    console.log(
+      `  ${pad(trailId(trail, showSession), showSession ? 14 : 8)}${padStart(String(trail.steps.length), 6)}  ${padStart(String(trail.depth), 5)}  ${padStart(String(trail.breadth), 4)}  ${padStart(String(trail.paths), 5)}  ${pad(trail.root, 9)}${pad(trail.outcome, 10)}${padStart(tokens(trail.in_tokens), 7)}  ${padStart(duration(trail.ms), 6)}`,
+    )
+  }
+  console.log('')
+  const proven = all.filter((trail) => trail.confidence === 'proven').length
+  console.log(
+    `  ${counted(rows.length, all.length, 'trail')}${more(rows.length, all.length)} · ${proven} proven from result bodies`,
+  )
+  if (!deep) {
+    // Worth saying every time rather than once in the help: the difference between the two answers
+    // is large, and a reader looking at the shallow one has no way to tell what it could not see.
+    console.log('  `--deep` reads the archived sessions and finds the walks inputs alone cannot show.')
+  }
+  console.log('  `probez trail <id>` draws one of them, hop by hop.')
+  console.log('')
+}
+
 function printRound(round: Round, width: number): void {
   console.log('')
   console.log(
@@ -1132,6 +1237,9 @@ async function main(): Promise<void> {
         by: { type: 'string' },
         split: { type: 'string' },
         unclassified: { type: 'boolean', default: false },
+        deep: { type: 'boolean', default: false },
+        'min-depth': { type: 'string' },
+        outcome: { type: 'string' },
         agent: { type: 'string' },
         errors: { type: 'boolean', default: false },
         limit: { type: 'string' },
@@ -1162,7 +1270,7 @@ async function main(): Promise<void> {
   // and either one may be omitted. Two positionals are `<project> <id>`; one is the id alone,
   // except for `task` and `round`, whose ids are numeric, so a positional that does not look like `7`
   // or `fe64e716#7` is a project name there.
-  if (command === 'session' || command === 'task' || command === 'round') {
+  if (command === 'session' || command === 'task' || command === 'round' || command === 'trail') {
     if (positionals[2] !== undefined) {
       selector = positionals[2]
     } else if (target !== undefined && (command === 'session' || looksLikeSelector(target))) {
@@ -1326,7 +1434,7 @@ async function main(): Promise<void> {
 
   const targeting = { all: values.all, includeTemp: values['include-temp'] }
 
-  const READ_COMMANDS = ['sessions', 'session', 'tasks', 'task', 'rounds', 'round', 'tools', 'analyze']
+  const READ_COMMANDS = ['sessions', 'session', 'tasks', 'task', 'rounds', 'round', 'trails', 'trail', 'tools', 'analyze']
   if (READ_COMMANDS.includes(command)) {
     const { projects: found } = await resolveTargets(projects, target, targeting)
     // An imported project is in the store and nowhere else: the agent never ran it here, so
@@ -1372,13 +1480,19 @@ async function main(): Promise<void> {
     if (values.split !== undefined && values.split !== 'sub' && values.split !== 'target') {
       fail(`--split takes sub or target, got "${values.split}"`)
     }
+    if (values.outcome !== undefined && !OUTCOMES.includes(values.outcome)) {
+      fail(`--outcome takes one of ${OUTCOMES.join(', ')}, got "${values.outcome}"`)
+    }
 
     // Naming one thing inside a project only means something once the project is settled.
-    const DETAIL = ['session', 'task', 'round']
+    const DETAIL = ['session', 'task', 'round', 'trail']
     if (DETAIL.includes(command) && matched.length > 1) {
       fail(
         `"${target ?? process.cwd()}" matches ${matched.length} projects. Name one to look inside it`,
       )
+    }
+    if (command === 'trail' && selector === undefined) {
+      fail('trail needs a round id from the walk, as `probez trail 1.7`. `probez trails` lists them')
     }
     if (command === 'round' && selector === undefined) {
       fail('round needs a round id, as `probez round 3.12` or `probez round fe64e716#3.12`')
@@ -1553,6 +1667,53 @@ async function main(): Promise<void> {
         ).size
         projectHeader(project)
         printTask(row, mine, total, width, detailLimit, work)
+        continue
+      }
+
+      if (command === 'trails' || command === 'trail') {
+        // Result bodies live in the archived session copies rather than in `rounds.jsonl`, so the
+        // deep read is one pass over those files and happens only when it is asked for.
+        const results = values.deep ? await readResults(project, dataDir, idsToRead(rounds)) : undefined
+        const scope = session === undefined ? rounds : rounds.filter((r) => r.session === session)
+        const withTask = taskFilter === undefined
+          ? scope
+          : scope.filter((r) => r.task === taskFilter)
+        const minDepth = asCount(values['min-depth'], 'min-depth')
+        const all = trailsOf(withTask, { results, minDepth })
+        const wanted = values.outcome === undefined
+          ? all
+          : all.filter((trail) => trail.outcome === values.outcome)
+
+        if (command === 'trail') {
+          try {
+            const found = findTrail(rounds, all, selector!, session)
+            if (values.json) output.push(found)
+            else printTrail(found, width, sessions.length > 1)
+          } catch (error) {
+            if (error instanceof SelectorError) fail(error.message)
+            throw error
+          }
+          continue
+        }
+
+        if (values.json) {
+          output.push(matched.length > 1 ? { project: projectName(project), path: project.path, trails: wanted } : wanted)
+          continue
+        }
+        projectHeader(project)
+        if (wanted.length === 0) {
+          const narrowed = values['min-depth'] !== undefined || values.outcome !== undefined
+          console.log(
+            narrowed
+              ? '  no trails matched those filters'
+              : values.deep
+                ? '  no trails here: no run of calls in this project followed one into another'
+                : '  no trails from inputs alone. Try `--deep`, which reads the archived results',
+          )
+          console.log('')
+          continue
+        }
+        printTrails(wanted, limit, sessions.length > 1, values.deep)
         continue
       }
 

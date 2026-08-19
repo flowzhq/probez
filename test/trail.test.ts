@@ -46,6 +46,8 @@ test('a probe is the word a search asked about, reduced to what could name a fil
   assert.deepEqual(probesIn(bash('rg --type ts flushStore src/')), ['flushstore'])
   assert.deepEqual(probesIn(tool('Grep', { pattern: 'writeRounds' })), ['writerounds'])
   assert.deepEqual(probesIn(bash('find . -name "*.test.ts"')), ['test'])
+  // A negated predicate names where not to look, which is not a question about the repository.
+  assert.deepEqual(probesIn(bash("find . -type f -not -path '*/node_modules/*'")), [])
   // `-e` carries the pattern, so the bare argument after it is where to look, not what for.
   assert.deepEqual(probesIn(bash('grep -e collectProject -e slugFor src')), [
     'collectproject',

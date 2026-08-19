@@ -187,6 +187,14 @@ function probesOfCommand(placed: Placed): string[] {
   if (head === 'find') {
     for (let i = 1; i < tokens.length; i += 1) {
       if (!FIND_NAME_FLAGS.has(tokens[i]!)) continue
+      // A negated predicate says where *not* to look. `find . -not -path '*/node_modules/*'` is
+      // not a search for node_modules, and reading it as one names the one directory the command
+      // went out of its way to avoid.
+      const before = tokens[i - 1]
+      if (before === '-not' || before === '!') {
+        i += 1
+        continue
+      }
       const value = tokens[i + 1]
       if (value !== undefined) out.push(...termsOf(value))
       i += 1
@@ -741,6 +749,16 @@ function costOf(rounds: Round[]): Map<string, { ms: number; in: number; out: num
 }
 
 /**
+ * Whether a call was finding something out, which is the only kind of call a walk is made of.
+ *
+ * Exported so that a share of finding done inside walks counts its numerator and its denominator by
+ * the same rule. Two rules that agree today are two rules that can stop agreeing.
+ */
+export function isFinding(tool: ToolCall): boolean {
+  return FINDING.has(verbOf(tool))
+}
+
+/**
  * Every tool call id a deep read would need, for one span of rounds.
  *
  * Kept here rather than in the caller so that what the walk needs and what gets read off disk
@@ -751,8 +769,7 @@ export function idsToRead(rounds: Round[]): Set<string> {
   const out = new Set<string>()
   for (const round of rounds) {
     for (const tool of round.tools ?? []) {
-      if (tool.id === null) continue
-      if (!FINDING.has(verbOf(tool))) continue
+      if (tool.id === null || !isFinding(tool)) continue
       out.add(tool.id)
     }
   }
