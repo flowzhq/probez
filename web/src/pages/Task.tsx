@@ -127,6 +127,11 @@ export function Task({
             />
 
             <section>
+              <h2>Where this task went</h2>
+              <WorkBars analysis={data.analysis} />
+            </section>
+
+            <section>
               <h2>Asked</h2>
               <div className="asked">
                 {data.task.asked.trim() === '' ? '(no prompt recorded)' : data.task.asked}
@@ -144,11 +149,6 @@ export function Task({
               {round === null ? null : (
                 <Inspector slug={slug} session={session} round={round} onStep={step} />
               )}
-            </section>
-
-            <section>
-              <h2>Where this task went</h2>
-              <WorkBars analysis={data.analysis} />
             </section>
           </>
         )}
