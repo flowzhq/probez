@@ -74,6 +74,12 @@ back out of the archived session — fetched when you ask for it, not when the p
   <img src="docs/view-session.png" alt="probez view: a session trace and its work profile" width="900">
 </p>
 
+A task's trace has a third row between the two, when the task made any: **walks**, drawn as brackets
+over the rounds they touched. A walk is not a stretch of rounds — it is what the evidence connects,
+so a search interrupted by an edit and resumed four rounds later is still one search, and the phase
+ribbon cannot show that. Hover one for how far it went, what it started from, and whether it ended
+in a change; click it to open the round it started at. See `probez trails` below.
+
 Three things worth knowing:
 
 - **The axis is round index, with time as a toggle.** On a time axis the slowest round dwarfs the
@@ -120,6 +126,7 @@ project                a directory an agent was started in    its name, or its p
 | `probez tasks` · `task <id>` | One row per task, or one task and every round it took |
 | `probez rounds` · `round <id>` | One row per round, or one round with every tool call |
 | `probez tools` | Every tool called, and what `Bash` actually ran |
+| `probez trails` · `trail <id>` | Runs of calls that followed one another into the repository |
 | `probez analyze` | Where the work went |
 | `probez view` | Open the profiler |
 | `probez collect` | Collect one project, or every project under a folder |
@@ -128,7 +135,8 @@ project                a directory an agent was started in    its name, or its p
 
 Lists take `--limit` and always say how many rows they withheld. `rounds` filters by `--session`,
 `--task`, `--tool`, `--command`, `--kind`, `--category`, `--target`, `--agent` and `--errors`.
-`analyze` takes `--by`, `--split` and `--unclassified`. `--source` selects Claude Code, Cursor, or
+`analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
+`--outcome`. `--source` selects Claude Code, Cursor, or
 both. `--json` works everywhere. `probez --help` lists every flag under the command it belongs to.
 
 ```console
@@ -231,12 +239,75 @@ $ probez analyze flowz-mcp
   633 rounds did something a tool can see, out of 652. Shares are of the $80.21 they cost
   19 rounds of prose only (2.9%) · 5.0% unclassified · 69.4% of work has a known target
   Unclassified is mostly codebase-memory-mcp, ToolSearch, Skill. --unclassified lists it
+  22.7% of the finding was inside 10 trails, 1 of which ended in a change
+  The deepest went 5 hops from a listing: `probez trail 069d8593#1.0`
 ```
 
 **A share is a share of money.** `ROUNDS` says how much of the work a category was; `SHARE` says how
 much of the bill. Cost is worked out per round from its own model's rates, then split across that
 round's work. The last lines are part of the answer: rounds of pure prose and tools with no entry in
 the table sit outside the shares, and are reported rather than guessed at.
+
+### Trails: how the agent found its way around
+
+An agent that does not know a repository finds its way around it. It lists the tree, opens what the
+listing named, greps for a word, reads the lines the grep hit. Every one of those calls is
+Reconstruction, and a tally of Reconstruction cannot tell five hops of one search from five unrelated
+file opens. A **trail** is that search:
+
+```console
+$ probez trails flowz-mcp --deep --limit 8
+
+  flowz-mcp  ~/Dev/workspace/flowz-mcp
+
+  TRAIL          STEPS  DEPTH  WIDE  PATHS  ROOT     OUTCOME        IN    TIME
+  069d8593#1.0       6      5     2      7  listing  abandoned  268.5K    6.0s
+  0b2cc149#1.0       5      4     2      3  listing  abandoned  188.4K    3.0s
+  51cced08#2.1       4      4     1      9  listing  test       152.8K    4.4s
+  6ffef9bc#1.0       5      4     2      9  listing  abandoned  204.2K    6.7s
+  6ffef9bc#4.16      9      4     3      9  doc      test       695.0K    4.8s
+  be254122#1.0       8      3     5     10  listing  abandoned  356.0K    8.4s
+  be254122#2.15      4      3     2      7  listing  abandoned  231.9K    2.4s
+  bfd594d9#2.3       3      2     2      3  listing  test       263.0K    3.4s
+
+  showing 8 of 10 trails, --limit 0 for all · 10 proven from result bodies
+  `probez trail <id>` draws one of them, hop by hop.
+```
+
+`DEPTH` is how far the search went and `WIDE` how far it fanned from a single call — a listing whose
+output feeds five reads is wide and shallow, a chain of follows is deep and narrow. `ROOT` is what it
+started from and `OUTCOME` whether it ended in a change to somewhere it had been. A trail is named by
+the round it starts at, and asking for any round it passed through finds it:
+
+```console
+$ probez trail flowz-mcp 069d8593#1.0 --deep
+
+  trail 069d8593#1.0 → 1.10 · 6 steps · proven
+  depth 5 · breadth 2 · 7 paths · 1 revisited
+  from a listing · abandoned · 268.5K in · 1.5K out · 6.0s
+
+  ROUND   STEP                REACHED FOLLOWED                WHERE
+  1.0     ls                  dir     started here            —
+  1.1       find              dir     listed docs             docs cmd
+  1.2         cat             dir     listed docs/tasks/RE…   docs/tasks/README.md cmd
+  1.4           cat           file    listed cmd/livemodel…   internal/graph/codebasememory/engine.…
+  1.5             which       dir     listed .flowz           .flowz
+  1.10        find            tree    listed docs/tasks/T-…   docs/tasks/T-011-codebase-memory-adap…
+
+  `probez round 1.0` shows any one of these calls in full.
+```
+
+`FOLLOWED` is the evidence for each hop, and there are three kinds. `listed` means the path was in
+the earlier call's own output, which is proof — and reading it needs the archived session, which is
+what `--deep` is for. Without the flag a hop is inferred from what the calls asked for: `probe`, a
+search for a word and then a file carrying it, and `narrow`, a file under a directory already
+reached. Each trail says which kind it had, on the `proven`/`inferred` line.
+
+The two readings are not two views of one answer. Against probez's own store the deep read finds
+about half again as many steps, and it roots a walk further back — the same search the shallow read
+names `1.5` is named `1.0` once the listing that started it becomes visible. It is not strictly a
+superset either: a better-sourced hop can regroup a walk, and a fragment left under the three-call
+floor stops being one.
 
 Any single round opens in full, down to what each tool was given:
 

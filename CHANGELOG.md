@@ -8,6 +8,63 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+### Added
+
+- **Trails: the runs of calls that followed one another into the repository.** An agent that does
+  not know a repository finds its way around it — it lists the tree, opens what the listing named,
+  greps for a word, reads the lines the grep hit. `analyze` counts all of that as Reconstruction and
+  cannot tell five hops of one search from five unrelated file opens. `probez trails` finds the
+  search, and `probez trail <id>` draws it hop by hop.
+
+  A trail is a graph over calls rather than a ninth category, and deliberately so: a category would
+  make a round's label depend on its neighbours, which is the coupling that removing `review` in
+  0.3.2 bought back. It carries DEPTH (how far the search went), WIDE (how far it fanned from a
+  single call — a listing feeding five reads is wide and shallow, a chain of follows is deep and
+  narrow), the paths it visited, how many it went back to, what it started from, and whether it
+  ended in a change to somewhere it had been.
+
+  Every hop names its evidence. `probe` is a search for a word and then a file carrying it; `narrow`
+  is a file under a directory already reached, or the same file reached less of. Both are inferred
+  from what the calls asked for, which is all `rounds.jsonl` can support. `--deep` adds the third:
+  `listed`, a path read out of an earlier call's own result body, which is the only way to see that
+  `find .` is why the next five files were opened. It reads the verbatim session copies `collect`
+  already keeps, in one pass, and every trail says which kind of evidence it had rather than
+  presenting the two as one answer. An imported project carries its rounds and not the logs behind
+  them, so `--deep` finds nothing there and says so.
+
+  A trail has no id of its own. It is named by the round it starts at, and asking for any round it
+  passed through finds it, so no fifth kind of id sits beside session, task and round to be mistaken
+  for them. `--min-depth` and `--outcome` filter the list.
+
+  Nothing here is scored. Membership is three rules — at least three calls, at least one hop, at
+  least two places — and the facts are reported beside them. The last of those rules is not
+  decoration: without it, five `Read` calls paging down one file chained into a depth-five walk that
+  visited nowhere, which was the largest false positive against a real store.
+
+- **`analyze` says how much of the finding was directed.** Reconstruction says how much of the work
+  was finding things out; the new line says how much of that finding happened inside a trail as
+  against calls that stand alone, how many of those trails ended in a change, and which was the
+  deepest — with the id to open it. `--deep` there too. A low share is not a fault: it is what an
+  agent working in a repository it already knows looks like.
+
+- **A walks lane on the task trace.** Between the phase ribbon and the round strip, when a task made
+  any: one bracket per trail, over the rounds it touched, labelled with how far it went. The ribbon
+  cannot show this — a walk is not a stretch of rounds but what the evidence connects, so a search
+  interrupted by an edit and resumed four rounds later is still one search. Overlapping walks stack
+  into rows rather than piling on one line. Hover for where it went and how it ended; click to open
+  the round it started at. The task payload reads its trails deep, since a task is one session the
+  page is already reading.
+
+### Fixed
+
+- **A command now knows which side of a pipe it ran on.** `bash.ts` cut a command line into pieces
+  and threw away what the shell put between them, so nothing downstream could tell
+  `grep -rn flush src`, which asks the repository a question, from the `grep` in
+  `npm test | grep "^not ok"`, which reads output that already exists. Trails need that difference —
+  counted as a search, the second would root a walk at every test run — so the parser keeps it.
+  Nothing about the tools table changed: it still folds repeats, and `grep a | grep b` is still one
+  use of `grep`.
+
 ## [0.3.5] - 2026-08-19
 
 A second agent, and two things the view could measure but not show. probez reads Cursor transcripts

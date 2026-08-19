@@ -228,6 +228,8 @@ table lookup on a call, which is a different kind of analysis and belongs in its
 tried to smuggle one such rule into the per-call table as Review, and 0.3.2 took it back out: that
 analysis wants its own pass, not a category propped up by task history.
 
+**Trails are that pass**, and the shape of the answer is why they are not a category. See below.
+
 Until then the categories should be read as what the agent *did*, not as what it was *achieving*.
 
 **MCP caveat.** `reconstruction/mcp` is the one sub-kind placed rather than read. The harness
@@ -238,6 +240,46 @@ usually reached to find out something the repo does not hold — and the sub-kin
 `inspect` so the share stays visible and can be moved wholesale if a store says otherwise. Before
 0.3.4 all of it was `unclassified/unknown`.
 
+### Trails: the sequence pass, and why it is not a category
+
+An agent that does not know a repository finds its way around it: it lists the tree, opens what the
+listing named, greps for a word, reads the lines the grep hit. Every one of those calls is
+`reconstruction`, which is true and is not the measurement anyone wants. What is missing is the
+shape — how far the search went, how wide it fanned, what it started from, whether it ended anywhere
+— and none of that is a property of a call.
+
+So a trail is a **graph over calls**, not a ninth row of the category table. Nodes are calls within
+one task; edges are "this call opened something that call knew about". Making it a category would
+mean a round's label depending on its neighbours, which is exactly the coupling that removing Review
+bought back, and the object is strictly more expressive: a category can only say *which* bucket,
+while a trail carries depth, breadth, root, paths, revisits and outcome.
+
+**Every edge names its evidence, and there is no unlabelled edge.** `probe` is a search for a word
+followed by a file carrying that word; `narrow` is a file under a directory already reached, or the
+same file reached less of; `listed` is a path found in an earlier call's own result body. The first
+two are inferred from the calls' inputs, which is all `rounds.jsonl` can support. The third is proof,
+and it needs the archived session — so it is opt-in on the CLI as `--deep`, and every trail reports
+which kind it had rather than presenting the two as one answer.
+
+That split is the honest version of a real limit. Against a session whose first call was `find .`,
+the shallow read finds one four-step walk and the deep read finds the eleven-step one that actually
+happened, because the tree existed only in the output. Neither answer is wrong; one of them can see
+less, and it says so.
+
+The deep read is not a strict superset of the shallow one, and the reason is worth stating rather
+than hiding: an edge attaches to the *most recent* call that explains it, so proof arriving from a
+nearer call re-parents a step, and re-parenting can split a component and leave a fragment under the
+three-call floor. Against probez's own store that is eleven steps out of two hundred and ninety-six,
+against four hundred and sixty found. The direction is overwhelmingly one way; "overwhelmingly" is
+not "always", and a document that said always would be wrong.
+
+**Nothing is scored.** Membership is three rules a reader can check — at least three calls, at least
+one hop, at least two places — and the facts sit beside it. A "looks like traversal" number would be
+a claim nobody could trace back to a rule, which is the thing the classifier's table spends its
+header arguing against. The rules earned their keep against real data: without the two-places rule,
+five `Read` calls paging down one file chained into a depth-five walk that visited nowhere, which was
+the largest false positive in a real store.
+
 **Attribution caveat.** A project is the directory the agent session was *started* in, because that
 is how the agent files its own logs. Work done in one repo from a session launched in another is
 therefore booked against the launch directory, which will skew per-project percentages for anyone
@@ -247,7 +289,9 @@ additional collection.
 
 Every sub-kind above is derived from v0.1 fields: `tools[].name` separates Write from Edit, and
 `tools[].input` carries the paths and shell commands everything else is read out of. **v0.2 required
-no additional collection**, and neither did the 0.3.2 rework.
+no additional collection**, and neither did the 0.3.2 rework, and neither did trails: the deep read
+goes to the verbatim session copies `collect` has always kept, so `rounds.jsonl` is unchanged and a
+store collected by an older probez answers the new questions without being re-collected.
 
 One assumption in that list was wrong, and the correction is worth keeping: an earlier draft claimed
 `tools[].name` also separates Grep from Read. It does not, in practice. A real store contains six

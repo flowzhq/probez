@@ -219,9 +219,11 @@ Trails
   Without \`--deep\` a hop is inferred from what the calls asked for — a search for a word, then
   a file carrying that word; a file under a directory already reached. With it, a hop can be
   read out of the earlier call's own output, which is the only way to see that \`find .\` is why
-  the next five files were opened. Deep never invents a hop the shallow read had; it finds ones
-  it could not. An imported project carries its rounds and not the logs behind them, so
-  \`--deep\` finds nothing there and says so.
+  the next five files were opened. Deep sees more and roots a walk further back, so a walk the
+  shallow read names \`1.5\` may be named \`1.0\` with the flag; it is not strictly a superset,
+  since a better-sourced hop can regroup a walk and leave a fragment under the three-call floor.
+  An imported project carries its rounds and not the logs behind them, so \`--deep\` finds
+  nothing there and says so.
 
 Tools
   probez tools [project]       Every tool called, and what Bash actually ran
