@@ -74,6 +74,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
   "in_tokens": 36028, "in_uncached": 2, "in_cache_read": 34209,
   "in_cache_write": 1817, "in_cache_write_5m": 0, "in_cache_write_1h": 1817,
   "out_tokens": 132,
+  "compaction": null,
   "mcp_server": null, "mcp_tool": null, "skill": null,
   "user_text": "why does the sync loop drop events?",
   "text": "Let me trace how EventLoop.flush calls into...",
@@ -105,6 +106,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | `in_uncached`, `in_cache_write`, `in_cache_read` | The three price differently, so the sum alone says little about cost |
 | `in_cache_write_5m`, `in_cache_write_1h` | A cache write has two prices: 1.25× input for a 5-minute entry, 2× for a 1-hour one |
 | `gen_ms`, `wait_ms`, `first_input` | Separate the model's time from the person's, which `ms` cannot |
+| `compaction` | The auto-compaction a round followed, when it followed one: a session's one discontinuity that does not announce itself by ending |
 | `events[]` | The round's moments in order, so a timing question does not need a re-collect |
 | `mcp_server`, `mcp_tool`, `skill` | Name work a built-in tool table cannot place |
 | `user_text`, `text` | Classify the round's intent |
@@ -120,6 +122,12 @@ and that differ per contract, so they live in `~/.probez/pricing.json` and are a
 Every share under "where agent work goes" is a share of cost, so a wrong rate is a wrong answer;
 the rates ship at published list prices and are editable in the view's Settings screen. A model with
 no rate is reported as outside the shares rather than counted as free.
+
+**How full the window was is derived, not stored.** `in_tokens` is already the size of the context a
+round was sent; what share of the window that is depends on the model, and a window is a published
+fact that changes with the model list rather than a measurement of the round. So it is applied at
+read time from a table keyed by model id, the same way rates are, and a model with no published
+window is reported without a share rather than with a guessed one.
 
 **Not recorded:** reasoning text and tool result bodies, which become character counts only. Both
 are large and add little next to `text` and tool inputs. In `tools[].input`, strings over 2000

@@ -6,9 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
-## [Unreleased]
+## [0.3.6] - 2026-08-20
 
 ### Added
+
+- **Compactions are recorded, and every round says how full the window was.** A session has two
+  kinds of discontinuity and only one of them announces itself. `/clear` ends the session file and
+  opens a new one under a new id, so nothing is needed to see it. An auto-compaction keeps the same
+  id and the same file, drops most of the context, and carries on — and the round after it read a
+  conversation the round before it never saw.
+
+  The extractor now reads the `compact_boundary` record the harness writes, which arrives carrying
+  no message at all and was being dropped unparsed by the guard that skips such records. It lands on
+  the round that followed it, as `compaction`: the trigger, the size before and after, the running
+  total dropped, and how long the person waited for it. A subagent answering next does not take it,
+  because a subagent was never part of the context that was compacted.
+
+  Rounds also report the share of the model's context window they used, from `in_tokens` over a
+  window table keyed by model id the way rates are. A model with no published window has no share
+  rather than a guessed one. Read together the pair is the whole story in two lines: `100% of
+  context`, then `compacted (auto) · 1.0M → 21.0K · took 2.6m`, then `7% of context`.
+
+  Both are in `probez view` as well as the CLI. The round inspector draws the compaction as a rule
+  across the top of the round that followed it, and marks the window share beside the token figures
+  in three bands: green to 20%, amber to 80%, red above it. The bands are decided on the figure as
+  shown rather than the raw share, so a round printing `20%` is never the amber one. The share is
+  computed on the server and sent
+  with the payload rather than worked out in the browser: the view mirrors the stored schema by
+  hand, and a second copy of the model table is a second thing to keep current.
+
+  The store schema is at 6, so the first run against an existing store rebuilds it — compactions
+  cannot be backfilled by appending, since the rounds already written are the old shape.
 
 - **Trails: the runs of calls that followed one another into the repository.** An agent that does
   not know a repository finds its way around it — it lists the tree, opens what the listing named,
@@ -669,7 +697,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/flowzhq/probez/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/flowzhq/probez/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/flowzhq/probez/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/flowzhq/probez/compare/v0.3.2...v0.3.3

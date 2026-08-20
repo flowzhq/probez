@@ -25,6 +25,13 @@ import type { ReactElement } from 'react'
  * panel opens. `rounds.jsonl` keeps its size and not its text; the text is in the session's
  * archived copy, and `Result` below reads it from there per call, when asked.
  */
+/** Which band a context share falls in, decided on the rounded percent the reader actually sees. */
+function contextBand(share: number): string {
+  const shown = Number(percent(share, 0).replace('%', ''))
+  if (shown <= 20) return 'context-low'
+  return shown <= 80 ? 'context-mid' : 'context-high'
+}
+
 export function Inspector({
   slug,
   session,
@@ -84,11 +91,29 @@ export function Inspector({
     )
   }
 
-  const { round: it, labels } = payload
+  const { round: it, labels, context_share: fill } = payload
   const errors = it.tools.filter((tool) => tool.is_error === true).length
+
+  const compaction = it.compaction
 
   return (
     <div className="inspector">
+      {compaction === null || compaction === undefined ? null : (
+        <div
+          className="compaction"
+          title="The harness dropped most of the context here. Every figure below is measured against a conversation the round before this one never saw."
+        >
+          <span className="rule" />
+          <span className="mono">
+            compacted{compaction.trigger === null ? '' : ` (${compaction.trigger})`}
+            {compaction.pre_tokens === null || compaction.post_tokens === null
+              ? ''
+              : ` · ${tokens(compaction.pre_tokens)} → ${tokens(compaction.post_tokens)}`}
+            {compaction.ms === null ? '' : ` · took ${duration(compaction.ms)}`}
+          </span>
+          <span className="rule" />
+        </div>
+      )}
       <div className="inspector-head">
         <strong className="mono">
           {it.task}.{it.round}
@@ -98,6 +123,16 @@ export function Inspector({
         <span className="muted num">
           {tokens(it.in_tokens)} in · {tokens(it.out_tokens)} out · {duration(it.gen_ms ?? it.ms)}
         </span>
+        {fill === null ? null : (
+          <span
+            // Banded on the figure as shown, not on the raw share: 20.4% prints as `20%`, and a
+            // reader told that green means 20% or under should not be looking at an amber `20%`.
+            className={`num ${contextBand(fill)}`}
+            title="How full this model's context window the round's input was. Green under 20%, amber to 80%, red above it — a session near the ceiling is about to be compacted."
+          >
+            {percent(fill, 0)} of context
+          </span>
+        )}
         <span
           className="muted num"
           title="Input the model had not seen before, written to cache, and served from cache. The three are priced differently."

@@ -44,6 +44,7 @@ import {
   writePricing,
 } from './pricing.js'
 import type { Pricing, Rates } from './pricing.js'
+import { contextShare } from './models.js'
 import type { Round, ToolCall } from './types.js'
 
 /**
@@ -161,6 +162,13 @@ export interface RoundPayload {
   project: StoredProject
   round: Round
   labels: RoundLabel[]
+  /**
+   * How full the model's context window this round's input was, from 0 to 1.
+   *
+   * Computed here rather than in the browser so the window table has one home. The view mirrors the
+   * stored schema by hand, and a second copy of the model list is a second thing to keep current.
+   */
+  context_share: number | null
 }
 
 export interface ToolsPayload {
@@ -475,7 +483,12 @@ export async function roundPayload(
     (candidate) => candidate.session.startsWith(session) && candidate.round === round,
   )
   if (found === undefined) throw new NotFound(`no round ${round} in session ${session}`)
-  return { project: shown(stored), round: found, labels: labelled.get(found) ?? [] }
+  return {
+    project: shown(stored),
+    round: found,
+    labels: labelled.get(found) ?? [],
+    context_share: contextShare(found),
+  }
 }
 
 /**

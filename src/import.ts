@@ -1,4 +1,4 @@
-import type { Patch, Round, RoundEvent, ToolCall } from './types.js'
+import type { Compaction, Patch, Round, RoundEvent, ToolCall } from './types.js'
 
 /**
  * Reading a project someone else exported.
@@ -70,6 +70,20 @@ function list(value: unknown): unknown[] {
  * one field is printed in a fixed-width column and read as an identifier: a hash is hex and either
  * 40 or 64 characters, and anything else in that slot is a sender writing prose into a table.
  */
+/** A compaction as it survives an export, or null when the round did not follow one. */
+function compactionOf(value: unknown): Compaction | null {
+  if (!value || typeof value !== 'object') return null
+  const c = value as Record<string, unknown>
+  return {
+    trigger: strOrNull(c.trigger),
+    pre_tokens: numOrNull(c.pre_tokens),
+    post_tokens: numOrNull(c.post_tokens),
+    dropped_tokens: numOrNull(c.dropped_tokens),
+    ms: numOrNull(c.ms),
+    ts: strOrNull(c.ts),
+  }
+}
+
 function commitOf(value: unknown): string | null {
   return typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value) ? value : null
 }
@@ -181,6 +195,7 @@ export function normalizeRound(value: unknown): Round | null {
     in_cache_write_1h: known ? (write1h ?? 0) : null,
     in_cache_read: known ? (cacheRead ?? 0) : null,
     out_tokens: known ? (outTokens ?? 0) : null,
+    compaction: compactionOf(r.compaction),
     mcp_server: strOrNull(r.mcp_server),
     mcp_tool: strOrNull(r.mcp_tool),
     skill: strOrNull(r.skill),

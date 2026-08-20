@@ -15,6 +15,7 @@ import {
   projectName,
 } from './discover.js'
 import { ago, clip, duration, pad, padStart, shortCommit, shorten, span, tokens, wrap } from './format.js'
+import { contextShare } from './models.js'
 import {
   analysisRecords,
   categoryTally,
@@ -320,6 +321,19 @@ Naming a session, a task or a round
 `
 
 /** How much of the input was served from cache, which is the part billed at a fraction of the rate. */
+/**
+ * How full the model's context window was for this round, as a percent.
+ *
+ * Empty when the model's window is unknown, rather than guessed: the point of the figure is to say
+ * how close a session is to being compacted, and a made-up denominator answers the wrong question.
+ */
+function contextFill(round: Round): string {
+  const share = contextShare(round)
+  if (share === null) return ''
+  // Under a tenth of a percent still reads as `0%`, which is the honest answer at this precision.
+  return `  (${Math.round(share * 100)}% of context)`
+}
+
 function cacheShare(summary: { in_tokens: number; in_cache_read: number }): string {
   if (summary.in_tokens <= 0) return ''
   return `  (${Math.round((summary.in_cache_read / summary.in_tokens) * 100)}% reused)`
@@ -896,13 +910,34 @@ function printTrails(all: Trail[], limit: number, showSession: boolean, deep: bo
   console.log('')
 }
 
+/**
+ * The compaction this round followed, when it followed one.
+ *
+ * Printed above the round rather than as a field on it, because that is where it happened: every
+ * number below this line is measured against a context the one before it never saw.
+ */
+function printCompaction(round: Round): void {
+  // Not `=== null`: the store is read back as a raw cast, so a round written by an earlier probez
+  // has no such field at all. A schema addition must not make an existing store unreadable.
+  const c = round.compaction
+  if (c === null || c === undefined) return
+  const sizes =
+    c.pre_tokens === null || c.post_tokens === null
+      ? ''
+      : ` · ${tokens(c.pre_tokens)} → ${tokens(c.post_tokens)}`
+  const took = c.ms === null ? '' : ` · took ${duration(c.ms)}`
+  console.log(`  ── compacted${c.trigger === null ? '' : ` (${c.trigger})`}${sizes}${took} ──`)
+  console.log('')
+}
+
 function printRound(round: Round, width: number): void {
   console.log('')
+  printCompaction(round)
   console.log(
     `  round ${roundId(round, true)} · ${round.agent} · ${shortModel(round.model)}`,
   )
   console.log(
-    `  ${tokens(round.in_tokens)} in · ${tokens(round.out_tokens)} out · ${duration(round.ms)} · ${round.thinking_chars} thinking chars`,
+    `  ${tokens(round.in_tokens)} in · ${tokens(round.out_tokens)} out · ${duration(round.ms)} · ${round.thinking_chars} thinking chars${contextFill(round)}`,
   )
   console.log(
     `  ${tokens(round.in_uncached)} new · ${tokens(round.in_cache_write)} cached · ${tokens(round.in_cache_read)} reused`,

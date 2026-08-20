@@ -54,6 +54,28 @@ export interface RoundEvent {
 /** Which coding agent produced a session. */
 export type AgentSource = 'claude-code' | 'cursor'
 
+/**
+ * A compaction the harness ran, recorded on the round that came after it.
+ *
+ * Compaction is the one discontinuity a session file does not announce by ending. `/clear` starts a
+ * new file and so needs no marking; an auto-compaction keeps the same session id and the same file,
+ * drops most of the context, and carries on. Without this the round after a compaction reads as the
+ * natural successor of the round before it, and the input tokens falling off a cliff between them
+ * reads as a measurement error rather than as the harness doing its job.
+ */
+export interface Compaction {
+  /** `auto` when the harness compacted on its own; `manual` when the person asked for it. */
+  trigger: string | null
+  /** Context size at the moment of compaction, and what it was replaced with. */
+  pre_tokens: number | null
+  post_tokens: number | null
+  /** Everything dropped by every compaction so far in this session, not just this one. */
+  dropped_tokens: number | null
+  /** How long the compaction itself took, which is time the person spent waiting. */
+  ms: number | null
+  ts: string | null
+}
+
 /** One LLM round: a single assistant message and the input that prompted it. */
 export interface Round {
   /** Session id, i.e. the source session file's name. */
@@ -105,6 +127,12 @@ export interface Round {
   /** Input served from the prompt cache, charged at a fraction of the rate. */
   in_cache_read: number | null
   out_tokens: number | null
+  /**
+   * The compaction that ran immediately before this round, when one did.
+   *
+   * Null on every round that simply followed the one before it, which is nearly all of them.
+   */
+  compaction: Compaction | null
   /** The MCP server this round's work was attributed to, when the harness named one. */
   mcp_server: string | null
   mcp_tool: string | null

@@ -158,6 +158,10 @@ test('every level answers, and its numbers are the ones the store holds', async 
     assert.equal(round.round.round, 0)
     // The full record, not a summary of it: the inspector shows what each tool was given.
     assert.ok(Array.isArray(round.round.tools))
+    // The compaction a round followed travels with it, and the share of the window it filled is
+    // computed here rather than in the browser, so the model table has one home.
+    assert.ok('compaction' in round.round, 'the payload drops the compaction field')
+    assert.ok('context_share' in round, 'the payload does not say how full the window was')
     // And every label names the call that produced it, which is what lets the inspector mark the
     // calls themselves rather than only the round they add up to.
     assert.ok(round.labels.length > 0)

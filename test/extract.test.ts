@@ -10,6 +10,7 @@ import type { Round } from '../src/types.js'
 // Compiled output lives at dist/test/, so the fixture is two levels up from here.
 const here = dirname(fileURLToPath(import.meta.url))
 const FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'session.jsonl')
+const COMPACTED = join(here, '..', '..', 'test', 'fixtures', 'compaction-session.jsonl')
 
 const rounds = await extractSession(FIXTURE, 'demo')
 const byId = new Map(rounds.map((r) => [r.id, r]))
@@ -248,4 +249,50 @@ test('a subagent carries the commit of the task it was delegated by', () => {
 
 test('with no history to read, every round records no commit rather than a guess', () => {
   assert.ok(rounds.every((r) => r.commit === null))
+})
+
+// --- compaction ---------------------------------------------------------------------------------
+
+const compacted = await extractSession(COMPACTED, 'compacted')
+const byCompactedId = new Map(compacted.map((r) => [r.id, r]))
+const compactedRound = (id: string): Round => {
+  const found = byCompactedId.get(id)
+  assert.ok(found, `no round ${id}`)
+  return found
+}
+
+test('a compact boundary lands on the round that followed it', () => {
+  assert.deepEqual(compactedRound('msg_post').compaction, {
+    trigger: 'auto',
+    pre_tokens: 999038,
+    post_tokens: 23977,
+    dropped_tokens: 975061,
+    ms: 125645,
+    ts: '2026-01-01T00:02:10.000Z',
+  })
+})
+
+test('a compact boundary is not read as a round of its own', () => {
+  assert.deepEqual(
+    compacted.map((r) => r.id),
+    ['msg_pre', 'msg_sub', 'msg_post', 'msg_after'],
+  )
+})
+
+test('the round before a compaction, and every later one, carries none', () => {
+  assert.equal(compactedRound('msg_pre').compaction, null)
+  assert.equal(compactedRound('msg_after').compaction, null)
+})
+
+test('a subagent answering after a compaction does not take it', () => {
+  // The subagent was never part of the context that was compacted, so the boundary belongs to the
+  // next main-thread round rather than to whichever round simply came next in the file.
+  assert.equal(compactedRound('msg_sub').compaction, null)
+  assert.equal(compactedRound('msg_sub').agent, 'sub')
+  assert.ok(compactedRound('msg_post').compaction !== null)
+})
+
+test('a compaction shows up as input tokens collapsing between rounds', () => {
+  assert.equal(compactedRound('msg_pre').in_tokens, 999038)
+  assert.equal(compactedRound('msg_post').in_tokens, 23977)
 })

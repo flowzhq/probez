@@ -36,6 +36,8 @@
   --hatch-ink: #898781;
 
   --bad: #d03b3b;
+  --warn: #8f6400;
+  --good: #0f7a54;
   --accent: #2a78d6;
 
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -71,6 +73,8 @@
     --hatch-ink: #898781;
 
     --bad: #e66767;
+    --warn: #e0a53c;
+    --good: #4cc38a;
     --accent: #3987e5;
   }
 }
@@ -103,6 +107,8 @@
   --hatch-ink: #898781;
 
   --bad: #e66767;
+  --warn: #e0a53c;
+  --good: #4cc38a;
   --accent: #3987e5;
 }
 
@@ -281,6 +287,25 @@ section {
 }
 
 .bad {
+  color: var(--bad);
+}
+
+/*
+ * How full the context window a round's input was, in three bands.
+ *
+ * The colour is the reading, not decoration: under a fifth is room to work, over four fifths is a
+ * session close enough to the ceiling that the next long tool result may be what compacts it. The
+ * middle band is amber rather than unstyled so that "no colour" keeps meaning "no window known".
+ */
+.context-low {
+  color: var(--good);
+}
+
+.context-mid {
+  color: var(--warn);
+}
+
+.context-high {
   color: var(--bad);
 }
 
@@ -782,6 +807,29 @@ button.save.grave:hover {
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: 4px;
+}
+
+/*
+ * A compaction, drawn across the top of the round that followed it.
+ *
+ * A rule rather than a tag because it is not a property of the round: it is the moment the context
+ * behind the round was thrown away, and the figures on either side of it are not comparable.
+ */
+.compaction {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  font-size: 12px;
+  color: var(--ink-3);
+  background: var(--wash);
+  border-bottom: 1px solid var(--rule);
+}
+
+.compaction .rule {
+  flex: 1;
+  height: 1px;
+  background: var(--axis);
 }
 
 .inspector-head {

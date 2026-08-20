@@ -57,6 +57,7 @@ export const ROUND_DEFAULTS: Round = {
   in_cache_write_1h: 0,
   in_cache_read: 0,
   out_tokens: 0,
+  compaction: null,
   mcp_server: null,
   mcp_tool: null,
   skill: null,

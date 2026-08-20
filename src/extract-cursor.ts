@@ -116,6 +116,7 @@ export async function extractCursorSession(
       in_cache_write_1h: null,
       in_cache_read: null,
       out_tokens: null,
+      compaction: null,
       mcp_server: null,
       mcp_tool: null,
       skill: null,

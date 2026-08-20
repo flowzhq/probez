@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
 import type { HeadHistory } from './git.js'
-import type { Patch, Round, RoundEvent, ToolCall } from './types.js'
+import type { Compaction, Patch, Round, RoundEvent, ToolCall } from './types.js'
 
 /** Strings longer than this in a tool's input are truncated. */
 const MAX_INPUT_STRING = 2000
@@ -70,6 +70,11 @@ function parseTs(value: unknown): number | null {
 
 function asInt(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+/** Like `asInt`, but an absent field stays absent rather than becoming a measured zero. */
+function asIntOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 function asText(value: unknown): string | null {
@@ -195,6 +200,25 @@ interface Pending {
  *   them to the round they prompted is what lets `gen_ms` span the wait before the model spoke,
  *   which `ms` — the span of the round's own records — cannot see.
  */
+/**
+ * What the harness recorded about a compaction, as far as the fields are there to read.
+ *
+ * Every number is optional: the shape has grown over releases, and a boundary with no metadata is
+ * still worth recording, because the discontinuity is the point and the sizes are the detail.
+ */
+function readCompaction(record: Json, timestamp: string | null): Compaction {
+  const raw = record.compactMetadata
+  const meta = raw && typeof raw === 'object' ? (raw as Json) : {}
+  return {
+    trigger: asText(meta.trigger),
+    pre_tokens: asIntOrNull(meta.preTokens),
+    post_tokens: asIntOrNull(meta.postTokens),
+    dropped_tokens: asIntOrNull(meta.cumulativeDroppedTokens),
+    ms: asIntOrNull(meta.durationMs),
+    ts: timestamp,
+  }
+}
+
 export async function extractSession(
   file: string,
   sessionId: string,
@@ -212,6 +236,8 @@ export async function extractSession(
   let taskUsed = false
   /** When the user turn that opened the current task arrived, which is what dates its commit. */
   let taskStart: number | null = null
+  /** A compaction that has been read but not yet handed to a round, since it belongs to the next. */
+  let pendingCompaction: Compaction | null = null
 
   const stream = createReadStream(file, { encoding: 'utf8' })
   const lines = createInterface({ input: stream, crlfDelay: Infinity })
@@ -228,10 +254,19 @@ export async function extractSession(
       continue
     }
 
+    const timestamp = typeof record.timestamp === 'string' ? record.timestamp : null
+
+    // A compaction keeps the session id and the file it happened in, so it arrives as an ordinary
+    // record carrying no message at all. Read it above the guard that drops those, or the only
+    // announcement a session makes of its own discontinuity is thrown away unparsed.
+    if (record.type === 'system' && record.subtype === 'compact_boundary') {
+      pendingCompaction = readCompaction(record, timestamp)
+      continue
+    }
+
     const message = record.message
     if (!message || typeof message !== 'object') continue
     const msg = message as Json
-    const timestamp = typeof record.timestamp === 'string' ? record.timestamp : null
     const ts = parseTs(timestamp)
     const sidechain = record.isSidechain === true
 
@@ -267,6 +302,9 @@ export async function extractSession(
             in_cache_write_1h: 0,
             in_cache_read: 0,
             out_tokens: 0,
+            // A compaction belongs to the round that followed it, and to the thread that was
+            // actually compacted: a subagent answering next was never part of that context.
+            compaction: sidechain ? null : pendingCompaction,
             mcp_server: null,
             mcp_tool: null,
             skill: null,
@@ -282,6 +320,7 @@ export async function extractSession(
           textParts: [],
         }
         pending = { events: [], text: [], wait: null }
+        if (!sidechain) pendingCompaction = null
         taskUsed = true
         byMsgId.set(id, builder)
         builders.push(builder)

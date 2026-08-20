@@ -108,6 +108,8 @@ output in `dist/test/`, which is why `npm test` builds first.
   sub-kind the classifier emits is declared and every declared one is reachable, that the view's copy
   of the taxonomy matches this one, and that a round's labels always account for exactly one round.
 - `test/bash.test.ts` covers reading a shell command into the commands it ran.
+- `test/models.test.ts` covers the context-window table and the share derived from it, including
+  that a model with no published window reports no share rather than a full one.
 - `test/cli.test.ts` runs the built CLI end to end in a temporary store, so it touches neither
   `~/.claude`, `~/.cursor` nor `~/.probez`.
 - `test/view.test.ts` runs the local server in-process against a temporary store. The refusals are

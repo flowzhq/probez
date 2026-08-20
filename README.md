@@ -71,7 +71,10 @@ A trail row opens the task it happened in, on the round it started at.
 rounds themselves, each stacked by the work it did. Click a round to open it in full — what it was
 asked, what it said, and every tool call marked with the work it was counted as; the arrow keys walk
 to the next. Opening a call shows the arguments it was given, and **Show result** reads what came
-back out of the archived session — fetched when you ask for it, not when the page loads.
+back out of the archived session — fetched when you ask for it, not when the page loads. A round
+also says how full the model's context window its input was — green to 20%, amber to 80%, red above
+it — and a round that followed an auto-compaction is drawn under a rule saying what was dropped and
+how long it took.
 
 <p align="center">
   <img src="docs/view-session.png" alt="probez view: a session trace and its work profile" width="900">
@@ -165,14 +168,14 @@ $ probez sessions flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   SESSION    ROUNDS  TASKS  TOOLS           IN      OUT  WORK       LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 37%   8 days ago
-  0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   8 days ago
-  51cced08      134      4  131          24.3M   138.1K  Impl 39%   7 days ago
-  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 55%  7 days ago
-  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 34%  7 days ago
-  6ffef9bc       33      4  30            2.2M    17.5K  Recon 52%  3 days ago
-  c21c7448      146      2  145 ✗5       22.8M   112.6K  Recon 43%  3 days ago
-  069d8593       31      1  30 ✗3         1.9M    11.3K  Recon 72%  1 day ago
+  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 37%   9 days ago
+  0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   9 days ago
+  51cced08      134      4  131          24.3M   138.1K  Impl 39%   9 days ago
+  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 55%  9 days ago
+  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 34%  9 days ago
+  6ffef9bc       33      4  30            2.2M    17.5K  Recon 52%  4 days ago
+  c21c7448      146      2  145 ✗5       22.8M   112.6K  Recon 43%  4 days ago
+  069d8593       31      1  30 ✗3         1.9M    11.3K  Recon 72%  3 days ago
 
   8 sessions · 652 rounds
   `probez session <id>` shows one of them, task by task.
@@ -242,8 +245,8 @@ $ probez analyze flowz-mcp
   633 rounds did something a tool can see, out of 652. Shares are of the $80.21 they cost
   19 rounds of prose only (2.9%) · 5.0% unclassified · 69.4% of work has a known target
   Unclassified is mostly codebase-memory-mcp, ToolSearch, Skill. --unclassified lists it
-  22.7% of the finding was inside 10 trails, 1 of which ended in a change
-  The deepest went 5 hops from a listing: `probez trail 069d8593#1.0`
+  9.1% of the finding was inside 4 trails, 0 of which ended in a change
+  The deepest went 3 hops from a listing: `probez trail 069d8593#1.1`
 ```
 
 **A share is a share of money.** `ROUNDS` says how much of the work a category was; `SHARE` says how
@@ -318,7 +321,7 @@ Any single round opens in full, down to what each tool was given:
 $ probez round flowz-mcp 0bfa7fe3#1.36
 
   round 0bfa7fe3#1.36 · main · opus-5
-  124.0K in · 121 out · 825ms · 0 thinking chars
+  124.0K in · 121 out · 825ms · 0 thinking chars  (12% of context)
   2 new · 10.3K cached · 113.8K reused
   generated in 3.4s
   session 0bfa7fe3-f9c1-448f-bbac-a4c58b85e5bf · 2026-08-11T18:08:24.141Z
@@ -332,6 +335,15 @@ $ probez round flowz-mcp 0bfa7fe3#1.36
        command: go test ./... 2>&1 | tail -40
        description: Run the full test suite
 ```
+
+A session that filled its window carries the one discontinuity a session file does not announce by
+ending. `/clear` starts a new session, so it needs no marking; an auto-compaction keeps the same id
+and the same file, drops most of the context, and carries on. Every round says what share of its
+model's window its input filled — `995.2K in · 4.6K out · 1.2m  (100% of context)` on the last round
+before one — and the round after it opens on a rule naming what was dropped:
+`── compacted (auto) · 1.0M → 21.0K · took 2.6m ──`. No block is pasted for it here because the
+round after a compaction carries the whole continuation summary as its prompt, and printing one runs
+to several hundred lines.
 
 ## Sharing a project
 

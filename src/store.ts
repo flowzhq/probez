@@ -24,7 +24,7 @@ import { readHeadHistory } from './git.js'
 import { CONTROL } from './import.js'
 import type { AgentSource, Project, Round, SessionFile } from './types.js'
 
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 
 export interface Summary {
   project: string

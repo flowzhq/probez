@@ -315,6 +315,16 @@ export interface PricingPayload {
   defaults: Record<string, Rates>
 }
 
+/** A compaction the harness ran, carried by the round that came after it. */
+export interface Compaction {
+  trigger: string | null
+  pre_tokens: number | null
+  post_tokens: number | null
+  dropped_tokens: number | null
+  ms: number | null
+  ts: string | null
+}
+
 export interface Round {
   session: string
   round: number
@@ -334,6 +344,7 @@ export interface Round {
   in_cache_write_1h: number | null
   in_cache_read: number | null
   out_tokens: number | null
+  compaction: Compaction | null
   mcp_server: string | null
   mcp_tool: string | null
   skill: string | null
@@ -396,6 +407,8 @@ export interface RoundPayload {
   project: StoredProject
   round: Round
   labels: Label[]
+  /** How full the model's window this round's input was, 0 to 1. Null when the window is unknown. */
+  context_share: number | null
 }
 
 export interface ToolsPayload {
