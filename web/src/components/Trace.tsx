@@ -58,14 +58,19 @@ export function Trace({
   trace,
   trails,
   selected,
+  selectedTrail,
   onSelect,
+  onSelectTrail,
   onOpenTask,
 }: {
   trace: TraceData
   /** The walks over these rounds, when the payload carries any. */
   trails?: Trail[]
   selected: number | null
+  /** The `ref` of the walk being looked at, which lifts its rounds out of the strip. */
+  selectedTrail?: string | null
   onSelect: (round: TraceRound) => void
+  onSelectTrail?: (trail: Trail | null) => void
   /** Set on a session trace, where a round names a task you can open. */
   onOpenTask?: (task: number) => void
 }): ReactElement {
@@ -102,6 +107,12 @@ export function Trace({
     [visible, axis, inner],
   )
   const walks = useMemo(() => packed(trails ?? [], all), [trails, all])
+  // Which rounds the chosen walk touched. A walk is not a stretch of rounds, so this cannot be a
+  // range: it is the set of calls the evidence connected, and the ones in between are not in it.
+  const inTrail = useMemo(() => {
+    const chosen = (trails ?? []).find((trail) => trail.ref === selectedTrail)
+    return chosen === undefined ? null : new Set(chosen.steps.map((step) => step.round))
+  }, [trails, selectedTrail])
 
   if (all.length === 0) {
     return <p className="note">Nothing to trace: this span has no rounds.</p>
@@ -199,6 +210,11 @@ export function Trace({
                     key={`${trail.session}-${trail.ref}`}
                     style={{ cursor: 'pointer' }}
                     onClick={() => {
+                      // Clicking the chosen walk again puts the strip back, so the lane is a
+                      // filter you can turn off where you turned it on.
+                      const same = trail.ref === selectedTrail
+                      onSelectTrail?.(same ? null : trail)
+                      if (same) return
                       const first = all.find((round) => round.round === trail.steps[0]!.round)
                       if (first !== undefined) onSelect(first)
                     }}
@@ -238,7 +254,17 @@ export function Trace({
                       height={WALK_H - 4}
                       rx={2}
                       fill={trail.outcome === 'abandoned' ? 'url(#probez-hatch)' : 'var(--ink-3)'}
-                      opacity={trail.outcome === 'edit' ? 0.85 : 0.5}
+                      opacity={
+                        selectedTrail === null || selectedTrail === undefined
+                          ? trail.outcome === 'edit'
+                            ? 0.85
+                            : 0.5
+                          : trail.ref === selectedTrail
+                            ? 1
+                            : 0.18
+                      }
+                      stroke={trail.ref === selectedTrail ? 'var(--ink)' : undefined}
+                      strokeWidth={trail.ref === selectedTrail ? 1 : undefined}
                     />
                     {w > 58 ? (
                       <text
@@ -268,6 +294,7 @@ export function Trace({
                   width={place.w(at)}
                   height={STRIP_H}
                   selected={selected === round.round}
+                  faded={inTrail !== null && !inTrail.has(round.round)}
                   onSelect={onSelect}
                   onOpenTask={onOpenTask}
                   show={show}
@@ -319,7 +346,7 @@ export function Trace({
         measurement; each cell below shows what its own round actually was.
         {walks.length === 0
           ? ''
-          : ` The ${walks.length === 1 ? 'bracket' : 'brackets'} between them ${walks.length === 1 ? 'is a walk' : 'are walks'}: a run of calls that followed one another into the repository. Hatched means it ended without changing anything it had been to.`}
+          : ` The ${walks.length === 1 ? 'bracket' : 'brackets'} between them ${walks.length === 1 ? 'is a walk' : 'are walks'}: a run of calls that followed one another into the repository. Hatched means it ended without changing anything it had been to. Click one to light up the rounds it touched and read it hop by hop.`}
         {zoomable ? ' Drag the lane at the bottom to look closer.' : ''}
       </p>
       <Tip tip={tip} />
@@ -369,6 +396,7 @@ function RoundCell({
   width,
   height,
   selected,
+  faded,
   onSelect,
   onOpenTask,
   show,
@@ -379,6 +407,8 @@ function RoundCell({
   width: number
   height: number
   selected: boolean
+  /** True when a walk is chosen and this round is not one of its calls. */
+  faded?: boolean
   onSelect: (round: TraceRound) => void
   onOpenTask?: (task: number) => void
   show: (event: { clientX: number; clientY: number }, body: ReactElement) => void
@@ -398,7 +428,10 @@ function RoundCell({
 
   return (
     <Group
-      style={{ cursor: 'pointer' }}
+      // Dimming the rest rather than outlining the members: a walk can touch six rounds out of a
+      // hundred and twenty, and six outlines in a barcode are not findable. Turning the other
+      // hundred and fourteen down leaves the walk as the only thing lit.
+      style={{ cursor: 'pointer', opacity: faded === true ? 0.16 : 1 }}
       onClick={() => onSelect(round)}
       onDoubleClick={() => onOpenTask?.(round.task)}
       onMouseMove={(event) =>

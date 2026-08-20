@@ -431,7 +431,14 @@ tbody tr.row:hover {
   font-size: 12px;
   line-height: 1.5;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
-  max-width: 320px;
+  max-width: 340px;
+  /* A tooltip is anchored inside whatever it explains, and a section heading is uppercase with
+     letters spread out. Inheriting that turned a paragraph of prose into a shouted one. Nothing
+     about where a tip hangs should decide how it reads. */
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  text-align: left;
 }
 
 .tip-key {
@@ -739,6 +746,36 @@ button.save.grave:hover {
 }
 
 /* Inspector --------------------------------------------------------------- */
+
+/* One walk, under the trace it was picked from. Built like the inspector beside it, because it is
+   the same kind of thing: a panel the trace opens, showing the evidence behind one mark on it. */
+.trail-panel {
+  margin-top: 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.trail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 12px;
+}
+
+.trail-steps {
+  font-size: 12px;
+}
+
+/* The row the inspector is open on. The trace marks it with a ring, which a table cannot do, so it
+   is marked here the way a table can: a rule down the side and a lift off the surface. */
+.trail-steps tr.here > td {
+  background: var(--raised);
+  box-shadow: inset 2px 0 0 var(--ink-3);
+}
 
 .inspector {
   margin-top: 14px;

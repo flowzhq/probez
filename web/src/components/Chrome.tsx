@@ -170,7 +170,7 @@ export function Problem({ message }: { message: string }): ReactElement {
  * which nobody should be expected to infer from four letters. The mark says an explanation exists;
  * without it the tooltip is undiscoverable, because nothing tells you to hover a number.
  */
-export function Info({ says }: { says: string }): ReactElement {
+export function Info({ says, aria }: { says: ReactNode; aria?: string }): ReactElement {
   const { tip, show, hide } = useTip()
   // The browser's own `title` was the obvious thing and the wrong one: it waits about a second,
   // renders as a bare `?` cursor until then, and never appears at all for a keyboard user. This is
@@ -181,7 +181,9 @@ export function Info({ says }: { says: string }): ReactElement {
         className="info"
         tabIndex={0}
         role="note"
-        aria-label={says}
+        // A glossary is worth laying out, so `says` may be markup. Anything that reads the page
+        // aloud still needs a sentence, and markup is not one, so those pass `aria` as well.
+        aria-label={aria ?? (typeof says === 'string' ? says : undefined)}
         onMouseEnter={(event) => show(event, says)}
         onMouseMove={(event) => show(event, says)}
         onMouseLeave={hide}

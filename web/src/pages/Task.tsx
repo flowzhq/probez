@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { api } from '../api'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
@@ -6,6 +6,7 @@ import type { Fact } from '../components/Chrome'
 import { Inspector } from '../components/Inspector'
 import { InTokens, Lines, Reused } from '../components/Tokens'
 import { Trace } from '../components/Trace'
+import { TrailPanel } from '../components/TrailPanel'
 import { WorkBars } from '../components/WorkBars'
 import { duration, money, percent, shortCommit, shortId, tokens, when } from '../format'
 import { go, href } from '../router'
@@ -35,6 +36,10 @@ export function Task({
   round: number | null
 }): ReactElement {
   const { data, error } = useData(() => api.task(slug, session, task), [slug, session, task])
+  // The walk being read, by its `ref`. Held here rather than in the trace because the panel under
+  // the trace and the lane inside it are two views of one choice.
+  const [trailRef, setTrailRef] = useState<string | null>(null)
+  const trail = (data?.trails ?? []).find((one) => one.ref === trailRef) ?? null
 
   const select = useCallback(
     (index: number | null) => {
@@ -47,6 +52,10 @@ export function Task({
     },
     [slug, session, task],
   )
+
+  // A walk belongs to the task it was found in, so moving to another task drops it rather than
+  // leaving a panel describing rounds that are no longer on the page.
+  useEffect(() => setTrailRef(null), [slug, session, task])
 
   // Opening a task with no round named selects its first one, so the inspector is never an
   // empty panel asking to be clicked.
@@ -144,8 +153,18 @@ export function Task({
                 trace={data.trace}
                 trails={data.trails}
                 selected={round}
+                selectedTrail={trailRef}
                 onSelect={(picked) => select(picked.round)}
+                onSelectTrail={(picked) => setTrailRef(picked === null ? null : picked.ref)}
               />
+              {trail === null ? null : (
+                <TrailPanel
+                  trail={trail}
+                  selected={round}
+                  onSelect={select}
+                  onClose={() => setTrailRef(null)}
+                />
+              )}
               {round === null ? null : (
                 <Inspector slug={slug} session={session} round={round} onStep={step} />
               )}

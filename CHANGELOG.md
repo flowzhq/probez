@@ -47,7 +47,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   deepest — with the id to open it. `--deep` there too. A low share is not a fault: it is what an
   agent working in a repository it already knows looks like.
 
-- **Trails in the view, as a tab beside Sessions.** Every walk in the project, with the same columns
+- **Trails in the view, as a tab beside Sessions.** The heading carries an ⓘ explaining what a walk
+  is and what each of its columns measures, since `wide` and `back` are one-word names for things
+  nobody should be expected to infer. Every walk in the project, with the same columns
   the CLI prints, and a row opens the task it happened in with the round it started at selected —
   which is where the bracket over those rounds is drawn. There is no trail page: a trail is a shape
   over rounds, and the trace is where rounds are shown.
@@ -59,6 +61,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   wrong. The one path a trail carries is written `~/…` before it leaves the server, for the reason
   a project's path already was.
 
+- **Picking a walk lights up the rounds it touched, and opens it hop by hop.** Clicking a bracket
+  on the task trace turns down every round the walk did not touch and prints the walk under the
+  trace — the same table `probez trail <id>` gives, with each hop's evidence beside it. Rounds are
+  turned down rather than outlined because a walk can touch six rounds out of a hundred and twenty,
+  and six outlines in a barcode are not findable. Clicking a step opens that round in the inspector
+  exactly as clicking its cell does, and the panel marks where you are: the trace and the panel are
+  two views of one selection, never two selections. Clicking the same bracket again puts the strip
+  back.
+
 - **A walks lane on the task trace.** Between the phase ribbon and the round strip, when a task made
   any: one bracket per trail, over the rounds it touched, labelled with how far it went. The ribbon
   cannot show this — a walk is not a stretch of rounds but what the evidence connects, so a search
@@ -68,6 +79,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   page is already reading.
 
 ### Fixed
+
+- **A tooltip no longer inherits the styling of whatever it explains.** The ⓘ sits inside the
+  heading it belongs to, and a section heading here is uppercase with its letters spread out, so a
+  paragraph of prose hung off one arrived shouted. Nothing about where a tip is anchored should
+  decide how it reads.
 
 - **The sessions table draws its work, instead of naming the largest slice.** `Recon 57%` named one
   category out of eight and discarded the rest. It is now the bar the tasks and projects tables
