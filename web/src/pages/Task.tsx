@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect } from 'react'
 
 import { api } from '../api'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
@@ -29,33 +29,34 @@ export function Task({
   session,
   task,
   round,
+  trail: trailRef,
 }: {
   slug: string
   session: string
   task: number
   round: number | null
+  /** The walk being read, by its `ref`, from the URL. */
+  trail: string | null
 }): ReactElement {
   const { data, error } = useData(() => api.task(slug, session, task), [slug, session, task])
-  // The walk being read, by its `ref`. Held here rather than in the trace because the panel under
-  // the trace and the lane inside it are two views of one choice.
-  const [trailRef, setTrailRef] = useState<string | null>(null)
   const trail = (data?.trails ?? []).find((one) => one.ref === trailRef) ?? null
 
+  /**
+   * Both halves of the selection live in the URL, which is what makes a walk linkable: the trails
+   * table on the project page points straight at one, and it opens the way clicking the bracket
+   * does rather than merely landing on the round it starts at.
+   */
   const select = useCallback(
-    (index: number | null) => {
+    (index: number | null, walk: string | null = trailRef) => {
       go(
         index === null
-          ? href.task(slug, session, task)
-          : href.task(slug, session, task, index),
+          ? href.task(slug, session, task, undefined, walk)
+          : href.task(slug, session, task, index, walk),
         true,
       )
     },
-    [slug, session, task],
+    [slug, session, task, trailRef],
   )
-
-  // A walk belongs to the task it was found in, so moving to another task drops it rather than
-  // leaving a panel describing rounds that are no longer on the page.
-  useEffect(() => setTrailRef(null), [slug, session, task])
 
   // Opening a task with no round named selects its first one, so the inspector is never an
   // empty panel asking to be clicked.
@@ -155,14 +156,19 @@ export function Task({
                 selected={round}
                 selectedTrail={trailRef}
                 onSelect={(picked) => select(picked.round)}
-                onSelectTrail={(picked) => setTrailRef(picked === null ? null : picked.ref)}
+                onSelectTrail={(picked) =>
+                  // Picking a walk also opens the round it starts at, the way the lane always has.
+                  picked === null
+                    ? select(round, null)
+                    : select(picked.steps[0]?.round ?? round, picked.ref)
+                }
               />
               {trail === null ? null : (
                 <TrailPanel
                   trail={trail}
                   selected={round}
-                  onSelect={select}
-                  onClose={() => setTrailRef(null)}
+                  onSelect={(picked) => select(picked)}
+                  onClose={() => select(round, null)}
                 />
               )}
               {round === null ? null : (

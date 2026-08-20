@@ -33,6 +33,7 @@ function App(): ReactElement {
           session={route.session}
           task={route.task}
           round={route.round}
+          trail={route.trail}
         />
       ) : (
         <>

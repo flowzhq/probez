@@ -70,6 +70,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   two views of one selection, never two selections. Clicking the same bracket again puts the strip
   back.
 
+  The chosen walk is in the URL beside the chosen round, which is what makes one linkable: a row
+  of the project's trails table opens the task with the walk already picked, exactly as clicking
+  its bracket on that trace would, rather than merely landing on the round it starts at. A link
+  you send someone opens on the walk you were reading.
+
 - **A walks lane on the task trace.** Between the phase ribbon and the round strip, when a task made
   any: one bracket per trail, over the rounds it touched, labelled with how far it went. The ribbon
   cannot show this — a walk is not a stretch of rounds but what the evidence connects, so a search

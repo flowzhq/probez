@@ -13,7 +13,15 @@ export type Route =
   | { name: 'settings' }
   | { name: 'project'; slug: string }
   | { name: 'session'; slug: string; session: string }
-  | { name: 'task'; slug: string; session: string; task: number; round: number | null }
+  | {
+      name: 'task'
+      slug: string
+      session: string
+      task: number
+      round: number | null
+      /** The walk being read, by its `ref`. A selection inside the task, like `round`. */
+      trail: string | null
+    }
   | { name: 'missing'; path: string }
 
 export function parse(pathname: string, search: string): Route {
@@ -30,14 +38,17 @@ export function parse(pathname: string, search: string): Route {
 
   const number = Number(task)
   if (!Number.isInteger(number)) return { name: 'missing', path: pathname }
-  const selected = new URLSearchParams(search).get('r')
+  const query = new URLSearchParams(search)
+  const selected = query.get('r')
   const round = selected === null || selected === '' ? null : Number(selected)
+  const trail = query.get('trail')
   return {
     name: 'task',
     slug,
     session,
     task: number,
     round: round === null || Number.isNaN(round) ? null : round,
+    trail: trail === null || trail === '' ? null : trail,
   }
 }
 
@@ -46,8 +57,13 @@ export const href = {
   settings: () => '/settings',
   project: (slug: string) => `/p/${slug}`,
   session: (slug: string, session: string) => `/p/${slug}/s/${session}`,
-  task: (slug: string, session: string, task: number, round?: number) =>
-    `/p/${slug}/s/${session}/t/${task}${round === undefined ? '' : `?r=${round}`}`,
+  task: (slug: string, session: string, task: number, round?: number, trail?: string | null) => {
+    const query = new URLSearchParams()
+    if (round !== undefined) query.set('r', String(round))
+    if (trail !== undefined && trail !== null) query.set('trail', trail)
+    const search = query.toString()
+    return `/p/${slug}/s/${session}/t/${task}${search === '' ? '' : `?${search}`}`
+  },
 }
 
 export function go(to: string, replace = false): void {

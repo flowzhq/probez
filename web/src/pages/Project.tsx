@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 import { api } from '../api'
-import type { ToolRow } from '../api'
+import type { ToolRow, Trail } from '../api'
 import { Actions } from '../components/Actions'
 import { Chrome, Facts, Info, Loading, Problem } from '../components/Chrome'
 import { InTokens, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
@@ -211,12 +211,22 @@ export function Project({ slug }: { slug: string }): ReactElement {
 }
 
 /**
+ * Where a trail row goes: the task it happened in, with the walk open and its first round selected.
+ *
+ * Both halves are in the URL, so the row lands on the walk itself rather than on a round that
+ * happens to start one — the page opens exactly as it would had you clicked the bracket there.
+ */
+function trailHref(slug: string, trail: Trail): string {
+  return href.task(slug, trail.session, trail.task, trail.steps[0]?.round, trail.ref)
+}
+
+/**
  * Every walk in the project: runs of calls that followed one another into the repository.
  *
  * A row goes to the walk itself rather than to a page about it — clicking one opens the task it
- * happened in with the round it started at selected, which is where the bracket over those rounds
- * is drawn. There is no trail page, because a trail is a shape over rounds and the trace is where
- * rounds are shown.
+ * happened in with the walk already open and its first round selected, exactly as clicking its
+ * bracket on that trace would. There is no trail page, because a trail is a shape over rounds and
+ * the trace is where rounds are shown.
  */
 function Trails({ slug, read }: { slug: string; read: number }): ReactElement {
   const { data, error } = useData(() => api.trails(slug), [slug, read])
@@ -262,16 +272,10 @@ function Trails({ slug, read }: { slug: string; read: number }): ReactElement {
             <tr
               key={`${trail.session}-${trail.ref}`}
               className="row"
-              onClick={() =>
-                go(href.task(slug, trail.session, trail.task, trail.steps[0]?.round))
-              }
+              onClick={() => go(trailHref(slug, trail))}
             >
               <td className="mono">
-                <a
-                  {...linkProps(
-                    href.task(slug, trail.session, trail.task, trail.steps[0]?.round),
-                  )}
-                >
+                <a {...linkProps(trailHref(slug, trail))}>
                   {shortId(trail.session)}#{trail.ref}
                 </a>
               </td>
