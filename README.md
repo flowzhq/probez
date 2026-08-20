@@ -218,9 +218,9 @@ $ probez analyze flowz-mcp
     read                  37.2     8.7%     $6.96     1.0     16.9s    10.0K
     design                 8.0     1.1%     $0.86       ·       0ms      248
     clarify                4.0     0.7%     $0.55       ·     41.5s     9.0K
-  Reconstruction           202    24.3%    $19.52    13.0      4.3m   107.2K
-    read                  93.8    10.2%     $8.17     2.0     43.8s    37.4K
-    locate                83.5    10.1%     $8.07     7.0      1.4m    43.0K
+  Reconstruction           203    24.4%    $19.55    13.0      4.3m   107.2K
+    read                  96.5    10.6%     $8.46     2.0     46.4s    41.7K
+    locate                81.0     9.7%     $7.80     7.0      1.4m    38.8K
     mcp                   16.0     1.9%     $1.53     4.0     21.0s    13.2K
     inspect                9.1     2.2%     $1.75       ·      1.8m    13.5K
   Implementation           188    33.8%    $27.10     8.0     30.6m   341.8K
@@ -231,8 +231,8 @@ $ probez analyze flowz-mcp
   Documentation           73.0    13.2%    $10.56       ·     10.5m   105.5K
     system                59.0    10.4%     $8.36       ·      6.3m    75.2K
     agent                 14.0     2.7%     $2.20       ·      4.2m    30.3K
-  Delivery                42.0     5.3%     $4.25     1.0     36.8s    16.0K
-    build                 37.1     4.7%     $3.73     1.0     18.1s     9.1K
+  Delivery                41.9     5.3%     $4.23     1.0     36.8s    16.0K
+    build                 36.9     4.6%     $3.71     1.0     18.1s     9.1K
     branch                 4.5     0.6%     $0.47       ·     16.0s     6.5K
     commit                 0.5     0.0%     $0.04       ·      2.7s      385
   Environment             12.4     3.4%     $2.73     3.0     18.8s     6.7K

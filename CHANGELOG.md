@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [Unreleased]
+
+### Fixed
+
+- **A stream filter at the head of a pipeline was read as scaffolding, and the call as a round that
+  did nothing.** `head`, `tail`, `wc`, `sort`, `jq` and the rest are scaffolding *downstream* of a
+  pipe — `pnpm test 2>&1 | tail -25` ran the tests, and the `tail` is how the output was looked at.
+  That rule was applied from the line as a whole, `text.includes('|')`, rather than from where each
+  command actually sat. So `wc -l src/*.ts | tail -5` had both of its commands struck out and came
+  back `unclassified/incidental`: a call that read every file in a directory, counted as idle.
+
+  The same line made a `|` inside a quoted argument into a pipe. `jq -r '.scripts | to_entries[]'
+  package.json` opens one file and runs one command, and was reported as doing neither.
+
+  `parsePlaced` had already decided both questions correctly — it is quote-aware and marks each
+  command with whether it followed a pipe — and `bashActs` was throwing that away and recomputing a
+  worse answer. It now reads the per-command flag, and treats a command as scaffolding only when
+  every occurrence of it was downstream, so a name that leads one pipeline and trails another still
+  counts for the work it did.
+
+  Across a 57,197-call store this changes 643 calls: 481 led a pipeline, 162 had a pipe only inside
+  a quoted argument. `analyzer_version` is at 3, so the next `analyze` recomputes.
+
 ## [0.3.6] - 2026-08-20
 
 ### Added

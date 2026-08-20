@@ -15,7 +15,7 @@
  * yields `unknown` rather than a guess, since a wrong bucket is worse than a named hole.
  */
 
-import { commandOf, parseCommands, UNPARSED } from './bash.js'
+import { commandOf, parseCommands, parsePlaced, UNPARSED } from './bash.js'
 import type { Command } from './bash.js'
 import type { ToolCall } from './types.js'
 
@@ -397,7 +397,7 @@ const GIT_PLUMBING = new Set([
  * `pnpm test 2>&1 | tail -25` is one act, running the tests, and the `tail` on the end is how the
  * output was looked at rather than a second thing that happened. Downstream of a pipe these are
  * scaffolding, the same as `cd` and `echo`. On their own, `tail -50 src/loop.ts` really is reading
- * a file, so the pipe is what decides it.
+ * a file, so it is the position that decides it, not the presence of a pipe anywhere in the line.
  */
 const STREAM_FILTERS = new Set([
   'head', 'tail', 'wc', 'less', 'more', 'sort', 'uniq', 'cut', 'tr', 'column', 'jq', 'yq',
@@ -438,12 +438,12 @@ function ghVerb(sub: string): Verb {
 }
 
 /** What one command inside a Bash call did. */
-function verbOf(command: Command, writes: string | null, piped: boolean): Verb {
+function verbOf(command: Command, writes: string | null, downstream: boolean): Verb {
   const [head, sub] = command.name.split(' ')
 
   if (head === 'git' || head === 'jj') return gitVerb(sub ?? '')
   if (head === 'gh') return ghVerb(sub ?? '')
-  if (piped && STREAM_FILTERS.has(command.name)) return 'noop'
+  if (downstream && STREAM_FILTERS.has(command.name)) return 'noop'
 
   switch (command.kind) {
     case 'search':
@@ -572,9 +572,19 @@ function bashActs(tool: ToolCall): Act[] {
   const words = new Set(commands.flatMap((command) => command.name.split(' ')))
   const named = writes !== null && writes !== '' ? writes : (pathsIn(text, words)[0] ?? '')
 
-  // A pipe means whatever follows it is looking at output, not opening a file.
-  const piped = text.includes('|')
-  const all = commands.map((command) => act(verbOf(command, writes, piped), named, command.name))
+  // A pipe means whatever *follows* it is looking at output, not opening a file — and `parsePlaced`
+  // has already decided that per command, skipping the `|` inside a quoted `jq` filter that a scan
+  // of the whole line would read as one. A command is scaffolding only when every occurrence of it
+  // was downstream: `wc -l src/*.ts | tail -5` names files with its first, and only the `tail` is
+  // looking at output. Deciding it from the line as a whole made that call, and every command in
+  // it, a round that did nothing.
+  const downstream = new Map<string, boolean>()
+  for (const placed of parsePlaced(raw)) {
+    downstream.set(placed.name, (downstream.get(placed.name) ?? true) && placed.piped)
+  }
+  const all = commands.map((command) =>
+    act(verbOf(command, writes, downstream.get(command.name) ?? false), named, command.name),
+  )
 
   const real = all.filter((one) => one.verb !== 'noop')
   const kept = real.length > 0 ? real : all.slice(0, 1)

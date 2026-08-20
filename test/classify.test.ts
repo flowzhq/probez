@@ -183,6 +183,27 @@ test('what follows a pipe is looking at output, not opening a file', () => {
   assert.equal(cell(bash('tail -50 src/loop.ts')), 'reconstruction/read')
 })
 
+test('a stream filter at the head of a pipeline is reading, not scaffolding', () => {
+  // It is the position that decides it. `wc -l file | tail -5` reads the file with its first
+  // command and looks at the output with its second; reading the whole line for a `|` made both
+  // of them scaffolding and the call a round that did nothing.
+  assert.equal(cell(bash('wc -l src/act.ts | tail -5')), 'reconstruction/read')
+  assert.equal(cell(bash('tail -50 src/loop.ts | head -5')), 'reconstruction/read')
+  assert.equal(cell(bash('sort src/act.ts | uniq')), 'reconstruction/read')
+  const [read] = classifyCall(bash('wc -l src/act.ts | tail -5'))
+  assert.equal(read?.target, 'code')
+  // The filter that really is downstream still counts for nothing.
+  assert.deepEqual(cells(classifyCall(bash('pnpm test 2>&1 | tail -25'))), ['testing/test'])
+  assert.deepEqual(verbs(bash('cat src/act.ts | wc -l')), ['read'])
+})
+
+test('a pipe inside a quoted argument is not a pipe', () => {
+  // `jq -r '.scripts | to_entries[]' package.json` runs one command and opens one file. The `|`
+  // belongs to the filter expression, and the segmenter already knows not to split on it.
+  assert.equal(cell(bash("jq -r '.scripts | to_entries[]' package.json")), 'reconstruction/read')
+  assert.equal(cell(bash('awk \'{ if ($1 == "a" || $1 == "b") print }\' src/act.ts')), 'reconstruction/read')
+})
+
 test('a directory argument still says what was worked on', () => {
   const [label] = classifyCall(bash('grep -rn flush src'))
   assert.equal(label?.target, 'code')

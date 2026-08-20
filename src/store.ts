@@ -273,7 +273,7 @@ export function analysisFile(dataDir: string, project: Project): string {
 }
 
 /** Bumped when a change to `act.ts` or `classify.ts` would give the same rounds different labels. */
-export const ANALYZER_VERSION = 2
+export const ANALYZER_VERSION = 3
 
 export interface AnalysisHeader {
   schema_version: number
