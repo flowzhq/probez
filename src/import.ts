@@ -288,7 +288,7 @@ function collect(raw: unknown[]): { rounds: Round[]; skipped: number } {
     if (hasTokenSplit(record)) priced += 1
     // The same round twice is one round. An export is already de-duplicated; a concatenated pair
     // of them is not, and that is a thing people do.
-    const key = `${round.session} ${round.id}`
+    const key = `${round.session}\0${round.id}`
     if (seen.has(key)) continue
     seen.add(key)
     rounds.push(round)

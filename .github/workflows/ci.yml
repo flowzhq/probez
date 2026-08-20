@@ -31,6 +31,30 @@ jobs:
           cache: npm
       - run: npm ci
 
+      - name: Every source file is text a search can read
+        run: |
+          # One NUL byte makes grep treat a whole file as binary: it reports no matches and exits 1,
+          # which means "not found" and not "could not look". Every check below this one is a grep
+          # over src/, so a single stray control byte switches them all off at once -- a file that
+          # imports child_process and calls execSync passes every constraint in this job. This runs
+          # first so the greps that follow are reading what they think they are reading.
+          #
+          # \0 is a deliberate key separator in this codebase. Write it as an escape, never as a
+          # raw byte: `${a}\0${b}` in a template, '\x00' where a digit follows.
+          bad=0
+          git ls-files '*.ts' '*.tsx' '*.js' '*.mjs' '*.json' '*.md' '*.yml' '*.html' '*.css' |
+            while IFS= read -r file; do
+              if [ "$(wc -c < "$file")" != "$(tr -d '\000' < "$file" | wc -c)" ]; then
+                echo "$file contains a NUL byte"
+                exit 1
+              fi
+            done || bad=1
+          if [ "$bad" = 1 ]; then
+            echo "a source file with a NUL byte is invisible to grep, including the checks below"
+            exit 1
+          fi
+          echo "ok: every source file is searchable"
+
       - name: No runtime dependencies
         run: |
           if node -e "const p=require('./package.json');process.exit(Object.keys(p.dependencies||{}).length?1:0)"; then

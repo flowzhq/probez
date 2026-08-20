@@ -85,6 +85,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ### Fixed
 
+- **A raw NUL byte in two source files made `grep` skip them whole.** `src/import.ts` and
+  `test/classify.test.ts` wrote the round-key separator as an actual NUL rather than as the `\0`
+  escape every other file uses. One such byte is enough for `file` to call a file `data` and for
+  plain `grep` to report no matches and exit 1 — which means "not found", not "could not look" —
+  so 762 lines of TypeScript were invisible to every search. `labelOf` read as dead code when it
+  has two live uses. Worse, the `constraints` job in CI is itself a set of greps over `src/`, and
+  three of them do not pass `-a`: a file carrying a NUL could have imported `child_process` and
+  called `execSync` and passed every check in the job. Both separators are now escapes, identical
+  at runtime, and a new first constraint fails the build on any NUL in a tracked source file.
+  0.1.1 fixed this same byte in `src/store.ts`; it came back the next day in two new files, which
+  is why the guard is a check now and not a note.
+
 - **A tooltip no longer inherits the styling of whatever it explains.** The ⓘ sits inside the
   heading it belongs to, and a section heading here is uppercase with its letters spread out, so a
   paragraph of prose hung off one arrived shouted. Nothing about where a tip is anchored should

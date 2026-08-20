@@ -398,7 +398,7 @@ test('a round is labelled the same alone as it is among its neighbours', () => {
   const diff = round({ session: 's', round: 2, task: 1, tools: [bash('git diff')] })
 
   const together = classifyRounds([edit, diff])
-  assert.deepEqual(cells(together.get('s 2') ?? []), cells(classifyRound(diff)))
+  assert.deepEqual(cells(together.get('s\x002') ?? []), cells(classifyRound(diff)))
   assert.deepEqual(cells(classifyRound(diff)), ['reconstruction/inspect'])
 })
 
