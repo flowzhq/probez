@@ -60,9 +60,9 @@ down to a single tool call. It listens on `127.0.0.1` with a token that is new o
 
 **A project** — where its work went, what each kind of work cost, and the sessions it happened in.
 The list under it is three tabs: *sessions*, each row carrying the whole spread of its work as a bar
-rather than the name of its largest slice; *trails*, every walk the project made through itself; and
+rather than the name of its largest slice; *trails*, every trail the project made through itself; and
 *questions*, everything it needed to know and what each answer cost. Either kind of row opens the
-task it happened in, with the walk or the question already open on the round it started at.
+task it happened in, with the trail or the question already open on the round it started at.
 
 <p align="center">
   <img src="docs/view-project.png" alt="probez view: a project, its work profile and its sessions" width="900">
@@ -82,8 +82,8 @@ how long it took.
 </p>
 
 A task's trace has a third row between the two, when the task made any: brackets over the rounds
-they touched, drawing either the **walks** or the **questions** — a toggle beside the axis, when
-there is both to see. Neither is a stretch of rounds. A walk is what the evidence connects, so a
+they touched, drawing either the **trails** or the **questions** — a toggle beside the axis, when
+there is both to see. Neither is a stretch of rounds. A trail is what the evidence connects, so a
 search interrupted by an edit and resumed four rounds later is still one search; a question is what
 chased one word, so a grep run for the sixth time is still that question. The phase ribbon can show
 neither. Hover a bracket for what it did and what it cost, click it to light up the rounds it
@@ -91,14 +91,14 @@ touched, and read it call by call underneath.
 
 One lane and not two, because the two readings cover much the same rounds and stacking them would
 put two near-identical bars over one strip. Hatching means the same thing in both — part of this
-went nowhere: a walk that changed nothing, a question part of which was asking again. A question
+went nowhere: a trail that changed nothing, a question part of which was asking again. A question
 answered in one call is a point rather than a span, so it gets no bracket; the note under the trace
 says how many are not drawn.
 
-Under the trace, **what it needed to know**: the same calls read the other way. A walk is what
+Under the trace, **what it needed to know**: the same calls read the other way. A trail is what
 followed something; a question is what was being asked, including the asking that got nowhere — and
-since a walk's hops exist only where a call narrowed, a call that asks the same thing over again
-appears in no walk at all. Clicking a question lights the rounds it touched and lists every call it
+since a trail's hops exist only where a call narrowed, a call that asks the same thing over again
+appears in no trail at all. Clicking a question lights the rounds it touched and lists every call it
 took, with `↺` against the ones that asked what had already been asked. Questions answered in a
 single call are counted under the table rather than listed in it. See `probez questions` below.
 
@@ -327,17 +327,17 @@ search for a word and then a file carrying it, and `narrow`, a file under a dire
 reached. Each trail says which kind it had, on the `proven`/`inferred` line.
 
 The two readings are not two views of one answer. Against probez's own store the deep read finds
-about half again as many steps, and it roots a walk further back — the same search the shallow read
+about half again as many steps, and it roots a trail further back — the same search the shallow read
 names `1.5` is named `1.0` once the listing that started it becomes visible. It is not strictly a
-superset either: a better-sourced hop can regroup a walk, and a fragment left under the three-call
+superset either: a better-sourced hop can regroup a trail, and a fragment left under the three-call
 floor stops being one.
 
 ### Questions: what it needed to know, and what that cost
 
 A trail is a walk that went somewhere. Its edges exist only where a call *narrowed* — a smaller
 scope, a file under a directory already reached — so a call that asks the same thing over again
-narrows nothing, forms no edge, and joins no walk. In probez's own store a third of all finding is
-exactly that, and a tenth of it reaches a trail. The walk keeps the productive hops and drops the
+narrows nothing, forms no edge, and joins no trail. In probez's own store a third of all finding is
+exactly that, and a tenth of it reaches a trail. The trail keeps the productive hops and drops the
 thrash, which is the wrong way round for anyone asking what navigation costs.
 
 A **question** is the other reading of the same calls: one thing the agent needed to know, and every
@@ -392,7 +392,7 @@ $ probez question flowz-mcp 0b2cc149#1.2
 ```
 
 The `↺` marks a call that asked what the question had already asked. Three calls, one thing wanted,
-and the last of them bought nothing — which is a shape that no walk records, because none of these
+and the last of them bought nothing — which is a shape that no trail records, because none of these
 three narrowed anything for the next.
 
 Any single round opens in full, down to what each tool was given:

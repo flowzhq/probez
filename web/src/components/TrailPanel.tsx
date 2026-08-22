@@ -3,9 +3,9 @@ import type { Trail } from '../api'
 import type { ReactElement } from 'react'
 
 /**
- * One walk, hop by hop.
+ * One trail, hop by hop.
  *
- * The bracket on the trace says a walk happened and how far it went. This says what it actually
+ * The bracket on the trace says a trail happened and how far it went. This says what it actually
  * did: which call started it, what each hop had to go on, and where each one landed. It is the same
  * table `probez trail <id>` prints, for the same reason — a claim about provenance that you cannot
  * read the evidence for is a claim you have to take on trust.
@@ -20,7 +20,7 @@ export function TrailPanel({
   onClose,
 }: {
   trail: Trail
-  /** The round the inspector is open on, so the walk shows where you are in it. */
+  /** The round the inspector is open on, so the trail shows where you are in it. */
   selected: number | null
   onSelect: (round: number) => void
   onClose: () => void
@@ -78,7 +78,7 @@ export function TrailPanel({
             >
               <td className="mono">{step.ref}</td>
               <td className="mono nowrap">
-                {/* Indent by hop, capped, so a deep walk stays inside its column. */}
+                {/* Indent by hop, capped, so a deep trail stays inside its column. */}
                 <span style={{ paddingLeft: Math.min(depths.get(step.at) ?? 0, 5) * 14 }}>
                   {step.name}
                 </span>
@@ -124,7 +124,7 @@ export function trailsExplained(share?: { steps: number; finding: number }): Rea
       )}
       <br />
       <br />
-      <span className="tip-key">steps </span>calls in the walk.
+      <span className="tip-key">steps </span>calls in the trail.
       <br />
       <span className="tip-key">depth </span>how far it went — the longest chain of hops.
       <br />

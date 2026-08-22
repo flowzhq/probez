@@ -211,11 +211,11 @@ Trails
   probez trail <id>            One of them, hop by hop, named by any round it passed through
   --deep                       Read the archived session results, which is the only way to
                                see that a call opened a path an earlier call's output named
-  --min-depth <n>              Only walks that went at least this many hops (default ${MIN_DEPTH})
-  --outcome <name>             Only walks that ended this way: ${OUTCOMES.join(' · ')}
+  --min-depth <n>              Only trails that went at least this many hops (default ${MIN_DEPTH})
+  --outcome <name>             Only trails that ended this way: ${OUTCOMES.join(' · ')}
   --session <id>               Only this session
   --task <n>                   Only this task number
-  --limit <n>                  How many walks to list (default ${DEFAULT_LIMIT}, 0 for all)
+  --limit <n>                  How many trails to list (default ${DEFAULT_LIMIT}, 0 for all)
 
   An agent that does not know a repository finds its way around it: it lists the tree, opens
   what the listing named, greps for a word, reads the lines the grep hit. \`analyze\` counts all
@@ -227,9 +227,9 @@ Trails
   Without \`--deep\` a hop is inferred from what the calls asked for — a search for a word, then
   a file carrying that word; a file under a directory already reached. With it, a hop can be
   read out of the earlier call's own output, which is the only way to see that \`find .\` is why
-  the next five files were opened. Deep sees more and roots a walk further back, so a walk the
+  the next five files were opened. Deep sees more and roots a trail further back, so a trail the
   shallow read names \`1.5\` may be named \`1.0\` with the flag; it is not strictly a superset,
-  since a better-sourced hop can regroup a walk and leave a fragment under the three-call floor.
+  since a better-sourced hop can regroup a trail and leave a fragment under the three-call floor.
   An imported project carries its rounds and not the logs behind them, so \`--deep\` finds
   nothing there and says so.
 
@@ -247,7 +247,7 @@ Questions
   A trail is a walk that went somewhere. A question is one thing the agent needed to know, and
   every call it spent finding out — including the calls that went nowhere. The difference is
   the point: a trail's edges exist only where a call narrowed, so asking the same thing a sixth
-  time makes no edge and joins no walk, and a third of all finding in a real store is exactly
+  time makes no edge and joins no trail, and a third of all finding in a real store is exactly
   that. Eleven greps for one field name are one question that cost eleven calls.
 
   CALLS is what it cost. AGAIN is the same words asked of the same places over again. FETCH is
@@ -268,7 +268,7 @@ Analysis
   --by <level>                 One table per project (default), session or task
   --split <axis>               What the second level counts: sub (default) or target
   --unclassified               List what did not classify, most of it first
-  --deep                       Read the archived results, so the trail line counts the walks
+  --deep                       Read the archived results, so the trail line counts the trails
                                that inputs alone cannot show. See \`probez trails\`
   --session <id>               Only this session
   --task <n>                   Only this task number
@@ -1025,7 +1025,7 @@ function printTrails(all: Trail[], limit: number, showSession: boolean, deep: bo
   if (!deep) {
     // Worth saying every time rather than once in the help: the difference between the two answers
     // is large, and a reader looking at the shallow one has no way to tell what it could not see.
-    console.log('  `--deep` reads the archived sessions and finds the walks inputs alone cannot show.')
+    console.log('  `--deep` reads the archived sessions and finds the trails inputs alone cannot show.')
   }
   console.log('  `probez trail <id>` draws one of them, hop by hop.')
   console.log('')
@@ -1686,7 +1686,7 @@ async function main(): Promise<void> {
       )
     }
     if (command === 'trail' && selector === undefined) {
-      fail('trail needs a round id from the walk, as `probez trail 1.7`. `probez trails` lists them')
+      fail('trail needs a round id from the trail, as `probez trail 1.7`. `probez trails` lists them')
     }
     if (command === 'question' && selector === undefined) {
       fail(

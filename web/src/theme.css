@@ -772,7 +772,7 @@ button.save.grave:hover {
 
 /* Inspector --------------------------------------------------------------- */
 
-/* One walk, under the trace it was picked from. Built like the inspector beside it, because it is
+/* One trail or question, under the trace it was picked from. Built like the inspector beside it,
    the same kind of thing: a panel the trace opens, showing the evidence behind one mark on it. */
 .trail-panel {
   margin-top: 14px;

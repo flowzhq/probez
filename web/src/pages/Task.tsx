@@ -43,7 +43,7 @@ export function Task({
   session: string
   task: number
   round: number | null
-  /** The walk being read, by its `ref`, from the URL. */
+  /** The trail being read, by its `ref`, from the URL. */
   trail: string | null
   /** The question being read, by its `at`, from the URL. */
   question: number | null
@@ -54,20 +54,20 @@ export function Task({
 
 
   /**
-   * Both halves of the selection live in the URL, which is what makes a walk linkable: the trails
+   * Both halves of the selection live in the URL, which is what makes a trail linkable: the trails
    * table on the project page points straight at one, and it opens the way clicking the bracket
    * does rather than merely landing on the round it starts at.
    */
   const select = useCallback(
     (
       index: number | null,
-      walk: string | null = trailRef,
-      asked: number | null = questionRef,
+      ontoTrail: string | null = trailRef,
+      ontoQuestion: number | null = questionRef,
     ) => {
       go(
         index === null
-          ? href.task(slug, session, task, undefined, walk, asked)
-          : href.task(slug, session, task, index, walk, asked),
+          ? href.task(slug, session, task, undefined, ontoTrail, ontoQuestion)
+          : href.task(slug, session, task, index, ontoTrail, ontoQuestion),
         true,
       )
     },
@@ -175,7 +175,7 @@ export function Task({
                 selectedQuestion={questionRef}
                 onSelect={(picked) => select(picked.round)}
                 onSelectTrail={(picked) =>
-                  // Picking a walk also opens the round it starts at, the way the lane always has.
+                  // Picking a trail also opens the round it starts at, the way the lane always has.
                   // It closes any question, because the two are readings of the same calls and
                   // showing both at once would leave the strip lit by one and explained by the other.
                   picked === null
@@ -218,7 +218,7 @@ export function Task({
                 questions={data.questions}
                 selected={questionRef}
                 onOpen={(picked) =>
-                  // Opening a question closes any walk, for the reason the lane does the reverse:
+                  // Opening a question closes any trail, for the reason the lane does the reverse:
                   // they are two readings of one set of calls, and the strip can only be lit by one.
                   picked === null
                     ? select(round, trailRef, null)

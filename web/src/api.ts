@@ -182,7 +182,7 @@ export interface Call {
   result_chars: number | null
 }
 
-/** One call as a node in a walk: where it went, plus what put it there. Mirrors `Step`. */
+/** One call as a node in a trail: where it went, plus what put it there. Mirrors `Step`. */
 export interface TrailStep extends Call {
   source: number | null
   edge: 'listed' | 'probe' | 'narrow' | null

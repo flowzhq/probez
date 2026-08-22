@@ -217,9 +217,9 @@ export function Project({ slug }: { slug: string }): ReactElement {
 }
 
 /**
- * Where a trail row goes: the task it happened in, with the walk open and its first round selected.
+ * Where a trail row goes: the task it happened in, with the trail open and its first round selected.
  *
- * Both halves are in the URL, so the row lands on the walk itself rather than on a round that
+ * Both halves are in the URL, so the row lands on the trail itself rather than on a round that
  * happens to start one — the page opens exactly as it would had you clicked the bracket there.
  */
 function trailHref(slug: string, trail: Trail): string {
@@ -227,10 +227,10 @@ function trailHref(slug: string, trail: Trail): string {
 }
 
 /**
- * Every walk in the project: runs of calls that followed one another into the repository.
+ * Every trail in the project: runs of calls that followed one another into the repository.
  *
- * A row goes to the walk itself rather than to a page about it — clicking one opens the task it
- * happened in with the walk already open and its first round selected, exactly as clicking its
+ * A row goes to the trail itself rather than to a page about it — clicking one opens the task it
+ * happened in with the trail already open and its first round selected, exactly as clicking its
  * bracket on that trace would. There is no trail page, because a trail is a shape over rounds and
  * the trace is where rounds are shown.
  */
@@ -320,7 +320,7 @@ function Trails({ slug, read }: { slug: string; read: number }): ReactElement {
         around it: it lists the tree, opens what the listing named, greps for a word, reads the lines
         the grep hit. <em>Where this project's work goes</em> counts all of that as Reconstruction
         and cannot tell five hops of one search from five unrelated file opens. Hops are read out of
-        the archived session results, so a walk is what the agent actually followed rather than what
+        the archived session results, so a trail is what the agent actually followed rather than what
         the calls happen to look like. A row opens the task it happened in, on the round it started
         at.
       </p>
@@ -375,7 +375,7 @@ function Questions({ slug, read }: { slug: string; read: number }): ReactElement
           — {per.toFixed(2)} calls per question, {data.reasked} of them taking more than one
           {once === 0 ? '' : `, and ${once} answered in a single call and not listed`}. A trail is a
           walk that went somewhere, and its hops exist only where a call narrowed; a call that asks
-          the same thing over again narrows nothing and so appears in no walk at all. Here it does:{' '}
+          the same thing over again narrows nothing and so appears in no trail at all. Here it does:{' '}
           {data.repeats} calls re-asked something already asked, {data.fetches} only turned a line
           number into a body, and {data.sweeps} named three or more different words at once. A row
           opens the task it was asked in, on the call it started with.

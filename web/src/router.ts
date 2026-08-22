@@ -19,13 +19,13 @@ export type Route =
       session: string
       task: number
       round: number | null
-      /** The walk being read, by its `ref`. A selection inside the task, like `round`. */
+      /** The trail being read, by its `ref`. A selection inside the task, like `round`. */
       trail: string | null
       /**
        * The question being read, by its `at` — the position of its first call in the task.
        *
        * A number rather than the `ref` a person reads, because a round can start two questions and
-       * then the ref names both. The walk above has no such trouble: two walks do not begin at one
+       * then the ref names both. The trail above has no such trouble: two trails do not begin at one
        * call.
        */
       question: number | null

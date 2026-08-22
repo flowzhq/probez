@@ -13,14 +13,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 - **`probez questions` and `probez question <id>`: what the agent needed to know, and what finding
   out cost it.** A trail is a walk that went somewhere, and its edges exist only where a call
   *narrowed* — a smaller scope, a file under a directory already reached. A call that asks the same
-  thing over again narrows nothing, so it forms no edge, joins no walk, and leaves no trace in
+  thing over again narrows nothing, so it forms no edge, joins no trail, and leaves no trace in
   `probez trails`. Against probez's own store that is 34% of every finding call, and a tenth of it
-  reaches a trail: the walk keeps the productive hops and drops the thrash, which is backwards for
+  reaches a trail: the trail keeps the productive hops and drops the thrash, which is backwards for
   anyone measuring what navigation costs.
 
   A question is the other reading of the same calls. One thing the agent needed to know, and every
   call it spent finding out, whether or not any of them got anywhere. Eleven greps for one field
-  name in one file are one question that cost eleven calls, not eleven calls that formed no walk.
+  name in one file are one question that cost eleven calls, not eleven calls that formed no trail.
 
   Each one carries what it cost and how much of that was waste: `AGAIN`, the same words asked of the
   same places over again; `FETCH`, calls that only turned a line number into a body; and `GUESS`,
@@ -34,14 +34,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   the whole scope, so a filter cannot make a project look like it asks harder questions than it
   does.
 
-- **The trace lane draws questions as well as walks.** A toggle beside the axis switches which
+- **The trace lane draws questions as well as trails.** A toggle beside the axis switches which
   reading the brackets are of, and arriving with either one chosen — from a link, or from a table
   under the trace — opens the lane it belongs to. One lane and not two: the two readings cover much
   the same rounds, so stacking them would put two near-identical bars over one strip and the
   difference between them would be a puzzle rather than a fact. Selecting one already closed the
   other; the toggle makes that a choice instead of a surprise.
 
-  Hatching keeps its meaning across both — part of this went nowhere: a walk that changed nothing,
+  Hatching keeps its meaning across both — part of this went nowhere: a trail that changed nothing,
   a question part of which was re-asking. A question answered in a single call is a point rather
   than a span and gets no bracket, so the note under the trace says how many are not drawn. Three
   quarters of them are, and a lane that dropped them silently would read as a smaller task than it
@@ -60,11 +60,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ### Fixed
 
-- **Clicking a walk in the trace opened its round but dropped the walk.** The lane's click handler
-  selected the walk and then selected the round again through a second callback, which had not seen
-  the walk yet and wrote the URL from a stale value. The walk was chosen and immediately discarded,
+- **Clicking a trail in the trace opened its round but dropped the trail.** The lane's click handler
+  selected the trail and then selected the round again through a second callback, which had not seen
+  the trail yet and wrote the URL from a stale value. The trail was chosen and immediately discarded,
   so the panel never opened — while the identical click from the trails table, which writes both
-  halves at once, always did. Picking the walk is now the whole click; whoever owns the selection
+  halves at once, always did. Picking the trail is now the whole click; whoever owns the selection
   opens the round, because both halves of it live in one place.
 
 - **`--kind` was validated against one vocabulary for every command that takes it.** `rounds --kind`
@@ -82,7 +82,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   Paths are now read relative to the checkout the calls ran in, and only that prefix comes off — a
   path elsewhere on the machine is elsewhere, and rewriting it would fold the agent's own notes into
   the project's source. Trail coverage of finding calls goes from 21.8% to 27.1% and the edge count
-  from 280 to 354; the deepest walk in the session that prompted the module goes from 13 steps to
+  from 280 to 354; the deepest trail in the session that prompted the module goes from 13 steps to
   19.
 
 ### Fixed
