@@ -81,11 +81,19 @@ how long it took.
   <img src="docs/view-session.png" alt="probez view: a session trace and its work profile" width="900">
 </p>
 
-A task's trace has a third row between the two, when the task made any: **walks**, drawn as brackets
-over the rounds they touched. A walk is not a stretch of rounds — it is what the evidence connects,
-so a search interrupted by an edit and resumed four rounds later is still one search, and the phase
-ribbon cannot show that. Hover one for how far it went, what it started from, and whether it ended
-in a change; click it to open the round it started at. See `probez trails` below.
+A task's trace has a third row between the two, when the task made any: brackets over the rounds
+they touched, drawing either the **walks** or the **questions** — a toggle beside the axis, when
+there is both to see. Neither is a stretch of rounds. A walk is what the evidence connects, so a
+search interrupted by an edit and resumed four rounds later is still one search; a question is what
+chased one word, so a grep run for the sixth time is still that question. The phase ribbon can show
+neither. Hover a bracket for what it did and what it cost, click it to light up the rounds it
+touched, and read it call by call underneath.
+
+One lane and not two, because the two readings cover much the same rounds and stacking them would
+put two near-identical bars over one strip. Hatching means the same thing in both — part of this
+went nowhere: a walk that changed nothing, a question part of which was asking again. A question
+answered in one call is a point rather than a span, so it gets no bracket; the note under the trace
+says how many are not drawn.
 
 Under the trace, **what it needed to know**: the same calls read the other way. A walk is what
 followed something; a question is what was being asked, including the asking that got nowhere — and

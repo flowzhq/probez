@@ -5,7 +5,7 @@ import { scaleLinear } from '@visx/scale'
 import { Bar } from '@visx/shape'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
-import type { Trace as TraceData, TraceRound, Trail } from '../api'
+import type { Question, Trace as TraceData, TraceRound, Trail } from '../api'
 import { fillOf, orderOf, styleOf } from '../categories'
 import { duration, percent, tokens } from '../format'
 import { Tip, useTip } from './Tip'
@@ -59,9 +59,11 @@ export function Trace({
   trails,
   selected,
   selectedTrail,
-  lit,
+  questions,
+  selectedQuestion,
   onSelect,
   onSelectTrail,
+  onSelectQuestion,
   onOpenTask,
 }: {
   trace: TraceData
@@ -70,16 +72,13 @@ export function Trace({
   selected: number | null
   /** The `ref` of the walk being looked at, which lifts its rounds out of the strip. */
   selectedTrail?: string | null
-  /**
-   * Rounds to lift out of the strip, when something other than a walk is being read.
-   *
-   * A question is the other reading of these same calls and is not drawn in the lane, so it needs
-   * a way to say which rounds it touched. Given, it wins over the walk's own set: whatever the
-   * page is showing below the trace is what the trace should be highlighting.
-   */
-  lit?: ReadonlySet<number> | null
+  /** The questions over these rounds, which is the other reading of the same calls. */
+  questions?: Question[]
+  /** The `at` of the question being looked at. See `Question.at`: a ref names two of them. */
+  selectedQuestion?: number | null
   onSelect: (round: TraceRound) => void
   onSelectTrail?: (trail: Trail | null) => void
+  onSelectQuestion?: (question: Question | null) => void
   /** Set on a session trace, where a round names a task you can open. */
   onOpenTask?: (task: number) => void
 }): ReactElement {
@@ -115,20 +114,67 @@ export function Trace({
     () => positions(visible, axis, inner),
     [visible, axis, inner],
   )
-  const walks = useMemo(() => packed(trails ?? [], all), [trails, all])
-  // Which rounds the chosen walk touched. A walk is not a stretch of rounds, so this cannot be a
-  // range: it is the set of calls the evidence connected, and the ones in between are not in it.
+  /**
+   * Questions that span more than one call, which are the only ones a bracket can draw.
+   *
+   * A question answered in a single call is a point, not a span. Most questions are — 780 of 1031
+   * against probez's own store — so drawing them would fill the lane with slivers that say nothing
+   * happened. They are counted under the trace instead, because a lane that drops three quarters of
+   * its subject without saying so is worse than no lane.
+   */
+  const spans = useMemo(
+    () => (questions ?? []).filter((question) => question.calls.length > 1),
+    [questions],
+  )
+  const walks = useMemo(
+    () => packed(trails ?? [], (trail) => trail.steps.map((step) => step.round), all),
+    [trails, all],
+  )
+  const asks = useMemo(
+    () => packed(spans, (question) => question.calls.map((call) => call.round), all),
+    [spans, all],
+  )
+
+  /**
+   * Which reading the lane is drawing.
+   *
+   * One lane and not two. The brackets would overlap heavily — they are readings of the same calls,
+   * so a walk and a question routinely cover the same rounds — and two near-identical bars over one
+   * strip is a puzzle no legend solves. Selecting one already closes the other, and a toggle makes
+   * that a choice rather than a surprise.
+   */
+  const [lane, setLane] = useState<'walks' | 'questions'>('walks')
+  // Arriving with one already chosen — from a link, or from the table under the trace — shows the
+  // lane it belongs to. Otherwise the bracket that is lit is one the lane is not drawing.
+  useEffect(() => {
+    if (selectedQuestion !== undefined && selectedQuestion !== null) setLane('questions')
+    else if (selectedTrail !== undefined && selectedTrail !== null) setLane('walks')
+  }, [selectedTrail, selectedQuestion])
+  const showing = lane === 'questions' && asks.length > 0 ? 'questions' : 'walks'
+
+  // Which rounds the chosen reading touched. Neither is a stretch of rounds, so this cannot be a
+  // range: it is the set of calls that belong to it, and the ones in between do not.
   const inTrail = useMemo(() => {
-    if (lit !== undefined && lit !== null) return lit
+    const asked = spans.find((question) => question.at === selectedQuestion)
+    if (asked !== undefined) return new Set(asked.calls.map((call) => call.round))
     const chosen = (trails ?? []).find((trail) => trail.ref === selectedTrail)
     return chosen === undefined ? null : new Set(chosen.steps.map((step) => step.round))
-  }, [trails, selectedTrail, lit])
+  }, [trails, selectedTrail, spans, selectedQuestion])
 
   if (all.length === 0) {
     return <p className="note">Nothing to trace: this span has no rounds.</p>
   }
 
-  const walkRows = walks.length === 0 ? 0 : Math.max(...walks.map((walk) => walk.row)) + 1
+  const drawn = showing === 'questions' ? asks : walks
+  const once = (questions ?? []).length - spans.length
+  // Whether the reading on show has one picked out, which is what sends the rest of the lane back.
+  // Asked of the reading being drawn and not of walks alone, or choosing a question would leave
+  // every other question at full strength while the strip below it had already faded.
+  const chosen =
+    showing === 'questions'
+      ? selectedQuestion !== null && selectedQuestion !== undefined
+      : selectedTrail !== null && selectedTrail !== undefined
+  const walkRows = drawn.length === 0 ? 0 : Math.max(...drawn.map((one) => one.row)) + 1
   const laneH = walkRows === 0 ? 0 : walkRows * WALK_H + GAP
   const height =
     RIBBON_H + GAP + laneH + STRIP_H + AXIS_H + (zoomable ? OVERVIEW_H + GAP * 2 : 0)
@@ -157,6 +203,18 @@ export function Trace({
           {all.length} rounds · {duration(trace.span.active_ms)} working ·{' '}
           {duration(trace.span.elapsed_ms)} elapsed
         </span>
+        {/* Only offered when there is something to switch between. A toggle with one live side is
+            a control that says the other reading exists and then refuses to show it. */}
+        {walks.length > 0 && asks.length > 0 ? (
+          <div className="toggle" role="group" aria-label="What the lane draws">
+            <button aria-pressed={showing === 'walks'} onClick={() => setLane('walks')}>
+              walks
+            </button>
+            <button aria-pressed={showing === 'questions'} onClick={() => setLane('questions')}>
+              questions
+            </button>
+          </div>
+        ) : null}
         <span className="spacer" />
         {range === null || visible.length === 0 ? null : (
           // Named by the rounds themselves, not by where they sit in the array, so this agrees
@@ -208,87 +266,66 @@ export function Trace({
 
             {/* Walks: what the agent followed into, over the rounds it took to do it. */}
             <Group top={walkY} left={PAD}>
-              {walks.map((walk) => {
-                if (walk.to < lo || walk.from > hi) return null
-                const a = Math.max(walk.from, lo) - lo
-                const b = Math.min(walk.to, hi) - lo
+              {drawn.map((one) => {
+                if (one.to < lo || one.from > hi) return null
+                const a = Math.max(one.from, lo) - lo
+                const b = Math.min(one.to, hi) - lo
                 const x = place.x(a)
                 const w = Math.max(2, place.x(b) + place.w(b) - x)
-                const trail = walk.trail
+                // The two readings differ in what a bracket says, not in how it is drawn, so the
+                // difference is four values rather than a second copy of this block.
+                const bar =
+                  showing === 'questions'
+                    ? askBar(one.item as Question, selectedQuestion ?? null)
+                    : walkBar(one.item as Trail, selectedTrail ?? null)
                 return (
                   <Group
-                    key={`${trail.session}-${trail.ref}`}
+                    key={bar.key}
                     style={{ cursor: 'pointer' }}
                     onClick={() => {
-                      // Clicking the chosen walk again puts the strip back, so the lane is a
-                      // filter you can turn off where you turned it on.
-                      const same = trail.ref === selectedTrail
-                      // Picking the walk is the whole click. The round it starts at gets opened by
-                      // whoever owns the selection, because both halves of it live in one place —
-                      // calling `onSelect` here too would write the round a second time, from a
-                      // handler that has not seen the walk yet, and the walk would be dropped
-                      // before it ever reached the URL.
-                      onSelectTrail?.(same ? null : trail)
+                      // Clicking the chosen one again puts the strip back, so the lane is a filter
+                      // you can turn off where you turned it on. Picking is the whole click: the
+                      // round it starts at gets opened by whoever owns the selection, because both
+                      // halves of that live in one place.
+                      if (showing === 'questions') {
+                        const asked = one.item as Question
+                        onSelectQuestion?.(bar.selected ? null : asked)
+                      } else {
+                        const trail = one.item as Trail
+                        onSelectTrail?.(bar.selected ? null : trail)
+                      }
                     }}
-                    onMouseMove={(event) =>
-                      show(
-                        event,
-                        <>
-                          <strong className="mono">
-                            trail {trail.ref} → {trail.last}
-                          </strong>
-                          <br />
-                          <span className="tip-key">went </span>
-                          {trail.depth} hops from a {trail.root} · {trail.breadth} wide ·{' '}
-                          {trail.paths} paths
-                          <br />
-                          <span className="tip-key">ended </span>
-                          {trail.outcome}
-                          {trail.ended_on === '' ? '' : ` ${trail.ended_on}`}
-                          <br />
-                          <span className="tip-key">cost </span>
-                          {duration(trail.ms)} · {tokens(trail.in_tokens)} in ·{' '}
-                          {tokens(trail.out_tokens)} out
-                          <br />
-                          <span className="tip-key">hops </span>
-                          {trail.confidence === 'proven'
-                            ? 'read out of the results'
-                            : 'inferred from what the calls asked for'}
-                        </>,
-                      )
-                    }
+                    onMouseMove={(event) => show(event, bar.tip)}
                     onMouseLeave={hide}
                   >
                     <Bar
                       x={x}
-                      y={walk.row * WALK_H}
+                      y={one.row * WALK_H}
                       width={w}
                       height={WALK_H - 4}
                       rx={2}
-                      fill={trail.outcome === 'abandoned' ? 'url(#probez-hatch)' : 'var(--ink-3)'}
+                      fill={bar.hatched ? 'url(#probez-hatch)' : 'var(--ink-3)'}
                       opacity={
-                        selectedTrail === null || selectedTrail === undefined
-                          ? trail.outcome === 'edit'
-                            ? 0.85
-                            : 0.5
-                          : trail.ref === selectedTrail
-                            ? 1
-                            : 0.18
+                        !chosen ? (bar.strong ? 0.85 : 0.5) : bar.selected ? 1 : 0.18
                       }
-                      stroke={trail.ref === selectedTrail ? 'var(--ink)' : undefined}
-                      strokeWidth={trail.ref === selectedTrail ? 1 : undefined}
+                      stroke={bar.selected ? 'var(--ink)' : undefined}
+                      strokeWidth={bar.selected ? 1 : undefined}
                     />
                     {w > 58 ? (
                       <text
                         x={x + 5}
-                        y={walk.row * WALK_H + WALK_H - 8}
+                        y={one.row * WALK_H + WALK_H - 8}
                         fontSize={9}
                         fontWeight={600}
                         letterSpacing={0.3}
-                        fill={trail.outcome === 'abandoned' ? 'var(--ink-3)' : 'var(--surface)'}
+                        // On a hatched bar the label sits over the pattern rather than over ink,
+                        // so it takes the page's own text colour. `--ink-3` was legible while
+                        // hatching meant "abandoned" and was rare; a question is hatched whenever
+                        // any of it was re-asking, which is most of the expensive ones.
+                        fill={bar.hatched ? 'var(--ink)' : 'var(--surface)'}
                         style={{ pointerEvents: 'none' }}
                       >
-                        {trail.depth} hops
+                        {bar.label}
                       </text>
                     ) : null}
                   </Group>
@@ -356,9 +393,16 @@ export function Trace({
       <p className="note" style={{ margin: '2px 0 10px' }}>
         Phases are the dominant category over {trace.window} rounds, which is a choice and not a
         measurement; each cell below shows what its own round actually was.
-        {walks.length === 0
+        {drawn.length === 0
           ? ''
-          : ` The ${walks.length === 1 ? 'bracket' : 'brackets'} between them ${walks.length === 1 ? 'is a walk' : 'are walks'}: a run of calls that followed one another into the repository. Hatched means it ended without changing anything it had been to. Click one to light up the rounds it touched and read it hop by hop.`}
+          : showing === 'questions'
+            ? ` The ${drawn.length === 1 ? 'bracket' : 'brackets'} between them ${drawn.length === 1 ? 'is a question' : 'are questions'}: one thing the agent needed to know, and every call it spent finding out. Hatched means part of it was asking again what it had already asked. Click one to light up the rounds it touched and read every call it took.`
+            : ` The ${drawn.length === 1 ? 'bracket' : 'brackets'} between them ${drawn.length === 1 ? 'is a walk' : 'are walks'}: a run of calls that followed one another into the repository. Hatched means it ended without changing anything it had been to. Click one to light up the rounds it touched and read it hop by hop.`}
+        {/* A lane that quietly drops three quarters of its subject would read as "this task asked
+            nine questions" when it asked nineteen. The ones it cannot draw are counted here. */}
+        {showing === 'questions' && once > 0
+          ? ` ${once} more ${once === 1 ? 'question was' : 'questions were'} answered in a single call, which is a point rather than a span, and ${once === 1 ? 'is' : 'are'} not drawn.`
+          : ''}
         {zoomable ? ' Drag the lane at the bottom to look closer.' : ''}
       </p>
       <Tip tip={tip} />
@@ -655,34 +699,137 @@ function runsIn(trace: TraceData, lo: number, hi: number): TraceData['runs'] {
     }))
 }
 
-/** One walk placed over the rounds it touched, and which row of the lane it draws in. */
-interface Walk {
-  trail: Trail
+/**
+ * What one bracket says, for either reading.
+ *
+ * The lane draws walks and questions identically — a bar over the rounds it covers — and they
+ * differ only in what the bar means. Naming that difference as four values keeps the drawing in one
+ * place instead of two blocks that have to be kept looking alike.
+ */
+interface LaneBar {
+  key: string
+  label: string
+  /** Went nowhere useful: a walk that changed nothing, a question part of which was re-asking. */
+  hatched: boolean
+  /** Worth the eye. A walk that landed a change; a question that cost more than a call or two. */
+  strong: boolean
+  selected: boolean
+  tip: ReactElement
+}
+
+function walkBar(trail: Trail, selectedTrail: string | null): LaneBar {
+  return {
+    key: `${trail.session}-${trail.ref}`,
+    label: `${trail.depth} hops`,
+    hatched: trail.outcome === 'abandoned',
+    strong: trail.outcome === 'edit',
+    selected: trail.ref === selectedTrail,
+    tip: (
+      <>
+        <strong className="mono">
+          trail {trail.ref} → {trail.last}
+        </strong>
+        <br />
+        <span className="tip-key">went </span>
+        {trail.depth} hops from a {trail.root} · {trail.breadth} wide · {trail.paths} paths
+        <br />
+        <span className="tip-key">ended </span>
+        {trail.outcome}
+        {trail.ended_on === '' ? '' : ` ${trail.ended_on}`}
+        <br />
+        <span className="tip-key">cost </span>
+        {duration(trail.ms)} · {tokens(trail.in_tokens)} in · {tokens(trail.out_tokens)} out
+        <br />
+        <span className="tip-key">hops </span>
+        {trail.confidence === 'proven'
+          ? 'read out of the results'
+          : 'inferred from what the calls asked for'}
+      </>
+    ),
+  }
+}
+
+function askBar(question: Question, selectedQuestion: number | null): LaneBar {
+  const waste = [
+    question.repeats > 0 ? `${question.repeats} re-asked` : '',
+    question.fetches > 0 ? `${question.fetches} fetched a body` : '',
+    question.sweeps > 0 ? `${question.sweeps} guessed at words` : '',
+  ].filter((part) => part !== '')
+  return {
+    key: `${question.session}-${question.at}`,
+    label: `${question.calls.length} calls`,
+    // Hatched means the same thing it does on a walk: part of this went nowhere. On a question that
+    // is the re-asking, which is the one kind of waste a walk cannot show at all.
+    hatched: question.repeats > 0,
+    strong: question.calls.length > 3,
+    selected: question.at === selectedQuestion,
+    tip: (
+      <>
+        <strong className="mono">
+          question {question.ref} → {question.last}
+        </strong>
+        <br />
+        <span className="tip-key">wanted </span>
+        {question.terms.length === 0 ? 'nothing by name' : question.terms.slice(0, 6).join(', ')}
+        <br />
+        <span className="tip-key">cost </span>
+        {question.calls.length} calls ·{' '}
+        {question.files.length === 0
+          ? 'no place named'
+          : `${question.files.length} place${question.files.length === 1 ? '' : 's'}`}{' '}
+        · {question.kind}
+        <br />
+        {waste.length === 0 ? null : (
+          <>
+            <span className="tip-key">wasted </span>
+            {waste.join(' · ')}
+            <br />
+          </>
+        )}
+        <span className="tip-key">spent </span>
+        {duration(question.ms)} · {tokens(question.in_tokens)} in · {tokens(question.out_tokens)} out
+      </>
+    ),
+  }
+}
+
+/** One reading placed over the rounds it touched, and which row of the lane it draws in. */
+interface Placed<T> {
+  item: T
   from: number
   to: number
   row: number
 }
 
 /**
- * Place each walk over the rounds it touched, stacking the ones that overlap.
+ * Place each span over the rounds it touched, stacking the ones that overlap.
  *
- * A walk is not a stretch of rounds — it is what the evidence connects — so two of them can share
- * rounds, and drawing both on one line would put one on top of the other. Rows are assigned
- * greedily, longest first so the span you notice is the one that spans the most, and everything
- * past the third row folds into it: a lane taller than the strip below it would be a legend for a
- * chart rather than part of one.
+ * Neither a walk nor a question is a stretch of rounds — a walk is what the evidence connects and a
+ * question is what chased one word — so two of them can share rounds, and drawing both on one line
+ * would put one on top of the other. Rows are assigned greedily, longest first so the span you
+ * notice is the one that spans the most, and everything past the third row folds into it: a lane
+ * taller than the strip below it would be a legend for a chart rather than part of one.
+ *
+ * Generic over what is being placed, because the two readings differ only in where their rounds
+ * come from. One packer, so a question's lane cannot quietly stack differently from a walk's.
  */
-function packed(trails: Trail[], all: TraceRound[]): Walk[] {
+function packed<T>(
+  items: T[],
+  roundsOf: (item: T) => number[],
+  all: TraceRound[],
+): Placed<T>[] {
   const at = new Map<number, number>()
   all.forEach((round, index) => at.set(round.round, index))
 
-  const spans = trails
-    .map((trail) => {
-      const indices = trail.steps.map((step) => at.get(step.round)).filter((i): i is number => i !== undefined)
+  const spans = items
+    .map((item) => {
+      const indices = roundsOf(item)
+        .map((round) => at.get(round))
+        .filter((i): i is number => i !== undefined)
       if (indices.length === 0) return null
-      return { trail, from: Math.min(...indices), to: Math.max(...indices) }
+      return { item, from: Math.min(...indices), to: Math.max(...indices) }
     })
-    .filter((span): span is { trail: Trail; from: number; to: number } => span !== null)
+    .filter((span): span is { item: T; from: number; to: number } => span !== null)
     .sort((a, b) => b.to - b.from - (a.to - a.from) || a.from - b.from)
 
   // The rightmost round each row has been filled to, which is all a greedy packer needs.

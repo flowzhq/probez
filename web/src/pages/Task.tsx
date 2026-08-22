@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect } from 'react'
 
 import { api } from '../api'
 import { Chrome, Facts, Info, Loading, Problem } from '../components/Chrome'
@@ -52,12 +52,6 @@ export function Task({
   const trail = (data?.trails ?? []).find((one) => one.ref === trailRef) ?? null
   const question = (data?.questions ?? []).find((one) => one.at === questionRef) ?? null
 
-  // The rounds the trace should lift out of the strip. A question is not drawn in the walk lane,
-  // so it has to say for itself which rounds it touched.
-  const lit = useMemo(
-    () => (question === null ? null : new Set(question.calls.map((call) => call.round))),
-    [question],
-  )
 
   /**
    * Both halves of the selection live in the URL, which is what makes a walk linkable: the trails
@@ -177,7 +171,8 @@ export function Task({
                 trails={data.trails}
                 selected={round}
                 selectedTrail={trailRef}
-                lit={lit}
+                questions={data.questions}
+                selectedQuestion={questionRef}
                 onSelect={(picked) => select(picked.round)}
                 onSelectTrail={(picked) =>
                   // Picking a walk also opens the round it starts at, the way the lane always has.
@@ -186,6 +181,11 @@ export function Task({
                   picked === null
                     ? select(round, null)
                     : select(picked.steps[0]?.round ?? round, picked.ref, null)
+                }
+                onSelectQuestion={(picked) =>
+                  picked === null
+                    ? select(round, trailRef, null)
+                    : select(picked.calls[0]?.round ?? round, null, picked.at)
                 }
               />
               {trail === null ? null : (

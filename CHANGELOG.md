@@ -34,6 +34,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   the whole scope, so a filter cannot make a project look like it asks harder questions than it
   does.
 
+- **The trace lane draws questions as well as walks.** A toggle beside the axis switches which
+  reading the brackets are of, and arriving with either one chosen — from a link, or from a table
+  under the trace — opens the lane it belongs to. One lane and not two: the two readings cover much
+  the same rounds, so stacking them would put two near-identical bars over one strip and the
+  difference between them would be a puzzle rather than a fact. Selecting one already closed the
+  other; the toggle makes that a choice instead of a surprise.
+
+  Hatching keeps its meaning across both — part of this went nowhere: a walk that changed nothing,
+  a question part of which was re-asking. A question answered in a single call is a point rather
+  than a span and gets no bracket, so the note under the trace says how many are not drawn. Three
+  quarters of them are, and a lane that dropped them silently would read as a smaller task than it
+  was.
+
 - **The view shows questions too.** A project's list gains a third tab beside *sessions* and
   *trails*, and a task page gains a *what it needed to know* section under its trace. Clicking a
   question lights the rounds it touched and lists every call it took, marking the ones that asked
