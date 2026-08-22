@@ -79,14 +79,35 @@ const STRUCTURAL = new Set([
 ])
 
 /**
- * How many words at once counts as guessing.
+ * How many of the project's words at once counts as guessing.
  *
  * `grep -n "advance\|newContext\|CallContext\|classifyCall"` is one call asking four different
  * questions, and it is what an agent does when it has not learned the project's vocabulary yet. Two
  * alternatives is a spelling; three is a guess. Reported as a choice rather than a measurement, the
  * way `trail.ts` reports its lookback.
+ *
+ * Counted over the project's own words, not every word in the pattern, and by the same rule the
+ * membership check uses. `grep "^export \|^interface \|^function "` names three words and guesses
+ * at none of them — it is asking for a file's table of contents in the language's own vocabulary,
+ * which is the opposite finding, and `kindOf` already reads it as an `outline`.
  */
 export const SWEEP_TERMS = 3
+
+/**
+ * The words in a call that could name something this project owns.
+ *
+ * The one place that decides which words count. Membership joins on these, a sweep is three of
+ * these, and `kindOf` reads a question made of nothing else as an outline — three rules that have
+ * to agree about what a project's own word is, so they ask rather than each keeping a copy.
+ */
+function namedIn(call: Call): string[] {
+  return call.probes.filter((probe) => !STRUCTURAL.has(probe))
+}
+
+/** Whether a call was reaching for words rather than naming one. */
+function isSweep(call: Call): boolean {
+  return namedIn(call).length >= SWEEP_TERMS
+}
 
 /**
  * Which of the six this question was, decided by the first rule that reads it.
@@ -210,15 +231,14 @@ function signatureOf(call: Call): string {
   return JSON.stringify([[...call.probes].sort(), [...call.sites].sort()])
 }
 
-/** The words in a call that could name something this project owns. */
-function namedIn(call: Call): string[] {
-  return call.probes.filter((probe) => !STRUCTURAL.has(probe))
-}
-
 /** A question under construction, before it is worth reporting. */
 interface Open {
   terms: string[]
-  /** The project's own words among them, which are the only ones another call can join on. */
+  /**
+   * The project's own words among them, which are the only ones another call can join on.
+   *
+   * Not every word a call asked about reaches here — see the sweep rule in `questionsOf`.
+   */
   named: string[]
   files: string[]
   seen: Set<string>
@@ -242,6 +262,21 @@ interface Open {
  * Go sessions in a real store, and joining on it folded a search for one tool, a search for a clone
  * URL and a search for a binary path into a single five-call question about nothing. A word has to
  * belong to the project before two calls naming it are asking about the same thing.
+ *
+ * A sweep may join a question but may not extend it. A call naming three or more of the project's
+ * words at once is the agent guessing at vocabulary it has not learned yet, which makes it the call
+ * whose words are least trustworthy as identity and the one that would contribute the most of them.
+ * Against a real task that inverted the whole clustering: `grep "docker\|kubectl\|terraform\|aws
+ * \|gcloud\|other\|proc"` was one guess at what a classifier's table might be called, and it wrote
+ * all seven guesses into the question's identity. Twenty-six calls later a search of probez's own
+ * store — a different corpus, not even the repository — matched three of them and was folded in,
+ * turning an eleven-call question into a thirteen-call one that was two things.
+ *
+ * The call that *starts* a question is exempt, or a question opened by a sweep would have no
+ * identity at all and nothing could ever join it. So the rule narrows the failure rather than
+ * closing it: a question whose first call was a guess still carries the guess. If one of the
+ * guessed words is really the subject, the agent names it again in a narrower call, and that call
+ * earns it a place.
  *
  * Most recent and not every match, for the reason `trail.ts` links to the nearest source: one word
  * asked early can otherwise absorb every later call that happens to mention it, and a task collapses
@@ -316,6 +351,7 @@ export function questionsOf(rounds: Round[], options: QuestionOptions = {}): Que
           if (found !== null) break
         }
       }
+      const fresh = found === null
       if (found === null) {
         found = {
           terms: [],
@@ -334,8 +370,11 @@ export function questionsOf(rounds: Round[], options: QuestionOptions = {}): Que
       if (found.seen.has(signature)) found.repeats += 1
       found.seen.add(signature)
       if (fetched) found.fetches += 1
+      // Everything asked is reported. Only some of it becomes identity — see below.
       for (const probe of call.probes) if (!found.terms.includes(probe)) found.terms.push(probe)
-      for (const word of named) if (!found.named.includes(word)) found.named.push(word)
+      if (fresh || named.length < SWEEP_TERMS) {
+        for (const word of named) if (!found.named.includes(word)) found.named.push(word)
+      }
       for (const site of call.sites) if (!found.files.includes(site)) found.files.push(site)
       found.calls.push(call)
       // Opening a file that merely sits under a directory the question swept does not renew it.
@@ -372,7 +411,7 @@ export function questionsOf(rounds: Round[], options: QuestionOptions = {}): Que
         calls: one.calls,
         repeats: one.repeats,
         fetches: one.fetches,
-        sweeps: one.calls.filter((call) => call.probes.length >= SWEEP_TERMS).length,
+        sweeps: one.calls.filter(isSweep).length,
         ms: Math.round(ms),
         in_tokens: Math.round(inTokens),
         out_tokens: Math.round(outTokens),

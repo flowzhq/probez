@@ -309,6 +309,14 @@ to the grep that found line 40. Words the *language* owns cannot join anything: 
 three unrelated greps in half the Go sessions in a real store, and joining on it folded a search for
 a tool, a search for a clone URL and a search for a binary path into one question about nothing.
 
+**A guess cannot say what a question is about.** A call naming three or more of the project's words
+at once is the agent reaching for vocabulary it has not learned, so it may join a question but not
+extend it. Left seeding, one seven-way guess at a classifier's table wrote `kubectl`, `docker` and
+`terraform` into a question's identity, and a search of probez's own store twenty-six calls later
+matched them and was folded in — two activities reported as one. The call that starts a question is
+exempt, because otherwise a question opened by a guess has no identity and nothing can join it; the
+rule narrows that failure rather than closing it.
+
 **The kind is one table, and it has six rows where the design has seven.** `define`, `refs`,
 `outline`, `flow`, `touches`, `covers`. The seventh — *how does A reach B* — is deliberately absent.
 No grep expresses that question, so no reading of a grep can recover it; an agent that has it

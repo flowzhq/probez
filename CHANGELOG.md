@@ -79,6 +79,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ### Fixed
 
+- **A guess could say what a question was about.** A call naming three or more of the project's own
+  words at once is the agent reaching for vocabulary it has not learned yet — which makes it the
+  call whose words are least trustworthy as identity, and the one that contributed the most of them.
+
+  On a real task it inverted the clustering. The prompt was *update the classifier to support
+  kubectl, aws and other like under Environment*, and one call —
+  `grep -n "docker\|kubectl\|terraform\|aws\|gcloud\|other\|proc" test/bash.test.ts` — was a
+  single guess at what the classifier's table might be called. All seven guesses went into the
+  question's identity. Twenty-six calls later a search of probez's own collected store, a different
+  corpus and not even the repository, matched three of them and was folded in: an eleven-call
+  question reported as thirteen, and two activities reported as one.
+
+  A sweep may now join a question but may not extend its vocabulary. The call that *starts* a
+  question is exempt, or one opened by a guess would have no identity at all and nothing could ever
+  join it — so this narrows the failure rather than closing it, which is worth saying plainly.
+
+  Across a 4,341-round store: 1,177 questions become 1,187, questions costing more than six calls
+  fall from 24 to 20, and the count of calls does not move, because nothing is dropped — only
+  separated. The `GUESS` column now counts by the same rule, so a pattern made of the language's
+  own words — `grep "^export \|^interface \|^function "` — is no longer counted as a guess at
+  vocabulary when it is a request for a file's table of contents.
+
 - **A shell line continuation survived being folded into one line.** `grep x \` + newline + `src/a.ts`
   came back as `grep x \ src/a.ts`, which is a command with an escaped space in it rather than the
   one that ran. The backslash is the newline's own escape, so folding the line takes it too.

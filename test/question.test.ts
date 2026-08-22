@@ -91,6 +91,51 @@ test('the same word far enough later is a new question, not a resumption', () =>
   assert.equal(store[0]!.repeats, 0)
 })
 
+test('a guess can join a question but cannot say what the question is about', () => {
+  // Shortened from the task that prompted the rule. The agent was updating a classifier's table of
+  // command kinds; the sweep in the middle is one guess at what that table might be called, and it
+  // named seven words. Left to seed the question, `kubectl` and `docker` became part of its
+  // identity, and a search of a different corpus entirely — probez's own store, not the repository
+  // — matched them much later and was folded in.
+  const questions = questionsOf(
+    asked([
+      bash('grep -rn "CommandKind\\|VERBS" src/'),
+      bash('grep -n "docker\\|kubectl\\|terraform\\|aws\\|gcloud\\|CommandKind" test/bash.test.ts'),
+      bash('grep -n "VERBS" src/classify.ts'),
+      bash('grep -a "kubectl \\|docker \\|aws " ~/.probez/projects/oss/rounds.jsonl'),
+    ]),
+  )
+  // Three calls about the classifier, and one about somewhere else that happens to share a guess.
+  assert.equal(questions.length, 2)
+  assert.equal(questions[0]!.calls.length, 3)
+  assert.deepEqual(questions[1]!.terms, ['kubectl', 'docker'])
+  // The sweep is still reported as one of the question's calls, and still counted as a guess.
+  assert.equal(questions[0]!.sweeps, 1)
+  // And it still says what it asked about, even the parts that could not become identity.
+  assert.ok(questions[0]!.terms.includes('gcloud'))
+})
+
+test('a question opened by a guess keeps the guess, because it has nothing else', () => {
+  // The exemption, stated as a test so it is a decision rather than an oversight: without it a
+  // question that begins with a sweep has no identity and nothing can ever join it.
+  const questions = questionsOf(
+    asked([
+      bash('grep -rn "advance\\|newContext\\|CallContext" src/'),
+      bash('grep -n "CallContext" src/act.ts'),
+    ]),
+  )
+  assert.equal(questions.length, 1)
+  assert.equal(questions[0]!.calls.length, 2)
+})
+
+test('a pattern of the language\'s own words is a table of contents, not a guess', () => {
+  const questions = questionsOf(
+    asked([bash('grep -n "^export \\|^interface \\|^function " src/inspect.ts')]),
+  )
+  assert.equal(questions[0]!.sweeps, 0)
+  assert.equal(questions[0]!.kind, 'outline')
+})
+
 test('a question never crosses a user turn, because a new turn is a new subject', () => {
   const questions = questionsOf([
     ...asked([bash('grep -rn "flushStore" src/')], 1),
