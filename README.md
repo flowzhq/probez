@@ -133,6 +133,7 @@ project                a directory an agent was started in    its name, or its p
 | `probez rounds` · `round <id>` | One row per round, or one round with every tool call |
 | `probez tools` | Every tool called, and what `Bash` actually ran |
 | `probez trails` · `trail <id>` | Runs of calls that followed one another into the repository |
+| `probez questions` · `question <id>` | What the agent needed to know, and what finding out cost |
 | `probez analyze` | Where the work went |
 | `probez view` | Open the profiler |
 | `probez collect` | Collect one project, or every project under a folder |
@@ -142,7 +143,7 @@ project                a directory an agent was started in    its name, or its p
 Lists take `--limit` and always say how many rows they withheld. `rounds` filters by `--session`,
 `--task`, `--tool`, `--command`, `--kind`, `--category`, `--target`, `--agent` and `--errors`.
 `analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
-`--outcome`. `--source` selects Claude Code, Cursor, or
+`--outcome`. `questions` takes `--kind` and `--min-calls`. `--source` selects Claude Code, Cursor, or
 both. `--json` works everywhere. `probez --help` lists every flag under the command it belongs to.
 
 ```console
@@ -269,14 +270,14 @@ $ probez trails flowz-mcp --deep --limit 8
   TRAIL          STEPS  DEPTH  WIDE  PATHS  ROOT     OUTCOME        IN    TIME
   069d8593#1.0       6      5     2      7  listing  abandoned  268.5K    6.0s
   0b2cc149#1.0       5      4     2      3  listing  abandoned  188.4K    3.0s
-  51cced08#2.1       4      4     1      9  listing  test       152.8K    4.4s
+  0b2cc149#3.8       3      2     2      3  listing  test       131.8K    1.6s
+  0b2cc149#3.13      4      4     1      4  path     test       214.1K    2.8s
+  0bfa7fe3#1.0       3      2     2      2  listing  test       105.7K    1.0s
+  51cced08#2.1      16      6    11     23  listing  edit       999.1K    8.6s
+  51cced08#2.70      3      3     1      4  doc      test       567.2K   500ms
   6ffef9bc#1.0       5      4     2      9  listing  abandoned  204.2K    6.7s
-  6ffef9bc#4.16      9      4     3      9  doc      test       695.0K    4.8s
-  be254122#1.0       8      3     5     10  listing  abandoned  356.0K    8.4s
-  be254122#2.15      4      3     2      7  listing  abandoned  231.9K    2.4s
-  bfd594d9#2.3       3      2     2      3  listing  test       263.0K    3.4s
 
-  showing 8 of 10 trails, --limit 0 for all · 10 proven from result bodies
+  showing 8 of 14 trails, --limit 0 for all · 13 proven from result bodies
   `probez trail <id>` draws one of them, hop by hop.
 ```
 
@@ -314,6 +315,69 @@ about half again as many steps, and it roots a walk further back — the same se
 names `1.5` is named `1.0` once the listing that started it becomes visible. It is not strictly a
 superset either: a better-sourced hop can regroup a walk, and a fragment left under the three-call
 floor stops being one.
+
+### Questions: what it needed to know, and what that cost
+
+A trail is a walk that went somewhere. Its edges exist only where a call *narrowed* — a smaller
+scope, a file under a directory already reached — so a call that asks the same thing over again
+narrows nothing, forms no edge, and joins no walk. In probez's own store a third of all finding is
+exactly that, and a tenth of it reaches a trail. The walk keeps the productive hops and drops the
+thrash, which is the wrong way round for anyone asking what navigation costs.
+
+A **question** is the other reading of the same calls: one thing the agent needed to know, and every
+call it spent finding out, whether or not any of them got anywhere.
+
+```console
+$ probez questions flowz-mcp --min-calls 2 --limit 8
+
+  flowz-mcp  ~/Dev/workspace/flowz-mcp
+
+  QUESTION        CALLS  AGAIN  FETCH  GUESS  KIND          IN    TIME  ASKED ABOUT
+  51cced08#2.3       11      0     10      0  outline   664.3K    6.5s  claude
+  c21c7448#2.13       9      0      8      0  outline   775.9K    3.6s  contextfacets
+  c21c7448#2.4        8      0      7      0  outline   484.3K    1.7s  claude
+  6ffef9bc#4.17       5      1      2      1  flow      395.1K    3.1s  facets type const confidence …
+  069d8593#1.1        4      0      3      0  touches   179.6K    3.8s  —
+  be254122#2.15       4      0      3      0  touches   230.2K   682ms  —
+  069d8593#1.15       3      1      0      0  refs      188.1K    6.3s  codebase memory
+  0b2cc149#1.2        3      1      0      0  refs      116.1K    2.2s  enqueuer status
+
+  showing 8 of 31 questions, --limit 0 for all
+  152 asked in all · 220 calls · 1.45 per question · 31 took more than one
+  AGAIN is the same words asked of the same places over again.
+  `probez question <id>` shows every call one of them took.
+```
+
+`CALLS` is what the question cost. `AGAIN` is the same words asked of the same places over again.
+`FETCH` is calls that only turned a line number into a body — the second half of locate-then-fetch,
+protocol overhead rather than thinking. `GUESS` is calls that named three or more different words at
+once, which is an agent reaching for vocabulary it has not learned yet.
+
+`KIND` is which question it was, by one readable table: `define` show me this, `refs` where is it
+used, `outline` what does this file declare, `flow` where does this value travel, `touches` every
+artifact naming a concept, `covers` what constrains it. There is no `path` — how does A reach B —
+because no grep expresses that question, so no reading of a grep can recover it.
+
+A question is named by a round it was asked at, and asking for any round in it finds it:
+
+```console
+$ probez question flowz-mcp 0b2cc149#1.2
+
+  question 0b2cc149#1.2 → 1.4 · 3 calls · refs
+  asked about enqueuer, status
+  1 place · 1 re-asked · 116.1K in · 508 out · 2.2s
+
+  ROUND   CALL                REACHED ASKED                     WHERE
+  1.2     ls                  dir     enqueuer                  internal/
+  1.3     grep                dir     enqueuer status           internal/
+  1.4     grep                dir     enqueuer ↺                internal/
+
+  `probez round 1.2` shows any one of these calls in full.
+```
+
+The `↺` marks a call that asked what the question had already asked. Three calls, one thing wanted,
+and the last of them bought nothing — which is a shape that no walk records, because none of these
+three narrowed anything for the next.
 
 Any single round opens in full, down to what each tool was given:
 

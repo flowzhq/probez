@@ -4,6 +4,7 @@ import { CATEGORIES, categoryInfo, classifyCall } from './classify.js'
 import type { Category, Label } from './classify.js'
 import { costOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
+import type { Question } from './question.js'
 import { isFinding, trailsOf } from './trail.js'
 import type { Trail, TrailOptions } from './trail.js'
 import type { Round, ToolCall } from './types.js'
@@ -1116,6 +1117,33 @@ export function findTrail(
   if (mine.length > 0) return mine[0]!
   throw new SelectorError(
     `round ${round.task}.${round.round} is not part of a trail. \`probez trails\` lists them`,
+  )
+}
+
+/**
+ * Find the question a selector names.
+ *
+ * Named the same way a trail is, and for the same reason: by a round it passed through, which is a
+ * selector `probez round` already takes. A round can belong to a walk and to a question at once —
+ * they are two readings of the same calls — so asking for one is not asking for the other.
+ */
+export function findQuestion(
+  rounds: Round[],
+  questions: Question[],
+  selector: string,
+  sessionHint?: string,
+): Question {
+  const round = findRound(rounds, selector, sessionHint)
+  const mine = questions.filter(
+    (question) =>
+      question.session === round.session &&
+      question.calls.some((call) => call.round === round.round),
+  )
+  const starts = mine.find((question) => question.calls[0]?.round === round.round)
+  if (starts !== undefined) return starts
+  if (mine.length > 0) return mine[0]!
+  throw new SelectorError(
+    `round ${round.task}.${round.round} asked nothing. \`probez questions\` lists what did`,
   )
 }
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { parsePlaced } from '../src/bash.js'
-import { probesIn, scopeOf, sitesIn, trailsOf } from '../src/trail.js'
+import { probesIn, scopeOf, siteOf, sitesIn, trailsOf } from '../src/trail.js'
 import type { Trail } from '../src/trail.js'
 import type { Round, ToolCall } from '../src/types.js'
 import { ROUND_DEFAULTS, TOOL_DEFAULTS } from './support.js'
@@ -95,6 +95,36 @@ test('scope is how wide the call reached', () => {
   for (const [call, want] of cases) {
     assert.equal(scopeOf(call, sitesIn(call)), want, JSON.stringify(call.input))
   }
+})
+
+test('a path is where it is relative to the checkout, so one file is one place', () => {
+  assert.equal(siteOf('/repo/src/store.ts', '/repo'), 'src/store.ts')
+  assert.equal(siteOf('/repo/src/store.ts', '/repo/'), 'src/store.ts')
+  assert.equal(siteOf('./src/store.ts', '/repo'), 'src/store.ts')
+  assert.equal(siteOf('/repo', '/repo'), '.')
+  // Somewhere else on the machine is somewhere else. Rewriting it would fold the agent's own
+  // notes into the project's source.
+  assert.equal(siteOf('/Users/me/.claude/plan.md', '/repo'), '/Users/me/.claude/plan.md')
+  // With no checkout to measure against, a path is left exactly as the call named it.
+  assert.equal(siteOf('/repo/src/store.ts', ''), '/repo/src/store.ts')
+})
+
+test('a read of an absolute path follows a search that named the same file relatively', () => {
+  const rounds = walk([
+    bash('grep -rn "flushStore" src/'),
+    bash('grep -n "flushStore" src/store.ts'),
+    tool('Read', { file_path: '/repo/src/store.ts', offset: 40, limit: 40 }),
+  ])
+  // `Read` records an absolute path and a command records what was typed. Without the checkout the
+  // two are different places, so the fetch half of every locate-then-fetch pair goes unexplained.
+  const [shallow] = trailsOf(rounds)
+  assert.equal(shallow, undefined)
+
+  const [trail] = trailsOf(rounds, { root: '/repo' })
+  assert.ok(trail !== undefined)
+  assert.deepEqual(edges(trail), ['0-narrow->1', '1-narrow->2'])
+  // Two places and not three: the read and the grep before it named one file between them.
+  assert.equal(trail.paths, 2)
 })
 
 // ---------------------------------------------------------------------------------------------

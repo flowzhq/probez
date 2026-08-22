@@ -468,7 +468,7 @@ async function taskTrails(stored: StoredProject, rounds: Round[]): Promise<Trail
   if (session === undefined) return []
   const file = join(stored.dir, 'sessions', `${session}.jsonl`)
   const results = await readToolResults(file, idsToRead(rounds))
-  return shownTrails(trailsOf(rounds, { results }))
+  return shownTrails(trailsOf(rounds, { results, root: stored.path ?? '' }))
 }
 
 export async function roundPayload(
@@ -568,10 +568,11 @@ export async function resultPayload(
 export async function trailsPayload(dataDir: string, slug: string): Promise<TrailsPayload> {
   const { stored, rounds } = await open(dataDir, slug)
   const results = await readResultsIn(stored.dir, idsToRead(rounds))
-  const share = trailShare(rounds, { results })
+  const root = stored.path ?? ''
+  const share = trailShare(rounds, { results, root })
   return {
     project: shown(stored),
-    trails: shownTrails(trailsOf(rounds, { results })),
+    trails: shownTrails(trailsOf(rounds, { results, root })),
     steps: share.steps,
     finding: share.finding,
   }

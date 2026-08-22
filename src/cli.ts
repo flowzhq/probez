@@ -23,6 +23,7 @@ import {
   filterRounds,
   findRound,
   findTask,
+  findQuestion,
   findTrail,
   labelRounds,
   looksLikeSelector,
@@ -46,6 +47,8 @@ import type {
   ToolRow,
   TrailShare,
 } from './inspect.js'
+import { ASKS, isAsk, questionsOf } from './question.js'
+import type { Question } from './question.js'
 import { MIN_DEPTH, trailsOf } from './trail.js'
 import type { Trail } from './trail.js'
 import { idsToRead } from './trail.js'
@@ -82,6 +85,8 @@ const COMMANDS = new Set([
   'round',
   'trails',
   'trail',
+  'questions',
+  'question',
   'tools',
   'analyze',
   'view',
@@ -126,6 +131,8 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   round: ['session'],
   trails: ['limit', 'session', 'task', 'deep', 'min-depth', 'outcome'],
   trail: ['session', 'deep'],
+  questions: ['limit', 'session', 'task', 'kind', 'min-calls'],
+  question: ['session'],
   tools: ['limit', 'kinds'],
   analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified', 'deep'],
   view: ['port', 'no-open'],
@@ -225,6 +232,30 @@ Trails
   since a better-sourced hop can regroup a walk and leave a fragment under the three-call floor.
   An imported project carries its rounds and not the logs behind them, so \`--deep\` finds
   nothing there and says so.
+
+Questions
+  probez questions [project]   What the agent needed to know, and what finding out cost
+  probez question <id>         One of them, call by call, named by any round it was asked at
+  --kind <name>                Only questions of this kind:
+                               ${ASKS.slice(0, 4).join(' · ')}
+                               ${ASKS.slice(4).join(' · ')}
+  --min-calls <n>              Only questions that took at least this many calls
+  --session <id>               Only this session
+  --task <n>                   Only this task number
+  --limit <n>                  How many questions to list (default ${DEFAULT_LIMIT}, 0 for all)
+
+  A trail is a walk that went somewhere. A question is one thing the agent needed to know, and
+  every call it spent finding out — including the calls that went nowhere. The difference is
+  the point: a trail's edges exist only where a call narrowed, so asking the same thing a sixth
+  time makes no edge and joins no walk, and a third of all finding in a real store is exactly
+  that. Eleven greps for one field name are one question that cost eleven calls.
+
+  CALLS is what it cost. AGAIN is the same words asked of the same places over again. FETCH is
+  calls that only turned a line number into a body, the second half of locate-then-fetch. GUESS
+  is calls that named three or more different words at once, which is an agent reaching for
+  vocabulary it has not learned. KIND is which of six questions it was, by one readable table:
+  a seventh — how does A reach B — is left out because no grep expresses it, so no reading of
+  one can recover it.
 
 Tools
   probez tools [project]       Every tool called, and what Bash actually ran
@@ -886,6 +917,96 @@ function printTrail(trail: Trail, width: number, showSession: boolean): void {
   console.log('')
 }
 
+/** How a question is named on screen, and typed back: `59921bd4#2.250`, or `2.250` alone. */
+function questionId(question: Question, showSession: boolean): string {
+  return showSession ? `${question.session.slice(0, 8)}#${question.ref}` : question.ref
+}
+
+/** The question drawn as what it cost: every call it took, and what each one asked. */
+function printQuestion(question: Question, width: number, showSession: boolean): void {
+  const calls = question.calls.length
+  console.log('')
+  console.log(
+    `  question ${questionId(question, showSession)} → ${question.last} · ${calls} call${calls === 1 ? '' : 's'} · ${question.kind}`,
+  )
+  console.log(
+    `  asked about ${question.terms.length === 0 ? 'nothing by name' : question.terms.join(', ')}`,
+  )
+  const waste = [
+    question.repeats > 0 ? `${question.repeats} re-asked` : '',
+    question.fetches > 0 ? `${question.fetches} fetched a body` : '',
+    question.sweeps > 0 ? `${question.sweeps} guessed at words` : '',
+  ].filter((part) => part !== '')
+  // A search pointed at the checkout names no path at all, and "0 places" reads as a failure
+  // rather than as the tree-wide sweep it was.
+  const where =
+    question.files.length === 0
+      ? 'no place named'
+      : `${question.files.length} place${question.files.length === 1 ? '' : 's'}`
+  console.log(
+    `  ${where}${waste.length === 0 ? '' : ` · ${waste.join(' · ')}`} · ${tokens(question.in_tokens)} in · ${tokens(question.out_tokens)} out · ${duration(question.ms)}`,
+  )
+  console.log('')
+
+  const CALL = 20
+  const room = Math.max(24, width - 56)
+  console.log(`  ${pad('ROUND', 8)}${pad('CALL', CALL)}${pad('REACHED', 8)}${pad('ASKED', 26)}WHERE`)
+  const seen = new Set<string>()
+  for (const call of question.calls) {
+    const signature = `${[...call.probes].sort().join(' ')}\0${[...call.sites].sort().join(' ')}`
+    // A repeat is marked where it happens rather than only counted in the header, because the run
+    // of them is the finding — a number says four, a column shows which four and how far apart.
+    const again = seen.has(signature) ? ' ↺' : ''
+    seen.add(signature)
+    const asked = call.probes.length === 0 ? '—' : call.probes.join(' ')
+    console.log(
+      `  ${pad(call.ref, 8)}${pad(clip(call.name, CALL - 1), CALL)}${pad(call.scope, 8)}${pad(clip(asked, 24) + again, 26)}${clip(call.sites.map(shorten).join(' ') || '—', room)}`,
+    )
+  }
+  console.log('')
+  console.log(`  \`probez round ${question.ref}\` shows any one of these calls in full.`)
+  console.log('')
+}
+
+/**
+ * The listing, and under it what questions cost across the whole scope.
+ *
+ * `all` is what was asked for and `every` is what was there, because an average over the rows a
+ * flag left standing is not a fact about the project. `--min-calls 2` would otherwise report that
+ * this project spends 2.67 calls per question when most of its questions take one.
+ */
+function printQuestions(
+  all: Question[],
+  every: Question[],
+  limit: number,
+  showSession: boolean,
+): void {
+  // Costliest first. A listing sorted by when a question was asked buries the one that matters
+  // under three hundred single-call reads, and what this table is for is the tail.
+  const sorted = [...all].sort(
+    (a, b) => b.calls.length - a.calls.length || a.session.localeCompare(b.session) || a.task - b.task,
+  )
+  const rows = shown(sorted, limit)
+  console.log(
+    `  ${pad('QUESTION', showSession ? 16 : 10)}${padStart('CALLS', 5)}  ${padStart('AGAIN', 5)}  ${padStart('FETCH', 5)}  ${padStart('GUESS', 5)}  ${pad('KIND', 9)}${padStart('IN', 7)}  ${padStart('TIME', 6)}  ASKED ABOUT`,
+  )
+  for (const question of rows) {
+    console.log(
+      `  ${pad(questionId(question, showSession), showSession ? 16 : 10)}${padStart(String(question.calls.length), 5)}  ${padStart(String(question.repeats), 5)}  ${padStart(String(question.fetches), 5)}  ${padStart(String(question.sweeps), 5)}  ${pad(question.kind, 9)}${padStart(tokens(question.in_tokens), 7)}  ${padStart(duration(question.ms), 6)}  ${clip(question.terms.join(' ') || '—', 30)}`,
+    )
+  }
+  console.log('')
+  const calls = every.reduce((sum, question) => sum + question.calls.length, 0)
+  const reasked = every.filter((question) => question.calls.length > 1).length
+  console.log(`  ${counted(rows.length, all.length, 'question')}${more(rows.length, all.length)}`)
+  console.log(
+    `  ${every.length} asked in all · ${calls} calls · ${(calls / every.length).toFixed(2)} per question · ${reasked} took more than one`,
+  )
+  console.log('  AGAIN is the same words asked of the same places over again.')
+  console.log('  `probez question <id>` shows every call one of them took.')
+  console.log('')
+}
+
 function printTrails(all: Trail[], limit: number, showSession: boolean, deep: boolean): void {
   const rows = shown(all, limit)
   console.log(
@@ -1299,6 +1420,7 @@ async function main(): Promise<void> {
         unclassified: { type: 'boolean', default: false },
         deep: { type: 'boolean', default: false },
         'min-depth': { type: 'string' },
+        'min-calls': { type: 'string' },
         outcome: { type: 'string' },
         agent: { type: 'string' },
         errors: { type: 'boolean', default: false },
@@ -1330,7 +1452,13 @@ async function main(): Promise<void> {
   // and either one may be omitted. Two positionals are `<project> <id>`; one is the id alone,
   // except for `task` and `round`, whose ids are numeric, so a positional that does not look like `7`
   // or `fe64e716#7` is a project name there.
-  if (command === 'session' || command === 'task' || command === 'round' || command === 'trail') {
+  if (
+    command === 'session' ||
+    command === 'task' ||
+    command === 'round' ||
+    command === 'trail' ||
+    command === 'question'
+  ) {
     if (positionals[2] !== undefined) {
       selector = positionals[2]
     } else if (target !== undefined && (command === 'session' || looksLikeSelector(target))) {
@@ -1494,7 +1622,7 @@ async function main(): Promise<void> {
 
   const targeting = { all: values.all, includeTemp: values['include-temp'] }
 
-  const READ_COMMANDS = ['sessions', 'session', 'tasks', 'task', 'rounds', 'round', 'trails', 'trail', 'tools', 'analyze']
+  const READ_COMMANDS = ['sessions', 'session', 'tasks', 'task', 'rounds', 'round', 'trails', 'trail', 'questions', 'question', 'tools', 'analyze']
   if (READ_COMMANDS.includes(command)) {
     const { projects: found } = await resolveTargets(projects, target, targeting)
     // An imported project is in the store and nowhere else: the agent never ran it here, so
@@ -1522,7 +1650,10 @@ async function main(): Promise<void> {
     if (values.agent !== undefined && values.agent !== 'main' && values.agent !== 'sub') {
       fail(`--agent takes main or sub, got "${values.agent}"`)
     }
-    if (values.kind !== undefined && !COMMAND_KINDS.includes(values.kind as never)) {
+    // `--kind` names a command kind under `rounds` and a question kind under `questions`. Two
+    // commands take the flag and mean different vocabularies by it, so each is checked against its
+    // own list — a shared check would refuse every legal value of whichever list it did not hold.
+    if (command !== 'questions' && values.kind !== undefined && !COMMAND_KINDS.includes(values.kind as never)) {
       fail(`--kind takes one of ${COMMAND_KINDS.join(', ')}, got "${values.kind}"`)
     }
     if (values.category !== undefined && !isCategory(values.category.toLowerCase())) {
@@ -1543,9 +1674,12 @@ async function main(): Promise<void> {
     if (values.outcome !== undefined && !OUTCOMES.includes(values.outcome)) {
       fail(`--outcome takes one of ${OUTCOMES.join(', ')}, got "${values.outcome}"`)
     }
+    if (command === 'questions' && values.kind !== undefined && !isAsk(values.kind)) {
+      fail(`--kind takes one of ${ASKS.join(', ')}, got "${values.kind}"`)
+    }
 
     // Naming one thing inside a project only means something once the project is settled.
-    const DETAIL = ['session', 'task', 'round', 'trail']
+    const DETAIL = ['session', 'task', 'round', 'trail', 'question']
     if (DETAIL.includes(command) && matched.length > 1) {
       fail(
         `"${target ?? process.cwd()}" matches ${matched.length} projects. Name one to look inside it`,
@@ -1553,6 +1687,12 @@ async function main(): Promise<void> {
     }
     if (command === 'trail' && selector === undefined) {
       fail('trail needs a round id from the walk, as `probez trail 1.7`. `probez trails` lists them')
+    }
+    if (command === 'question' && selector === undefined) {
+      fail(
+        'question needs a round id it was asked at, as `probez question 2.250`. ' +
+          '`probez questions` lists them',
+      )
     }
     if (command === 'round' && selector === undefined) {
       fail('round needs a round id, as `probez round 3.12` or `probez round fe64e716#3.12`')
@@ -1627,7 +1767,10 @@ async function main(): Promise<void> {
           ? await readResults(project, dataDir, idsToRead(scope))
           : undefined
         const walks = new Map<string, TrailShare>(
-          groups.map((group) => [group.name, trailShare(group.rounds, { results: walkResults })]),
+          groups.map((group) => [
+            group.name,
+            trailShare(group.rounds, { results: walkResults, root: project.path ?? '' }),
+          ]),
         )
 
         // The cache always describes the whole project, whatever slice was asked to be printed.
@@ -1740,6 +1883,56 @@ async function main(): Promise<void> {
         continue
       }
 
+      if (command === 'questions' || command === 'question') {
+        const scope = session === undefined ? rounds : rounds.filter((r) => r.session === session)
+        const withTask = taskFilter === undefined
+          ? scope
+          : scope.filter((r) => r.task === taskFilter)
+        const minCalls = asCount(values['min-calls'], 'min-calls') ?? 1
+        const all = questionsOf(withTask, { root: project.path ?? '' })
+        // Filtered here rather than inside `questionsOf`, so that what a question cost on average
+        // stays a fact about the project and not about the rows that survived a flag.
+        const wanted = all.filter(
+          (question) =>
+            question.calls.length >= minCalls &&
+            (values.kind === undefined || question.kind === values.kind),
+        )
+
+        if (command === 'question') {
+          try {
+            const found = findQuestion(rounds, all, selector!, session)
+            if (values.json) output.push(found)
+            else printQuestion(found, width, sessions.length > 1)
+          } catch (error) {
+            if (!(error instanceof SelectorError)) throw error
+            fail(error.message)
+          }
+          continue
+        }
+
+        if (values.json) {
+          output.push(
+            matched.length > 1
+              ? { project: projectName(project), path: project.path, questions: wanted }
+              : wanted,
+          )
+          continue
+        }
+        projectHeader(project)
+        if (wanted.length === 0) {
+          console.log('')
+          console.log(
+            all.length > 0
+              ? '  no questions matched those filters'
+              : '  no questions here: nothing in this project went looking for anything',
+          )
+          console.log('')
+          continue
+        }
+        printQuestions(wanted, all, limit, sessions.length > 1)
+        continue
+      }
+
       if (command === 'trails' || command === 'trail') {
         // Result bodies live in the archived session copies rather than in `rounds.jsonl`, so the
         // deep read is one pass over those files and happens only when it is asked for.
@@ -1749,7 +1942,7 @@ async function main(): Promise<void> {
           ? scope
           : scope.filter((r) => r.task === taskFilter)
         const minDepth = asCount(values['min-depth'], 'min-depth')
-        const all = trailsOf(withTask, { results, minDepth })
+        const all = trailsOf(withTask, { results, minDepth, root: project.path ?? '' })
         const wanted = values.outcome === undefined
           ? all
           : all.filter((trail) => trail.outcome === values.outcome)

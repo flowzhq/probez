@@ -288,6 +288,47 @@ header arguing against. The rules earned their keep against real data: without t
 five `Read` calls paging down one file chained into a depth-five walk that visited nowhere, which was
 the largest false positive in a real store.
 
+### Questions: the other reading of the same calls
+
+A trail is a walk that went somewhere, and that is a real limit on what it can measure. Its edges
+exist only where a call *narrowed*, so a call that asks the same thing over again produces no edge,
+becomes no step, and joins no walk. Against probez's own store 34% of every finding call is exactly
+that repeat, and one tenth of those reach a trail. The walk keeps the productive hops and drops the
+thrash — which is the wrong way round for the question "what does navigation cost".
+
+So a **question** is the same calls read the other way: one thing the agent needed to know, and
+every call it spent finding out, whether or not any of them got anywhere. Eleven greps for one field
+name in one file are one question that cost eleven calls. The two objects are not rivals and neither
+subsumes the other: a trail says how a search was shaped, a question says what it was for and what
+it came to. A call belongs to both, to one, or to neither.
+
+**Membership is one rule.** A call joins the most recent open question that shares one of the
+project's own words with it, or — when it named none of them — that already reached the place it
+opened. That second half is the locate-then-fetch pair, and it is what makes `sed -n 40,80p` belong
+to the grep that found line 40. Words the *language* owns cannot join anything: `func` appears in
+three unrelated greps in half the Go sessions in a real store, and joining on it folded a search for
+a tool, a search for a clone URL and a search for a binary path into one question about nothing.
+
+**The kind is one table, and it has six rows where the design has seven.** `define`, `refs`,
+`outline`, `flow`, `touches`, `covers`. The seventh — *how does A reach B* — is deliberately absent.
+No grep expresses that question, so no reading of a grep can recover it; an agent that has it
+answers it by reading four files, and those calls arrive as whatever they literally were. Naming a
+kind the evidence can never produce would be a claim about intent the inputs do not carry, which is
+the same bargain `classify.ts` makes when it returns `unclassified` rather than the nearest guess.
+
+**What each question carries is what it cost, and how much of that was waste.** `AGAIN` is the same
+words asked of the same places over again. `FETCH` is calls that only turned a line number into a
+body — protocol overhead, not thinking. `GUESS` is calls that named three or more different words at
+once, which is an agent reaching for vocabulary it has not learned. All three are the numbers a
+category tally averages away and a trail cannot see.
+
+**One correction this required.** `Read` records an absolute path and a shell command records what
+was typed, and nothing normalized the two, so a read and a search never named the same file. In
+probez's own store that is 206 of 290 absolute paths, every one the fetch half of a pair. Paths are
+now read relative to the checkout, which lifts trail coverage of finding calls from 21.8% to 27.1%
+as a side effect. It needed no additional collection either: `tools[].input` already carried both
+forms.
+
 **Attribution caveat.** A project is the directory the agent session was *started* in, because that
 is how the agent files its own logs. Work done in one repo from a session launched in another is
 therefore booked against the launch directory, which will skew per-project percentages for anyone

@@ -670,6 +670,61 @@ test('trails takes only the flags it reads', () => {
   assert.match(filtered.stdout, /no trails matched those filters/)
 })
 
+test('questions counts what the agent needed to know, including what got nowhere', () => {
+  const env = makeWalkSource()
+  collect(env)
+
+  const out = read(env, ['questions'])
+  assert.equal(out.status, 0)
+  // The walk fixture searches `tests` and then reads one file under it: one question, two calls.
+  assert.match(out.stdout, /ASKED ABOUT/)
+  assert.match(out.stdout, /priority/)
+  assert.match(out.stdout, /per question/)
+  // Unlike a trail, a question needs no archived session: it is read from the inputs alone, so
+  // there is no shallow answer to warn about.
+  assert.doesNotMatch(out.stdout, /--deep/)
+})
+
+test('a question is named by any round it was asked at, and its repeats are marked', () => {
+  const env = makeWalkSource()
+  collect(env)
+
+  const one = read(env, ['questions', '--kind', 'covers'])
+  assert.equal(one.status, 0)
+  assert.match(one.stdout, /covers/)
+
+  const detail = read(env, ['question', '1.3'])
+  assert.equal(detail.status, 0)
+  assert.match(detail.stdout, /asked about priority/)
+  assert.match(detail.stdout, /fetched a body/)
+  // The read that only turned the grep's line number into a body is in the same question, so
+  // asking for its round finds it too.
+  assert.equal(read(env, ['question', '1.4']).stdout.trim(), detail.stdout.trim())
+})
+
+test('questions takes only the flags it reads, and refuses the wrong vocabulary', () => {
+  const env = makeWalkSource()
+  collect(env)
+  assert.match(read(env, ['questions', '--kind', 'sideways']).stderr, /--kind takes one of/)
+  assert.match(read(env, ['questions', '--min-depth', '3']).stderr, /--min-depth does not apply/)
+  assert.match(read(env, ['tools', '--min-calls', '2']).stderr, /--min-calls does not apply/)
+  const filtered = read(env, ['questions', '--min-calls', '99'])
+  assert.equal(filtered.status, 0)
+  assert.match(filtered.stdout, /no questions matched those filters/)
+})
+
+test('a cost per question is a fact about the project, not about the rows a flag left', () => {
+  const env = makeWalkSource()
+  collect(env)
+  const every = read(env, ['questions'])
+  const some = read(env, ['questions', '--min-calls', '2'])
+  const line = /(\d+) asked in all · (\d+) calls · ([\d.]+) per question/
+  const before = every.stdout.match(line)
+  const after = some.stdout.match(line)
+  assert.ok(before !== null && after !== null)
+  assert.deepEqual(before.slice(1), after.slice(1))
+})
+
 test('analyze says how much of the finding happened inside a walk', () => {
   const env = makeWalkSource()
   collect(env)

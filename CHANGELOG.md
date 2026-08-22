@@ -8,6 +8,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+### Added
+
+- **`probez questions` and `probez question <id>`: what the agent needed to know, and what finding
+  out cost it.** A trail is a walk that went somewhere, and its edges exist only where a call
+  *narrowed* — a smaller scope, a file under a directory already reached. A call that asks the same
+  thing over again narrows nothing, so it forms no edge, joins no walk, and leaves no trace in
+  `probez trails`. Against probez's own store that is 34% of every finding call, and a tenth of it
+  reaches a trail: the walk keeps the productive hops and drops the thrash, which is backwards for
+  anyone measuring what navigation costs.
+
+  A question is the other reading of the same calls. One thing the agent needed to know, and every
+  call it spent finding out, whether or not any of them got anywhere. Eleven greps for one field
+  name in one file are one question that cost eleven calls, not eleven calls that formed no walk.
+
+  Each one carries what it cost and how much of that was waste: `AGAIN`, the same words asked of the
+  same places over again; `FETCH`, calls that only turned a line number into a body; and `GUESS`,
+  calls that named three or more different words at once, which is an agent reaching for vocabulary
+  it has not learned yet. `KIND` is which of six questions it was — `define`, `refs`, `outline`,
+  `flow`, `touches`, `covers` — by one readable table in `question.ts`. A seventh, *how does A reach
+  B*, is deliberately absent: no grep expresses it, so no reading of a grep can recover it, and a
+  kind the evidence can never produce would be a claim about intent the inputs do not carry.
+
+  `--kind` and `--min-calls` filter the listing; the cost-per-question line under it is always over
+  the whole scope, so a filter cannot make a project look like it asks harder questions than it
+  does.
+
+### Fixed
+
+- **`--kind` was validated against one vocabulary for every command that takes it.** `rounds --kind`
+  names a command kind and `questions --kind` names a question kind, and a single check against the
+  command-kind list refused every legal value of the other. The check is now per command, which is
+  what `COMMAND_FLAGS` already implied by scoping the flag itself.
+
+- **A read and a search never named the same file, so half of every locate-then-fetch pair went
+  unexplained.** `Read` records an absolute path and a shell command records whatever was typed,
+  which is nearly always relative. Nothing normalized the two, so `Read /repo/src/store.ts` and
+  `grep flush src/store.ts` were different places to `trailsOf`: no `narrow` edge, no revisit, and
+  two entries in a trail's path count for one file. In probez's own store that is 206 of 290
+  absolute paths, every one of them the fetch half of a pair.
+
+  Paths are now read relative to the checkout the calls ran in, and only that prefix comes off — a
+  path elsewhere on the machine is elsewhere, and rewriting it would fold the agent's own notes into
+  the project's source. Trail coverage of finding calls goes from 21.8% to 27.1% and the edge count
+  from 280 to 354; the deepest walk in the session that prompted the module goes from 13 steps to
+  19.
+
 ### Fixed
 
 - **A stream filter at the head of a pipeline was read as scaffolding, and the call as a round that

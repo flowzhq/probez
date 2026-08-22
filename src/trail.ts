@@ -48,6 +48,17 @@ const SCOPE_RANK: Record<Scope, number> = { tree: 3, dir: 2, file: 1, span: 0 }
 /** Verbs that are part of finding something out. A trail is made of these and nothing else. */
 const FINDING = new Set<Verb>(['search', 'read', 'query'])
 
+/**
+ * Whether a verb is part of finding something out.
+ *
+ * The set itself stays private so that there is one place to add to when a verb starts counting as
+ * navigation. `question.ts` asks through here rather than keeping its own copy: what a finding call
+ * is has to mean the same thing in both, or the two modules report shares of different totals.
+ */
+export function isFindingVerb(verb: Verb): boolean {
+  return FINDING.has(verb)
+}
+
 /** Verbs that end a search by acting on what it found. */
 const ACTING = new Set<Verb>(['write', 'move'])
 const CHECKING = new Set<Verb>(['test', 'build', 'run'])
@@ -229,7 +240,7 @@ export function probesIn(tool: ToolCall): string[] {
  * first recognizable path is the honest stand-in for it. A walk needs all of them: `cat` over five
  * files is five nodes visited, not one.
  */
-export function sitesIn(tool: ToolCall): string[] {
+export function sitesIn(tool: ToolCall, root = ''): string[] {
   const name = typeof tool.name === 'string' ? tool.name : ''
   if (name !== 'Bash') {
     const out: string[] = []
@@ -240,7 +251,7 @@ export function sitesIn(tool: ToolCall): string[] {
       const where = (input as Record<string, unknown>).path
       if (typeof where === 'string' && where !== '' && where !== direct) out.push(where)
     }
-    return out
+    return [...new Set(out.map((site) => siteOf(site, root)))]
   }
 
   const raw = commandOf(tool.input)
@@ -254,7 +265,31 @@ export function sitesIn(tool: ToolCall): string[] {
   // how a walk that ended in a change reads as abandoned.
   const wrote = writesToFile(text)
   if (wrote !== null && wrote !== '') found.unshift(wrote)
-  return [...new Set(found)]
+  return [...new Set(found.map((site) => siteOf(site, root)))]
+}
+
+/**
+ * A path as a walk knows it: relative to the checkout, so that one file is one place.
+ *
+ * `Read` records an absolute path and a shell command records whatever the agent typed, which is
+ * nearly always relative. Left alone the two never meet: `Read /repo/src/store.ts` and
+ * `grep flush src/store.ts` name different places, so the commonest shape there is — locate with a
+ * search, fetch with a read — produces no edge at all. Against probez's own store that is 206 of
+ * 290 absolute paths, every one of them the fetch half of a pair.
+ *
+ * Only the checkout's own prefix comes off. A path somewhere else on the machine is somewhere else,
+ * and rewriting it would fold the agent's own notes into the project's source.
+ */
+export function siteOf(path: string, root: string): string {
+  if (path === '') return ''
+  let out = path
+  if (root !== '') {
+    const bare = root.endsWith('/') ? root.slice(0, -1) : root
+    if (out === bare) return '.'
+    if (out.startsWith(`${bare}/`)) out = out.slice(bare.length + 1)
+  }
+  while (out.startsWith('./')) out = out.slice(2)
+  return out
 }
 
 /** Whether a path names a directory rather than a file, as far as a reader can tell without one. */
@@ -338,8 +373,14 @@ export type EdgeKind =
   /** The earlier call named this same path, and this one reached less of it. */
   | 'narrow'
 
-/** One call, as a node in a walk. */
-export interface Step {
+/**
+ * One call, as somewhere the agent went.
+ *
+ * The node without the edge. `question.ts` reads calls by the same rules and has no use for an
+ * edge, and carrying trail's three edge fields into its output would publish `source: null` on
+ * every call in it — a field a reader has to be told to ignore.
+ */
+export interface Call {
   session: string
   /** Index of the round within its session. */
   round: number
@@ -357,15 +398,19 @@ export interface Step {
   scope: Scope
   sites: string[]
   probes: string[]
+  /** Share of its round's cost this call carries, on the same even split `classifyRound` uses. */
+  share: number
+  ms: number | null
+  result_chars: number | null
+}
+
+/** One call, as a node in a walk: where it went, plus what put it there. */
+export interface Step extends Call {
   /** Where this step came from, or null for a root. */
   source: number | null
   edge: EdgeKind | null
   /** The path or word that links it to its source, so the edge can be read rather than trusted. */
   via: string
-  /** Share of its round's cost this call carries, on the same even split `classifyRound` uses. */
-  share: number
-  ms: number | null
-  result_chars: number | null
 }
 
 /** The single act a call is, for the purposes of a walk. A call that did several is its widest. */
@@ -388,15 +433,20 @@ function nameOf(tool: ToolCall): string {
   return (real ?? placed[0])?.name ?? name
 }
 
-/** Every call in one task, in order, as nodes with no edges yet. */
-function stepsOf(rounds: Round[]): Step[] {
+/**
+ * Every call in one task, in order, as nodes with no edges yet.
+ *
+ * Exported because `question.ts` reads the same calls and must read them by the same rule. Two
+ * modules that agree today on what a finding call is are two modules that can stop agreeing.
+ */
+export function stepsOf(rounds: Round[], root = ''): Step[] {
   const out: Step[] = []
   for (const round of rounds) {
     const tools = round.tools ?? []
     if (tools.length === 0) continue
     const share = 1 / tools.length
     for (const tool of tools) {
-      const sites = sitesIn(tool)
+      const sites = sitesIn(tool, root)
       out.push({
         session: round.session,
         round: round.round,
@@ -495,8 +545,14 @@ function edgeBetween(
   return null
 }
 
-/** Whether a path sits inside a directory another step reached. */
-function sitsUnder(path: string, directory: string): boolean {
+/**
+ * Whether a path sits inside a directory another step reached.
+ *
+ * Shared with `question.ts`, which needs the same rule for the same shape: a search pointed at a
+ * directory, then a read of one file in it. Kept in one place so that what counts as "inside"
+ * cannot mean two things.
+ */
+export function sitsUnder(path: string, directory: string): boolean {
   if (directory === '' || !looksLikeDirectory(directory)) return false
   const prefix = directory.endsWith('/') ? directory : `${directory}/`
   return path.startsWith(prefix) && path.length > prefix.length
@@ -575,6 +631,8 @@ export const MIN_PATHS = 2
 export interface TrailOptions {
   /** Result bodies by tool call id. Absent means shallow: edges are inferred from inputs alone. */
   results?: ReadonlyMap<string, string>
+  /** The checkout the calls ran in, so an absolute path and a typed one name one place. */
+  root?: string
   lookback?: number
   minSteps?: number
   minDepth?: number
@@ -625,6 +683,7 @@ export function trailsOf(rounds: Round[], options: TrailOptions = {}): Trail[] {
   const minSteps = Math.max(2, Math.round(options.minSteps ?? MIN_STEPS))
   const minDepth = Math.max(1, Math.round(options.minDepth ?? MIN_DEPTH))
   const minPaths = Math.max(1, Math.round(options.minPaths ?? MIN_PATHS))
+  const root = options.root ?? ''
 
   const ordered = [...rounds].sort(
     (a, b) => a.session.localeCompare(b.session) || a.round - b.round,
@@ -641,7 +700,7 @@ export function trailsOf(rounds: Round[], options: TrailOptions = {}): Trail[] {
 
   const out: Trail[] = []
   for (const group of byTask.values()) {
-    const steps = stepsOf(group)
+    const steps = stepsOf(group, root)
     if (steps.length < minSteps) continue
     link(steps, options.results, lookback)
     out.push(...assemble(steps, group, minSteps, minDepth, minPaths))
@@ -735,8 +794,13 @@ function assemble(
   return out.sort((a, b) => a.steps[0]!.at - b.steps[0]!.at)
 }
 
-/** What each round cost, so a step can carry its share of it the way a label does. */
-function costOf(rounds: Round[]): Map<string, { ms: number; in: number; out: number }> {
+/**
+ * What each round cost, so a step can carry its share of it the way a label does.
+ *
+ * Shared with `question.ts` rather than written twice: what a call cost is arithmetic, and two
+ * copies of it are two things to keep in step.
+ */
+export function costOf(rounds: Round[]): Map<string, { ms: number; in: number; out: number }> {
   const out = new Map<string, { ms: number; in: number; out: number }>()
   for (const round of rounds) {
     out.set(`${round.session}\0${round.round}`, {
