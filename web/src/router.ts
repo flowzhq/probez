@@ -21,6 +21,14 @@ export type Route =
       round: number | null
       /** The walk being read, by its `ref`. A selection inside the task, like `round`. */
       trail: string | null
+      /**
+       * The question being read, by its `at` — the position of its first call in the task.
+       *
+       * A number rather than the `ref` a person reads, because a round can start two questions and
+       * then the ref names both. The walk above has no such trouble: two walks do not begin at one
+       * call.
+       */
+      question: number | null
     }
   | { name: 'missing'; path: string }
 
@@ -42,6 +50,8 @@ export function parse(pathname: string, search: string): Route {
   const selected = query.get('r')
   const round = selected === null || selected === '' ? null : Number(selected)
   const trail = query.get('trail')
+  const asked = query.get('question')
+  const question = asked === null || asked === '' ? null : Number(asked)
   return {
     name: 'task',
     slug,
@@ -49,6 +59,7 @@ export function parse(pathname: string, search: string): Route {
     task: number,
     round: round === null || Number.isNaN(round) ? null : round,
     trail: trail === null || trail === '' ? null : trail,
+    question: question === null || Number.isNaN(question) ? null : question,
   }
 }
 
@@ -57,10 +68,18 @@ export const href = {
   settings: () => '/settings',
   project: (slug: string) => `/p/${slug}`,
   session: (slug: string, session: string) => `/p/${slug}/s/${session}`,
-  task: (slug: string, session: string, task: number, round?: number, trail?: string | null) => {
+  task: (
+    slug: string,
+    session: string,
+    task: number,
+    round?: number,
+    trail?: string | null,
+    question?: number | null,
+  ) => {
     const query = new URLSearchParams()
     if (round !== undefined) query.set('r', String(round))
     if (trail !== undefined && trail !== null) query.set('trail', trail)
+    if (question !== undefined && question !== null) query.set('question', String(question))
     const search = query.toString()
     return `/p/${slug}/s/${session}/t/${task}${search === '' ? '' : `?${search}`}`
   },

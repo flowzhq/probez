@@ -1,11 +1,12 @@
 import { useState } from 'react'
 
 import { api } from '../api'
-import type { ToolRow, Trail } from '../api'
+import type { Question, ToolRow, Trail } from '../api'
 import { Actions } from '../components/Actions'
 import { Chrome, Facts, Info, Loading, Problem } from '../components/Chrome'
 import { InTokens, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
 import { MixBar, WorkBars } from '../components/WorkBars'
+import { QUESTIONS_ARIA, QuestionsTable, questionsExplained } from '../components/QuestionPanel'
 import { TRAILS_ARIA, trailsExplained } from '../components/TrailPanel'
 import { ago, count, duration, money, percent, shortId, shortModel, tokens, when } from '../format'
 import { go, href, linkProps } from '../router'
@@ -23,7 +24,7 @@ export function Project({ slug }: { slug: string }): ReactElement {
   const [read, setRead] = useState(0)
   const { data, error, loading } = useData(() => api.project(slug), [slug, read])
   const [tab, setTab] = useState<'work' | 'tools'>('work')
-  const [list, setList] = useState<'sessions' | 'trails'>('sessions')
+  const [list, setList] = useState<'sessions' | 'trails' | 'questions'>('sessions')
 
   return (
     <>
@@ -117,13 +118,15 @@ export function Project({ slug }: { slug: string }): ReactElement {
             <section>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <h2 style={{ margin: 0 }}>
-                  {list === 'sessions' ? 'Sessions' : 'Trails'}
+                  {list === 'sessions' ? 'Sessions' : list === 'trails' ? 'Trails' : 'Questions'}
                   {/* The columns are four one-word names for things nobody should be expected to
                       infer, and the concept behind them is not one either. The mark says an
                       explanation exists; the note under the table repeats the concept for anyone
                       who scrolls past it. */}
                   {list === 'trails' ? (
                     <Info says={trailsExplained()} aria={TRAILS_ARIA} />
+                  ) : list === 'questions' ? (
+                    <Info says={questionsExplained()} aria={QUESTIONS_ARIA} />
                   ) : null}
                 </h2>
                 <span className="spacer" style={{ flex: 1 }} />
@@ -134,9 +137,12 @@ export function Project({ slug }: { slug: string }): ReactElement {
                   <button aria-pressed={list === 'trails'} onClick={() => setList('trails')}>
                     trails
                   </button>
+                  <button aria-pressed={list === 'questions'} onClick={() => setList('questions')}>
+                    questions
+                  </button>
                 </div>
               </div>
-              {list === 'trails' ? <Trails slug={slug} read={read} /> : (
+              {list === 'questions' ? <Questions slug={slug} read={read} /> : list === 'trails' ? <Trails slug={slug} read={read} /> : (
               <table>
                 <thead>
                   <tr>
@@ -319,6 +325,63 @@ function Trails({ slug, read }: { slug: string; read: number }): ReactElement {
         at.
       </p>
     </>
+  )
+}
+
+function questionHref(slug: string, question: Question): string {
+  return href.task(
+    slug,
+    question.session,
+    question.task,
+    question.calls[0]?.round,
+    null,
+    question.at,
+  )
+}
+
+/**
+ * Every question in the project, costliest first.
+ *
+ * The tail is the reason to look, so the sort is by what each cost rather than by when it was
+ * asked — and questions answered in a single call are folded into the note rather than filling
+ * three hundred rows with the ones where nothing went wrong.
+ *
+ * A row goes to the question itself, the way a trail row does: the task it was asked in, with the
+ * question open and its first call selected. There is no question page, for the same reason there
+ * is no trail page — both are readings of rounds, and the trace is where rounds are shown.
+ */
+function Questions({ slug, read }: { slug: string; read: number }): ReactElement {
+  const { data, error } = useData(() => api.questions(slug), [slug, read])
+
+  if (error !== null && data === null) return <Problem message={error} />
+  if (data === null) return <Loading what="the questions" />
+  if (data.questions.length === 0) {
+    return <p className="note">Nothing in this project went looking for anything.</p>
+  }
+
+  const once = data.questions.filter((one) => one.calls.length <= 1).length
+  const per = data.calls / data.questions.length
+
+  return (
+    <QuestionsTable
+      questions={data.questions}
+      onOpen={(picked) => {
+        if (picked !== null) go(questionHref(slug, picked))
+      }}
+      hrefFor={(one) => questionHref(slug, one)}
+      note={
+        <p className="note" style={{ marginTop: 12 }}>
+          {data.questions.length} questions over {data.calls} calls that were finding something out
+          — {per.toFixed(2)} calls per question, {data.reasked} of them taking more than one
+          {once === 0 ? '' : `, and ${once} answered in a single call and not listed`}. A trail is a
+          walk that went somewhere, and its hops exist only where a call narrowed; a call that asks
+          the same thing over again narrows nothing and so appears in no walk at all. Here it does:{' '}
+          {data.repeats} calls re-asked something already asked, {data.fetches} only turned a line
+          number into a body, and {data.sweeps} named three or more different words at once. A row
+          opens the task it was asked in, on the call it started with.
+        </p>
+      }
+    />
   )
 }
 

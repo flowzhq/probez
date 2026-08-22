@@ -1126,6 +1126,10 @@ export function findTrail(
  * Named the same way a trail is, and for the same reason: by a round it passed through, which is a
  * selector `probez round` already takes. A round can belong to a walk and to a question at once —
  * they are two readings of the same calls — so asking for one is not asking for the other.
+ *
+ * A round can also start *two* questions, because it can make two tool calls at once, and then the
+ * round is not enough to name one. The costliest wins: it is deterministic, and it is the one worth
+ * reading. `probez questions --json` carries `at`, which addresses every question exactly.
  */
 export function findQuestion(
   rounds: Round[],
@@ -1139,9 +1143,11 @@ export function findQuestion(
       question.session === round.session &&
       question.calls.some((call) => call.round === round.round),
   )
-  const starts = mine.find((question) => question.calls[0]?.round === round.round)
-  if (starts !== undefined) return starts
-  if (mine.length > 0) return mine[0]!
+  const costliest = (found: Question[]): Question =>
+    found.reduce((best, one) => (one.calls.length > best.calls.length ? one : best))
+  const starts = mine.filter((question) => question.calls[0]?.round === round.round)
+  if (starts.length > 0) return costliest(starts)
+  if (mine.length > 0) return costliest(mine)
   throw new SelectorError(
     `round ${round.task}.${round.round} asked nothing. \`probez questions\` lists what did`,
   )

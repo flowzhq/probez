@@ -142,8 +142,21 @@ function kindOf(terms: string[], files: string[], calls: Call[]): Ask {
 export interface Question {
   session: string
   task: number
-  /** `<task>.<round>` of the first call. A question is asked for by where it was first asked. */
+  /**
+   * `<task>.<round>` of the first call. What a question is called, and how it is asked for.
+   *
+   * Not unique on its own. A round can make several tool calls at once and two of them can start
+   * two different questions, which is 5.5% of the questions in the corpora this was built against.
+   * `at` is what addresses one exactly; this is what a person reads.
+   */
   ref: string
+  /**
+   * Position of the first call within its task, which is unique across the task's questions.
+   *
+   * A round number cannot name a question on its own, and neither can anything else a person would
+   * type. So the name and the address are two fields rather than one overloaded string.
+   */
+  at: number
   /** `<task>.<round>` of the last. */
   last: string
   kind: Ask
@@ -351,6 +364,7 @@ export function questionsOf(rounds: Round[], options: QuestionOptions = {}): Que
         session: first.session,
         task: first.task,
         ref: first.ref,
+        at: first.at,
         last: last.ref,
         kind: kindOf(one.terms, one.files, one.calls),
         terms: one.terms,

@@ -59,9 +59,10 @@ Both are below: [the view](#the-view) first, [the CLI](#the-cli) after.
 down to a single tool call. It listens on `127.0.0.1` with a token that is new on every run.
 
 **A project** — where its work went, what each kind of work cost, and the sessions it happened in.
-The list under it is two tabs: *sessions*, each row carrying the whole spread of its work as a bar
-rather than the name of its largest slice, and *trails*, every walk the project made through itself.
-A trail row opens the task it happened in, on the round it started at.
+The list under it is three tabs: *sessions*, each row carrying the whole spread of its work as a bar
+rather than the name of its largest slice; *trails*, every walk the project made through itself; and
+*questions*, everything it needed to know and what each answer cost. Either kind of row opens the
+task it happened in, with the walk or the question already open on the round it started at.
 
 <p align="center">
   <img src="docs/view-project.png" alt="probez view: a project, its work profile and its sessions" width="900">
@@ -85,6 +86,13 @@ over the rounds they touched. A walk is not a stretch of rounds — it is what t
 so a search interrupted by an edit and resumed four rounds later is still one search, and the phase
 ribbon cannot show that. Hover one for how far it went, what it started from, and whether it ended
 in a change; click it to open the round it started at. See `probez trails` below.
+
+Under the trace, **what it needed to know**: the same calls read the other way. A walk is what
+followed something; a question is what was being asked, including the asking that got nowhere — and
+since a walk's hops exist only where a call narrowed, a call that asks the same thing over again
+appears in no walk at all. Clicking a question lights the rounds it touched and lists every call it
+took, with `↺` against the ones that asked what had already been asked. Questions answered in a
+single call are counted under the table rather than listed in it. See `probez questions` below.
 
 Three things worth knowing:
 

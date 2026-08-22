@@ -34,7 +34,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   the whole scope, so a filter cannot make a project look like it asks harder questions than it
   does.
 
+- **The view shows questions too.** A project's list gains a third tab beside *sessions* and
+  *trails*, and a task page gains a *what it needed to know* section under its trace. Clicking a
+  question lights the rounds it touched and lists every call it took, marking the ones that asked
+  what had already been asked. Rows link the same way trail rows do: to the task it happened in,
+  with the question already open.
+
+  A question is addressed by the position of its first call rather than by the `<task>.<round>` it
+  is named after. A round can make several tool calls at once and two of them can start two
+  different questions — 5.5% of the questions across the corpora this was built against — and a
+  name that reaches only the first of them leaves the rest unopenable.
+
 ### Fixed
+
+- **Clicking a walk in the trace opened its round but dropped the walk.** The lane's click handler
+  selected the walk and then selected the round again through a second callback, which had not seen
+  the walk yet and wrote the URL from a stale value. The walk was chosen and immediately discarded,
+  so the panel never opened — while the identical click from the trails table, which writes both
+  halves at once, always did. Picking the walk is now the whole click; whoever owns the selection
+  opens the round, because both halves of it live in one place.
 
 - **`--kind` was validated against one vocabulary for every command that takes it.** `rounds --kind`
   names a command kind and `questions --kind` names a question kind, and a single check against the

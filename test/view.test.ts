@@ -172,6 +172,21 @@ test('every level answers, and its numbers are the ones the store holds', async 
 
     const tools = await body(withToken(server, `/api/projects/${slug}/tools`))
     assert.ok(tools.tools.length > 0)
+
+    // Questions travel with the task, unlike trails, because they need no second pass over the
+    // logs — and a task page that had to fetch them separately would render its own section empty.
+    assert.ok(Array.isArray(task.questions), 'the task payload carries no questions')
+    const questions = await body(withToken(server, `/api/projects/${slug}/questions`))
+    assert.ok(Array.isArray(questions.questions))
+    assert.equal(
+      questions.calls,
+      questions.questions.reduce((sum: number, one: { calls: unknown[] }) => sum + one.calls.length, 0),
+      'the denominator is not the calls the questions are made of',
+    )
+    // A round can start two questions, so the name a person reads cannot address one. `at` can,
+    // and the view's links are built from it.
+    const seen = new Set(questions.questions.map((one: { session: string; at: number }) => `${one.session}\0${one.at}`))
+    assert.equal(seen.size, questions.questions.length, 'two questions share an address')
   } finally {
     await server.close()
   }

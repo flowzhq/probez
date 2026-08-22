@@ -163,8 +163,8 @@ export interface Trace {
   span: { first: string | null; last: string | null; elapsed_ms: number; active_ms: number }
 }
 
-/** One call as a node in a walk. Mirrors `Step` in src/trail.ts. */
-export interface TrailStep {
+/** One call, as somewhere the agent went. Mirrors `Call` in src/trail.ts. */
+export interface Call {
   session: string
   round: number
   task: number
@@ -177,12 +177,42 @@ export interface TrailStep {
   scope: 'tree' | 'dir' | 'file' | 'span'
   sites: string[]
   probes: string[]
-  source: number | null
-  edge: 'listed' | 'probe' | 'narrow' | null
-  via: string
   share: number
   ms: number | null
   result_chars: number | null
+}
+
+/** One call as a node in a walk: where it went, plus what put it there. Mirrors `Step`. */
+export interface TrailStep extends Call {
+  source: number | null
+  edge: 'listed' | 'probe' | 'narrow' | null
+  via: string
+}
+
+/** Which of the six questions a run of calls was asking. Mirrors `Ask` in src/question.ts. */
+export type Ask = 'define' | 'refs' | 'outline' | 'flow' | 'touches' | 'covers' | 'other'
+
+/**
+ * One thing the agent needed to know, and every call it spent finding out. Mirrors `Question`.
+ */
+export interface Question {
+  session: string
+  task: number
+  /** What it is called: `<task>.<round>` of its first call. Not unique — see `at`. */
+  ref: string
+  /** Position of its first call within the task, which addresses one exactly. */
+  at: number
+  last: string
+  kind: Ask
+  terms: string[]
+  files: string[]
+  calls: Call[]
+  repeats: number
+  fetches: number
+  sweeps: number
+  ms: number
+  in_tokens: number
+  out_tokens: number
 }
 
 /** A run of calls that followed one another into the repository. Mirrors `Trail` in src/trail.ts. */
@@ -401,6 +431,7 @@ export interface TaskPayload {
   analysis: Analysis
   trace: Trace
   trails: Trail[]
+  questions: Question[]
 }
 
 export interface RoundPayload {
@@ -422,6 +453,16 @@ export interface TrailsPayload {
   trails: Trail[]
   steps: number
   finding: number
+}
+
+export interface QuestionsPayload {
+  project: StoredProject
+  questions: Question[]
+  calls: number
+  repeats: number
+  fetches: number
+  sweeps: number
+  reasked: number
 }
 
 /** One tool result's body, fetched on request. Nothing renders it until someone asks. */
@@ -579,6 +620,9 @@ export const api = {
   // Reads every archived session in the project, so like `tools` it is fetched on the tab rather
   // than on the way to the page.
   trails: (slug: string) => get<TrailsPayload>(`/projects/${slug}/trails`),
+  // Read from `rounds.jsonl` alone, unlike `trails`, but over every round in the project — so it
+  // is fetched on the tab for the same reason.
+  questions: (slug: string) => get<QuestionsPayload>(`/projects/${slug}/questions`),
   // Deliberately not folded into `round`: the bodies are the bulk of a session file, and the
   // inspector opens without paying for any of them.
   result: (slug: string, session: string, toolUseId: string) =>

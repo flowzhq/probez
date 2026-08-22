@@ -59,6 +59,7 @@ export function Trace({
   trails,
   selected,
   selectedTrail,
+  lit,
   onSelect,
   onSelectTrail,
   onOpenTask,
@@ -69,6 +70,14 @@ export function Trace({
   selected: number | null
   /** The `ref` of the walk being looked at, which lifts its rounds out of the strip. */
   selectedTrail?: string | null
+  /**
+   * Rounds to lift out of the strip, when something other than a walk is being read.
+   *
+   * A question is the other reading of these same calls and is not drawn in the lane, so it needs
+   * a way to say which rounds it touched. Given, it wins over the walk's own set: whatever the
+   * page is showing below the trace is what the trace should be highlighting.
+   */
+  lit?: ReadonlySet<number> | null
   onSelect: (round: TraceRound) => void
   onSelectTrail?: (trail: Trail | null) => void
   /** Set on a session trace, where a round names a task you can open. */
@@ -110,9 +119,10 @@ export function Trace({
   // Which rounds the chosen walk touched. A walk is not a stretch of rounds, so this cannot be a
   // range: it is the set of calls the evidence connected, and the ones in between are not in it.
   const inTrail = useMemo(() => {
+    if (lit !== undefined && lit !== null) return lit
     const chosen = (trails ?? []).find((trail) => trail.ref === selectedTrail)
     return chosen === undefined ? null : new Set(chosen.steps.map((step) => step.round))
-  }, [trails, selectedTrail])
+  }, [trails, selectedTrail, lit])
 
   if (all.length === 0) {
     return <p className="note">Nothing to trace: this span has no rounds.</p>
@@ -213,10 +223,12 @@ export function Trace({
                       // Clicking the chosen walk again puts the strip back, so the lane is a
                       // filter you can turn off where you turned it on.
                       const same = trail.ref === selectedTrail
+                      // Picking the walk is the whole click. The round it starts at gets opened by
+                      // whoever owns the selection, because both halves of it live in one place —
+                      // calling `onSelect` here too would write the round a second time, from a
+                      // handler that has not seen the walk yet, and the walk would be dropped
+                      // before it ever reached the URL.
                       onSelectTrail?.(same ? null : trail)
-                      if (same) return
-                      const first = all.find((round) => round.round === trail.steps[0]!.round)
-                      if (first !== undefined) onSelect(first)
                     }}
                     onMouseMove={(event) =>
                       show(

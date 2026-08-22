@@ -33,6 +33,8 @@ import type { CollectResult, ImportResult, RemoveResult, StoredProject } from '.
 import { CONTROL, ImportError, parseExport } from './import.js'
 import { shorten } from './format.js'
 import { MAX_RESULT_CHARS, readToolResult, readToolResults } from './result.js'
+import { questionsOf, questionShare } from './question.js'
+import type { Question } from './question.js'
 import { idsToRead, trailsOf } from './trail.js'
 import type { Trail } from './trail.js'
 import {
@@ -156,6 +158,15 @@ export interface TaskPayload {
    * store, so here the honest answer is the affordable one and there is no flag to get it wrong.
    */
   trails: Trail[]
+  /**
+   * What this task needed to know, and every call each answer cost.
+   *
+   * The other reading of the same calls. A walk is what followed something; a question is what was
+   * being asked, including the asking that got nowhere — which is most of what a repeat is, and
+   * none of what a walk can show. Read from the inputs alone, so unlike `trails` there is no deep
+   * pass behind it.
+   */
+  questions: Question[]
 }
 
 export interface RoundPayload {
@@ -183,6 +194,18 @@ export interface TrailsPayload {
   /** Calls that were a step of some walk, over every call that was finding something out. */
   steps: number
   finding: number
+}
+
+export interface QuestionsPayload {
+  project: StoredProject
+  questions: Question[]
+  /** Every call that was finding something out, which is what the questions divide up. */
+  calls: number
+  repeats: number
+  fetches: number
+  sweeps: number
+  /** Questions that took more than one call to answer. */
+  reasked: number
 }
 
 /**
@@ -453,6 +476,7 @@ export async function taskPayload(
     analysis: categoryTally(mine, pricing),
     trace: traceOf(mine),
     trails: await taskTrails(stored, mine),
+    questions: questionsOf(mine, { root: stored.path ?? '' }),
   }
 }
 
@@ -575,6 +599,30 @@ export async function trailsPayload(dataDir: string, slug: string): Promise<Trai
     trails: shownTrails(trailsOf(rounds, { results, root })),
     steps: share.steps,
     finding: share.finding,
+  }
+}
+
+/**
+ * Every question a project asked, costliest first.
+ *
+ * Sorted here rather than in the page, for the reason the CLI sorts them: a listing in the order
+ * they were asked buries the thirteen-call question under three hundred single-call reads, and the
+ * tail is the whole reason to look.
+ */
+export async function questionsPayload(dataDir: string, slug: string): Promise<QuestionsPayload> {
+  const { stored, rounds } = await open(dataDir, slug)
+  const share = questionShare(rounds, { root: stored.path ?? '' })
+  const questions = questionsOf(rounds, { root: stored.path ?? '' }).sort(
+    (a, b) => b.calls.length - a.calls.length || a.session.localeCompare(b.session) || a.task - b.task,
+  )
+  return {
+    project: shown(stored),
+    questions,
+    calls: share.calls,
+    repeats: share.repeats,
+    fetches: share.fetches,
+    sweeps: share.sweeps,
+    reasked: share.reasked,
   }
 }
 

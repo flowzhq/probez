@@ -1,16 +1,23 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 
 import { api } from '../api'
-import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
+import { Chrome, Facts, Info, Loading, Problem } from '../components/Chrome'
 import type { Fact } from '../components/Chrome'
 import { Inspector } from '../components/Inspector'
 import { InTokens, Lines, Reused } from '../components/Tokens'
 import { Trace } from '../components/Trace'
+import {
+  QUESTIONS_ARIA,
+  QuestionPanel,
+  QuestionsTable,
+  questionsExplained,
+} from '../components/QuestionPanel'
 import { TrailPanel } from '../components/TrailPanel'
 import { WorkBars } from '../components/WorkBars'
 import { duration, money, percent, shortCommit, shortId, tokens, when } from '../format'
 import { go, href } from '../router'
 import { useData } from '../useData'
+import type { Question } from '../api'
 import type { ReactElement } from 'react'
 
 /**
@@ -30,6 +37,7 @@ export function Task({
   task,
   round,
   trail: trailRef,
+  question: questionRef,
 }: {
   slug: string
   session: string
@@ -37,9 +45,19 @@ export function Task({
   round: number | null
   /** The walk being read, by its `ref`, from the URL. */
   trail: string | null
+  /** The question being read, by its `at`, from the URL. */
+  question: number | null
 }): ReactElement {
   const { data, error } = useData(() => api.task(slug, session, task), [slug, session, task])
   const trail = (data?.trails ?? []).find((one) => one.ref === trailRef) ?? null
+  const question = (data?.questions ?? []).find((one) => one.at === questionRef) ?? null
+
+  // The rounds the trace should lift out of the strip. A question is not drawn in the walk lane,
+  // so it has to say for itself which rounds it touched.
+  const lit = useMemo(
+    () => (question === null ? null : new Set(question.calls.map((call) => call.round))),
+    [question],
+  )
 
   /**
    * Both halves of the selection live in the URL, which is what makes a walk linkable: the trails
@@ -47,15 +65,19 @@ export function Task({
    * does rather than merely landing on the round it starts at.
    */
   const select = useCallback(
-    (index: number | null, walk: string | null = trailRef) => {
+    (
+      index: number | null,
+      walk: string | null = trailRef,
+      asked: number | null = questionRef,
+    ) => {
       go(
         index === null
-          ? href.task(slug, session, task, undefined, walk)
-          : href.task(slug, session, task, index, walk),
+          ? href.task(slug, session, task, undefined, walk, asked)
+          : href.task(slug, session, task, index, walk, asked),
         true,
       )
     },
-    [slug, session, task, trailRef],
+    [slug, session, task, trailRef, questionRef],
   )
 
   // Opening a task with no round named selects its first one, so the inspector is never an
@@ -155,12 +177,15 @@ export function Task({
                 trails={data.trails}
                 selected={round}
                 selectedTrail={trailRef}
+                lit={lit}
                 onSelect={(picked) => select(picked.round)}
                 onSelectTrail={(picked) =>
                   // Picking a walk also opens the round it starts at, the way the lane always has.
+                  // It closes any question, because the two are readings of the same calls and
+                  // showing both at once would leave the strip lit by one and explained by the other.
                   picked === null
                     ? select(round, null)
-                    : select(picked.steps[0]?.round ?? round, picked.ref)
+                    : select(picked.steps[0]?.round ?? round, picked.ref, null)
                 }
               />
               {trail === null ? null : (
@@ -175,9 +200,56 @@ export function Task({
                 <Inspector slug={slug} session={session} round={round} onStep={step} />
               )}
             </section>
+
+            <section>
+              <div className="head">
+                <h2>
+                  What it needed to know
+                  <Info
+                    says={questionsExplained({
+                      questions: data.questions.length,
+                      calls: data.questions.reduce((sum, one) => sum + one.calls.length, 0),
+                    })}
+                    aria={QUESTIONS_ARIA}
+                  />
+                </h2>
+              </div>
+              <QuestionsTable
+                questions={data.questions}
+                selected={questionRef}
+                onOpen={(picked) =>
+                  // Opening a question closes any walk, for the reason the lane does the reverse:
+                  // they are two readings of one set of calls, and the strip can only be lit by one.
+                  picked === null
+                    ? select(round, trailRef, null)
+                    : select(picked.calls[0]?.round ?? round, null, picked.at)
+                }
+                note={onceNote(data.questions)}
+              />
+              {question === null ? null : (
+                <QuestionPanel
+                  question={question}
+                  selected={round}
+                  onSelect={(picked) => select(picked)}
+                  onClose={() => select(round, trailRef, null)}
+                />
+              )}
+            </section>
           </>
         )}
       </main>
     </>
+  )
+}
+
+/** How many questions took a single call, said under the table rather than listed in it. */
+function onceNote(questions: Question[]): ReactElement | undefined {
+  const once = questions.filter((one) => one.calls.length <= 1).length
+  if (once === 0) return undefined
+  return (
+    <p className="note">
+      {once} more {once === 1 ? 'question was' : 'questions were'} answered in one call, and{' '}
+      {once === 1 ? 'is' : 'are'} not listed.
+    </p>
   )
 }

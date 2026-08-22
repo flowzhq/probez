@@ -34,6 +34,7 @@ function App(): ReactElement {
           task={route.task}
           round={route.round}
           trail={route.trail}
+          question={route.question}
         />
       ) : (
         <>
