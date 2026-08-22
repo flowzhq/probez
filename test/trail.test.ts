@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { parsePlaced } from '../src/bash.js'
-import { probesIn, scopeOf, siteOf, sitesIn, trailsOf } from '../src/trail.js'
+import { probesIn, scopeOf, siteOf, sitesIn, textOf, trailsOf } from '../src/trail.js'
 import type { Trail } from '../src/trail.js'
 import type { Round, ToolCall } from '../src/types.js'
 import { ROUND_DEFAULTS, TOOL_DEFAULTS } from './support.js'
@@ -95,6 +95,41 @@ test('scope is how wide the call reached', () => {
   for (const [call, want] of cases) {
     assert.equal(scopeOf(call, sitesIn(call)), want, JSON.stringify(call.input))
   }
+})
+
+test('a call carries what was actually run, not only which program ran it', () => {
+  // The whole point of the field: eleven greps for one word are obvious as eleven commands and
+  // merely plausible as eleven rows saying `file · out_tokens`.
+  assert.equal(
+    textOf(bash('grep -n "out_tokens" src/inspect.ts | head -20')),
+    'grep -n "out_tokens" src/inspect.ts | head -20',
+  )
+  // A tool call is not a command, so it is rendered as one thing pointed at another. A span is
+  // written the way `sed -n a,bp` writes it, or a read and a slice of the same lines read as two
+  // different operations.
+  assert.equal(
+    textOf(tool('Read', { file_path: 'src/store.ts', offset: 40, limit: 20 })),
+    'Read src/store.ts:40-59',
+  )
+  assert.equal(textOf(tool('Read', { file_path: 'src/store.ts' })), 'Read src/store.ts')
+  assert.equal(textOf(tool('Grep', { pattern: 'flushStore', path: 'src/' })), 'Grep flushStore in src/')
+  // Anything with no rule of its own falls back to the one field of its input worth a row.
+  assert.equal(textOf(tool('WebFetch', { url: 'https://example.com/x' })), 'WebFetch https://example.com/x')
+})
+
+test('the call text is written relative to the checkout, like every other path', () => {
+  // `Read` is handed an absolute path and a command is typed relative. Showing one of each would
+  // spend the width on a directory the page header already names.
+  assert.equal(
+    textOf(tool('Read', { file_path: '/repo/src/store.ts', offset: 1, limit: 100 }), '/repo'),
+    'Read src/store.ts:1-100',
+  )
+  assert.equal(
+    textOf(bash('grep -n flush /repo/src/store.ts /repo/src/act.ts'), '/repo'),
+    'grep -n flush src/store.ts src/act.ts',
+  )
+  // Whitespace is collapsed, so a command written over three lines is still one row.
+  assert.equal(textOf(bash('grep -n flush \\\n  src/store.ts')), 'grep -n flush src/store.ts')
 })
 
 test('a path is where it is relative to the checkout, so one file is one place', () => {

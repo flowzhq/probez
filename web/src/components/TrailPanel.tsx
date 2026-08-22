@@ -56,17 +56,23 @@ export function TrailPanel({
       </div>
 
       <table className="trail-steps">
+        {/* Stated, not inferred: see `.trail-steps` in theme.css. */}
+        <colgroup>
+          <col style={{ width: '4.5rem' }} />
+          <col style={{ width: '4.5rem' }} />
+          <col style={{ width: '26%' }} />
+          <col />
+        </colgroup>
         <thead>
           <tr>
             <th>Round</th>
-            <th>Step</th>
             <th title="How wide this call reached: a whole tree, a directory, a file, or a span of lines.">
               Reached
             </th>
             <th title="Why this call follows the one before it, and the path or word that links them.">
               Followed
             </th>
-            <th>Where</th>
+            <th title="What was actually run. Hover for the whole of it.">Call</th>
           </tr>
         </thead>
         <tbody>
@@ -77,12 +83,6 @@ export function TrailPanel({
               onClick={() => onSelect(step.round)}
             >
               <td className="mono">{step.ref}</td>
-              <td className="mono nowrap">
-                {/* Indent by hop, capped, so a deep trail stays inside its column. */}
-                <span style={{ paddingLeft: Math.min(depths.get(step.at) ?? 0, 5) * 14 }}>
-                  {step.name}
-                </span>
-              </td>
               <td className="dim nowrap">{step.scope}</td>
               <td className="dim nowrap">
                 {step.source === null ? (
@@ -96,8 +96,13 @@ export function TrailPanel({
                   </>
                 )}
               </td>
-              <td className="muted mono clip" title={step.sites.join(' ')}>
-                {step.sites.length === 0 ? '—' : step.sites.join(' ')}
+              {/* The command, with the hop depth carried on it — the walk still reads as a walk
+                  while the row says what was run rather than only which program ran. `Where` went
+                  with the old name column: a command names its own paths. */}
+              <td className="mono clip" title={step.text}>
+                <span style={{ paddingLeft: Math.min(depths.get(step.at) ?? 0, 5) * 14 }}>
+                  {step.text}
+                </span>
               </td>
             </tr>
           ))}

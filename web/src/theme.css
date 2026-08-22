@@ -793,6 +793,19 @@ button.save.grave:hover {
 
 .trail-steps {
   font-size: 12px;
+  /* These tables state their own column widths, because two of their columns are free to grow —
+     the words a call asked and the command that asked them — and `.clip` cannot divide the room
+     between two of them: it asks for all of it, so whichever cell holds more text takes it and the
+     other collapses to an ellipsis. Fixed layout makes the stated widths the answer. */
+  table-layout: fixed;
+  width: 100%;
+}
+
+/* With the widths stated, `.clip`'s way of claiming room is no longer needed here — only its way
+   of giving up gracefully when the content is longer than the room it was given. */
+.trail-steps .clip {
+  max-width: none;
+  width: auto;
 }
 
 /* The row the inspector is open on. The trace marks it with a ring, which a table cannot do, so it

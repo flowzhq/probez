@@ -900,16 +900,16 @@ function printTrail(trail: Trail, width: number, showSession: boolean): void {
   }
   // The indent sits inside the STEP column rather than widening it, or every column after it
   // steps right with the walk and the table stops being one.
-  const STEP = 20
-  const room = Math.max(24, width - 54)
-  console.log(`  ${pad('ROUND', 8)}${pad('STEP', STEP)}${pad('REACHED', 8)}${pad('FOLLOWED', 24)}WHERE`)
+  // The command last and the hop depth carried on it, so the walk still reads as a walk while the
+  // row says what was actually run rather than only which program ran.
+  const FOLLOWED = 24
+  const room = Math.max(20, width - 44)
+  console.log(`  ${pad('ROUND', 8)}${pad('REACHED', 8)}${pad('FOLLOWED', FOLLOWED)}CALL`)
   for (const step of trail.steps) {
     const indent = '  '.repeat(Math.min(depths.get(step.at) ?? 0, 5))
-    // `clip` trims, which is right for prose and would eat the indent that is the whole point here.
-    const label = `${indent}${step.name}`
     const came = step.source === null ? 'started here' : `${step.edge} ${clip(shorten(step.via), 14)}`
     console.log(
-      `  ${pad(step.ref, 8)}${pad(label.length < STEP ? label : `${label.slice(0, STEP - 2)}…`, STEP)}${pad(step.scope, 8)}${pad(came, 24)}${clip(step.sites.map(shorten).join(' ') || '—', room)}`,
+      `  ${pad(step.ref, 8)}${pad(step.scope, 8)}${pad(came, FOLLOWED)}${indent}${clip(step.text, Math.max(12, room - indent.length))}`,
     )
   }
   console.log('')
@@ -948,9 +948,14 @@ function printQuestion(question: Question, width: number, showSession: boolean):
   )
   console.log('')
 
-  const CALL = 20
-  const room = Math.max(24, width - 56)
-  console.log(`  ${pad('ROUND', 8)}${pad('CALL', CALL)}${pad('REACHED', 8)}${pad('ASKED', 26)}WHERE`)
+  // The command comes last and takes what is left, because it is the evidence and the three columns
+  // before it are the reading of it. Eleven greps for one field name is obvious the moment the
+  // eleven commands are under each other, and merely plausible as eleven rows of `file · out_tokens`.
+  // `WHERE` is gone with it: a command names its own paths, and printing them twice cost the width
+  // the command needed.
+  const ASKED = 26
+  const room = Math.max(20, width - 46)
+  console.log(`  ${pad('ROUND', 8)}${pad('REACHED', 8)}${pad('ASKED', ASKED)}CALL`)
   const seen = new Set<string>()
   for (const call of question.calls) {
     const signature = `${[...call.probes].sort().join(' ')}\0${[...call.sites].sort().join(' ')}`
@@ -960,7 +965,7 @@ function printQuestion(question: Question, width: number, showSession: boolean):
     seen.add(signature)
     const asked = call.probes.length === 0 ? '—' : call.probes.join(' ')
     console.log(
-      `  ${pad(call.ref, 8)}${pad(clip(call.name, CALL - 1), CALL)}${pad(call.scope, 8)}${pad(clip(asked, 24) + again, 26)}${clip(call.sites.map(shorten).join(' ') || '—', room)}`,
+      `  ${pad(call.ref, 8)}${pad(call.scope, 8)}${pad(clip(asked, ASKED - 3) + again, ASKED)}${clip(call.text, room)}`,
     )
   }
   console.log('')

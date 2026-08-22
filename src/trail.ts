@@ -392,8 +392,10 @@ export interface Call {
   /** The call's id, which is how a result body is found for it. */
   id: string | null
   tool: string
-  /** The command, for a `Bash` call, or the tool name again. What the step reads as. */
+  /** The command name, for a `Bash` call, or the tool name again. What the step reads as. */
   name: string
+  /** The call as it was made — the command, or the tool and what it was pointed at. See `textOf`. */
+  text: string
   verb: Verb
   scope: Scope
   sites: string[]
@@ -422,6 +424,86 @@ function verbOf(tool: ToolCall): Verb {
     if (FINDING.has(one.verb) && !FINDING.has(found)) found = one.verb
   }
   return found
+}
+
+/**
+ * How much of a call is worth carrying as text.
+ *
+ * A command is usually a line. The ones that are not are heredoc scripts, and the first four
+ * hundred characters of one identify it well enough to recognise; `probez round` prints it whole.
+ * Bounded because this rides on every finding call in a project payload, and a store with fifteen
+ * hundred of them should not send a megabyte of shell to draw a table.
+ */
+const MAX_TEXT = 400
+
+/**
+ * The call as it was actually made, in one line.
+ *
+ * Every other field on a `Call` is a reading of this: `scope` is how wide it reached, `probes` the
+ * words it asked about, `sites` the places it named. Those are the measurement, and the measurement
+ * is what a table can sort. But a run of eleven greps for one field name is obvious the moment you
+ * see the eleven commands and merely plausible when you see eleven rows saying `file · out_tokens`,
+ * so the evidence travels with the reading.
+ *
+ * Rendered here rather than in each caller, because the CLI and the view must show the same string
+ * — a command the browser abbreviated differently from the terminal is two answers to "what ran".
+ *
+ * The checkout's own prefix comes off wherever it appears, by the same rule `siteOf` uses. `Read`
+ * is given an absolute path by the harness and a shell command is typed relative, and a table that
+ * showed one of each would spend two thirds of its width on a directory the page header already
+ * names — while a reader compared `/Users/…/src/inspect.ts` against `src/inspect.ts` and wondered
+ * which two files those were.
+ */
+export function textOf(tool: ToolCall, root = ''): string {
+  const name = typeof tool.name === 'string' ? tool.name : ''
+  const input = tool.input !== null && typeof tool.input === 'object'
+    ? (tool.input as Record<string, unknown>)
+    : {}
+  const field = (key: string): string => {
+    const value = input[key]
+    return typeof value === 'string' ? value : ''
+  }
+  const bare = root.endsWith('/') ? root.slice(0, -1) : root
+  const cut = (text: string): string => {
+    // A line continuation is the newline's own escape, so folding the line has to take the
+    // backslash with it. Left in, `grep x \<newline> src/a.ts` becomes `grep x \ src/a.ts`, which
+    // is a command with an escaped space in it — a different one from the one that ran.
+    let flat = text.replace(/\\\r?\n\s*/g, ' ').replace(/\s+/g, ' ').trim()
+    if (bare !== '') flat = flat.split(`${bare}/`).join('')
+    return flat.length <= MAX_TEXT ? flat : `${flat.slice(0, MAX_TEXT - 1)}…`
+  }
+
+  if (name === 'Bash') {
+    const raw = commandOf(tool.input)
+    return cut(typeof raw === 'string' ? raw : '')
+  }
+  if (name === 'Read' || name === 'NotebookEdit') {
+    const path = field('file_path') || field('notebook_path')
+    const offset = input.offset
+    const limit = input.limit
+    if (typeof offset === 'number') {
+      // The span the call asked for, written the way `sed -n a,bp` writes it, so a read and a slice
+      // of the same lines do not look like two different operations.
+      const last = typeof limit === 'number' ? offset + limit - 1 : null
+      return cut(`${name} ${path}:${offset}${last === null ? '' : `-${last}`}`)
+    }
+    return cut(`${name} ${path}`)
+  }
+  if (name === 'Grep') {
+    const where = field('path')
+    return cut(`Grep ${field('pattern')}${where === '' ? '' : ` in ${where}`}`)
+  }
+  if (name === 'Glob') {
+    const where = field('path')
+    return cut(`Glob ${field('pattern')}${where === '' ? '' : ` in ${where}`}`)
+  }
+  // Anything else: the tool, and the one field of its input worth putting on a row. The order is
+  // the Inspector's, which has been answering the same question for every tool probez has met.
+  for (const key of ['command', 'file_path', 'pattern', 'path', 'url', 'query', 'description']) {
+    const value = field(key)
+    if (value !== '') return cut(`${name} ${value}`)
+  }
+  return name === '' ? '(unnamed)' : name
 }
 
 /** The name a step reads as: what the call ran, or the tool that has no finer level. */
@@ -456,6 +538,7 @@ export function stepsOf(rounds: Round[], root = ''): Step[] {
         id: tool.id,
         tool: typeof tool.name === 'string' ? tool.name : '(unnamed)',
         name: nameOf(tool),
+        text: textOf(tool, root),
         verb: verbOf(tool),
         scope: scopeOf(tool, sites),
         sites,

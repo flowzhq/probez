@@ -172,7 +172,10 @@ export interface Call {
   at: number
   id: string | null
   tool: string
+  /** The command name, or the tool's. */
   name: string
+  /** The call as it was made — the command, or the tool and what it was pointed at. */
+  text: string
   verb: string
   scope: 'tree' | 'dir' | 'file' | 'span'
   sites: string[]

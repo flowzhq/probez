@@ -58,7 +58,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   different questions — 5.5% of the questions across the corpora this was built against — and a
   name that reaches only the first of them leaves the rest unopenable.
 
+- **Trails and questions show what was actually run.** Both detail views printed the *reading* of a
+  call — how wide it reached, which words it asked about, which paths it named — and never the call.
+  A run of eleven greps for one field name is obvious the moment the eleven commands sit under each
+  other, and merely plausible as eleven rows saying `file · out_tokens`.
+
+  So a call now carries its own text: the command for a `Bash` call, and for a tool the thing and
+  what it was pointed at — `Read src/store.ts:40-59`, written the way `sed -n a,bp` writes a span so
+  that a read and a slice of the same lines do not read as two different operations. It takes the
+  column the program name used to have, since the command contains the name, and the width the
+  `WHERE` column used to have, since a command names its own paths. In the view it is one cell with
+  the whole of it on hover.
+
+  Rendered once in `trail.ts` rather than in each caller: a command the browser abbreviated
+  differently from the terminal is two answers to "what ran". Paths in it are written relative to
+  the checkout, by the same rule the rest of the view uses — `Read` is handed an absolute path by
+  the harness and a shell command is typed relative, and a table showing one of each spends its
+  width on a directory the page header already names. Long commands are cut at 400 characters,
+  because this rides on every finding call in a project payload.
+
 ### Fixed
+
+- **A shell line continuation survived being folded into one line.** `grep x \` + newline + `src/a.ts`
+  came back as `grep x \ src/a.ts`, which is a command with an escaped space in it rather than the
+  one that ran. The backslash is the newline's own escape, so folding the line takes it too.
+
 
 - **Clicking a trail in the trace opened its round but dropped the trail.** The lane's click handler
   selected the trail and then selected the round again through a second callback, which had not seen

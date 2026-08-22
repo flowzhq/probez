@@ -309,18 +309,19 @@ $ probez trail flowz-mcp 069d8593#1.0 --deep
   depth 5 · breadth 2 · 7 paths · 1 revisited
   from a listing · abandoned · 268.5K in · 1.5K out · 6.0s
 
-  ROUND   STEP                REACHED FOLLOWED                WHERE
-  1.0     ls                  dir     started here            —
-  1.1       find              dir     listed docs             docs cmd
-  1.2         cat             dir     listed docs/tasks/RE…   docs/tasks/README.md cmd
-  1.4           cat           file    listed cmd/livemodel…   internal/graph/codebasememory/engine.…
-  1.5             which       dir     listed .flowz           .flowz
-  1.10        find            tree    listed docs/tasks/T-…   docs/tasks/T-011-codebase-memory-adap…
+  ROUND   REACHED FOLLOWED                CALL
+  1.0     dir     started here            ls -la && echo "--- git ---" && git log --oneli…
+  1.1     dir     listed docs               find docs -type f | sort && echo "--- interna…
+  1.2     dir     listed docs/tasks/RE…       cat docs/tasks/README.md && echo "===== ada…
+  1.4     file    listed cmd/livemodel…         cat internal/graph/codebasememory/engine.…
+  1.5     dir     listed .flowz                   which codebase-memory-mcp; echo "---env…
+  1.10    tree    listed docs/tasks/T-…       find ~/.cache/codebase-memory-mcp -maxdepth…
 
   `probez round 1.0` shows any one of these calls in full.
 ```
 
-`FOLLOWED` is the evidence for each hop, and there are three kinds. `listed` means the path was in
+`CALL` is what actually ran, indented by how deep into the walk it sits, and `FOLLOWED` is the
+evidence for each hop. There are three kinds of evidence. `listed` means the path was in
 the earlier call's own output, which is proof — and reading it needs the archived session, which is
 what `--deep` is for. Without the flag a hop is inferred from what the calls asked for: `probe`, a
 search for a word and then a file carrying it, and `narrow`, a file under a directory already
@@ -383,15 +384,18 @@ $ probez question flowz-mcp 0b2cc149#1.2
   asked about enqueuer, status
   1 place · 1 re-asked · 116.1K in · 508 out · 2.2s
 
-  ROUND   CALL                REACHED ASKED                     WHERE
-  1.2     ls                  dir     enqueuer                  internal/
-  1.3     grep                dir     enqueuer status           internal/
-  1.4     grep                dir     enqueuer ↺                internal/
+  ROUND   REACHED ASKED                     CALL
+  1.2     dir     enqueuer                  ls internal/ && echo "---INDEXER---" && ls in…
+  1.3     dir     enqueuer status           grep -rn "Enqueuer" internal/ --include=*.go …
+  1.4     dir     enqueuer ↺                grep -rn "Enqueuer" internal/ | head -20; ech…
 
   `probez round 1.2` shows any one of these calls in full.
 ```
 
-The `↺` marks a call that asked what the question had already asked. Three calls, one thing wanted,
+`CALL` is the command itself, because a run of greps for one word is obvious as a column of
+commands and merely plausible as a column of derived labels — the reason there is no separate
+`WHERE`, too: a command names its own paths. The `↺` marks a call that asked what the question had
+already asked. Three calls, one thing wanted,
 and the last of them bought nothing — which is a shape that no trail records, because none of these
 three narrowed anything for the next.
 
