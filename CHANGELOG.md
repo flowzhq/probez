@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [Unreleased]
+
+### Fixed
+
+- **A raw NUL byte in `QuestionPanel.tsx` made the file invisible to every grep over `web/src`.**
+  The key separator in `signature` was written as the byte itself rather than as `\0`, which is the
+  same value at runtime and a binary file to `grep`, `git diff` and the constraints job. It is the
+  third time this byte has been pasted in rather than escaped, and the first time the check added
+  for it caught one — the CI gate failed on it, which is what it is for. The rule is in the job's
+  own comment: `\0` in a template, `'\x00'` where a digit follows, never the byte.
+
+  Nothing shipped in 0.3.7 was unsafe because of it. The greps it switched off for that file are
+  the `src/` ones, which never read `web/`, and the one that does — *the view loads nothing from
+  off-origin* — passes on the file now that it can be read.
+
 ## [0.3.7] - 2026-08-24
 
 ### Added
