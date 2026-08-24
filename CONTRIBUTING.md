@@ -57,6 +57,33 @@ Three constraints are not up for negotiation in a PR, because they are the produ
    and must arrive with a matching `Host` header, and the served page may load only from its own
    origin. CI checks each of those separately, so relaxing one is a visible change to this file
    rather than a quiet one to a grep.
+
+   There is one place probez *starts a program*, and it is named here so it stays a decision rather
+   than a precedent: `src/reader.ts`, which is how `probez explain` hands one question to a model
+   the person already has. It is the answer to the request this rule would otherwise refuse — read
+   these eleven greps back to me in a sentence — and it is arranged so that the refusal still holds
+   everywhere it matters:
+
+   - probez opens no socket. It writes to the stdin of a command *the person wrote into
+     `<data-dir>/reader.json`* and reads its stdout. Whatever that command talks to, it talks to
+     under their account with their credentials, exactly as if they had typed it. probez holds no
+     key and has nowhere to put one.
+   - The command is argv and is spawned with `shell: false`. A `;`, a `|` or a `$(…)` in it is an
+     argument. Nothing read out of a session, a path or a project name can reach the argv.
+   - It runs only from `probez explain` and from the `explain` POST — one question, when a person
+     asks for that question. Collecting, analyzing, browsing and every `GET` run nothing.
+   - What is written to it is the question's own calls: the verb, the scope, the words searched for,
+     the paths named, and the command as it ran. No prompts, no tool output. `probez explain <id>
+     --prompt` prints exactly what would go and spawns nothing, which is also the supported way to
+     use this without probez running anything at all.
+   - There is no default command. With no `reader.json` there is nothing to run, and every caller
+     says so rather than falling back to something.
+   - Nothing that comes back enters a share, a tally or a filter. A reading sits beside the measured
+     `kind` and never replaces it, so every number probez prints stays re-derivable from the rounds.
+
+   CI greps for `child_process` outside `src/open.ts` and `src/reader.ts`, and for `shell: true` and
+   `exec` inside them, so a second spawn anywhere fails the build the way a second reflog reader
+   does. A PR that wants one needs to argue for it the way this list does.
 3. **Only ever read the agent's session files.** probez writes exclusively under its own data
    directory.
 
@@ -67,11 +94,13 @@ Three constraints are not up for negotiation in a PR, because they are the produ
    installed. CI greps for it, so a second reader anywhere else fails the build rather than
    arriving quietly, and a PR that wants one needs to argue for it the way this paragraph does.
 
-   The view's routes that write are all `POST`, and there are five: `.../sync` writes what `collect`
+   The view's routes that write are all `POST`, and there are seven: `.../sync` writes what `collect`
    and `analyze` write, `.../rename` sets one field of a manifest, `.../delete` removes one project's
-   directory, `/import` writes a project that arrived as a file, and `/pricing` stores rates. Every
+   directory, `.../explain` keeps what a reader said about one question, `/import` writes a project
+   that arrived as a file, `/pricing` stores rates, and `/reader` stores the command `explain` runs.
+   Every
    other route is `GET`, and each of these refuses `GET` so that visiting a URL can never collect,
-   rename or delete. Export is not an exception to the rule: the server hands bytes to the browser
+   rename, delete, or start a program. Export is not an exception to the rule: the server hands bytes to the browser
    and the browser writes them where the person said, which is the only way a page can put a file on
    disk.
 
@@ -112,12 +141,19 @@ output in `dist/test/`, which is why `npm test` builds first.
   that a model with no published window reports no share rather than a full one.
 - `test/cli.test.ts` runs the built CLI end to end in a temporary store, so it touches neither
   `~/.claude`, `~/.cursor` nor `~/.probez`.
+- `test/reading.test.ts` covers the reader and what it is asked: that the prompt carries the calls
+  and neither the person's prompt nor any tool's output, that the command is argv and never reaches
+  a shell, that a reader which fails, hangs, vanishes or answers in prose comes back as a message,
+  that a `kind` outside the table becomes a named hole rather than a guess, and that a reading is
+  kept, reused without running anything, and re-asked only when asked for.
 - `test/view.test.ts` runs the local server in-process against a temporary store. The refusals are
   the reason it exists: no token, wrong `Host`, and the method rules — every write path refuses
   `GET` and every read path refuses everything but it. Beside them sit the assertion that the store
   is byte-identical after a session of browsing, and the ones saying that a sync, a rename or a
   delete without the token writes nothing at all. A new route that writes belongs in all of those
   lists, and a delete additionally has to be shown unable to point outside `<data-dir>/projects/`.
+  `explain` is in them too, plus its own: that it refuses without the token, that it says so rather
+  than falling back when no reader is configured, and that every refusal leaves the store untouched.
 
 If you hit a real session that probez parses incorrectly, the most useful contribution is a minimal
 fixture reproducing it. Please strip anything private before attaching it.

@@ -262,6 +262,19 @@ section {
   margin-top: 32px;
 }
 
+/*
+ * A page with two subjects on it, ruled apart.
+ *
+ * Settings holds the rates and the reader, and they are not two halves of one thing: one decides
+ * what every number on every page means, the other decides what probez is allowed to run. The
+ * heading sizes say they are peers; this says where one ends.
+ */
+hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 40px 0 0;
+}
+
 /* Text -------------------------------------------------------------------- */
 
 .mono {
@@ -789,6 +802,54 @@ button.save.grave:hover {
   padding: 11px 14px;
   border-bottom: 1px solid var(--rule);
   font-size: 12px;
+}
+
+/*
+ * A model's reading of a question, between the measured header and the calls it was read from.
+ *
+ * Set apart from both: the header above it is what probez measured and the table below is the
+ * evidence, and this is neither — it is a sentence something else wrote about the same eleven
+ * calls. The left rule is what says so at a glance, and the sentence is the only thing in the panel
+ * not in the mono face, because it is the only thing here that is prose.
+ */
+.reading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule);
+  border-left: 2px solid var(--rule);
+  font-size: 12px;
+}
+
+.reading-said {
+  color: var(--ink);
+}
+
+/*
+ * The prompt itself, shown only when the clipboard refused it.
+ *
+ * Full width and its own line, because it is the one thing in this row that is not a phrase: it is
+ * the whole of what would be sent, and a person is here to select all of it.
+ */
+.reading-prompt {
+  flex-basis: 100%;
+  width: 100%;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--plane);
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+/* The same sentence in a table cell, where the column it replaces is search terms in mono. */
+.read {
+  color: var(--ink-2);
 }
 
 .trail-steps {

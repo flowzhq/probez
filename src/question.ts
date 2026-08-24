@@ -57,6 +57,28 @@ export type Ask =
 
 export const ASKS: Ask[] = ['define', 'refs', 'outline', 'flow', 'touches', 'covers', 'other']
 
+/**
+ * What each kind stands for, in the words the type above is defined in.
+ *
+ * One table, because a kind is a single word printed in a column and nowhere does that word explain
+ * itself: `outline` in a table, `flow` on a tag, `covers` in a filter. Everything that shows a kind
+ * shows this beside it — the help, the listing, the panel, the tooltip on a row — and the prompt
+ * `reading.ts` sends a model is built from it too, so the model is told the same six things a
+ * person is.
+ *
+ * The view keeps a hand-copy in `web/src/categories.ts`, since it is built separately and cannot
+ * import this; `test/question.test.ts` asserts the two agree.
+ */
+export const ASK_MEANING: Record<Ask, string> = {
+  define: 'show me this symbol\'s body',
+  refs: 'where is this used',
+  outline: 'what does this file declare',
+  flow: 'where does this value travel across layers',
+  touches: 'every artifact naming a concept, code and prose alike',
+  covers: 'what constrains this — the tests that exercise it',
+  other: 'asked something no rule in the table reads',
+}
+
 export function isAsk(value: string): value is Ask {
   return (ASKS as string[]).includes(value)
 }

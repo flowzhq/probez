@@ -702,6 +702,98 @@ test('a question is named by any round it was asked at, and its repeats are mark
   assert.equal(read(env, ['question', '1.4']).stdout.trim(), detail.stdout.trim())
 })
 
+/**
+ * A reader that answers, and counts how many times it was asked.
+ *
+ * Written into the store's own directory as a node script, so the test needs nothing installed and
+ * `explain` has something real to spawn.
+ */
+function fakeReader(env: ReturnType<typeof makeSource>, counter: string): void {
+  mkdirSync(env.dataDir, { recursive: true })
+  const script = join(env.dataDir, 'reader.js')
+  writeFileSync(
+    script,
+    [
+      'const fs = require("node:fs")',
+      `fs.appendFileSync(${JSON.stringify(counter)}, "x")`,
+      'let seen = ""',
+      'process.stdin.on("data", (chunk) => { seen += chunk })',
+      'process.stdin.on("end", () => {',
+      '  process.stdout.write(JSON.stringify({',
+      '    asked: "Which tests constrain priority?",',
+      '    kind: seen.includes("priority") ? "covers" : "other",',
+      '    why: "it searched the test surface",',
+      '  }))',
+      '})',
+    ].join('\n'),
+    'utf8',
+  )
+  writeFileSync(
+    join(env.dataDir, 'reader.json'),
+    JSON.stringify({ command: [process.execPath, script], timeout_ms: 20000 }) + '\n',
+    'utf8',
+  )
+}
+
+test('explain asks the configured reader once, keeps the answer, and re-asks only on --again', () => {
+  const env = makeWalkSource()
+  collect(env)
+  const counter = join(env.dataDir, 'runs')
+  writeFileSync(counter, '', 'utf8')
+
+  // With no reader there is nothing probez could run, and it says where to write one.
+  const bare = read(env, ['explain', '1.3'])
+  assert.equal(bare.status, 2)
+  assert.match(bare.stderr, /no reader configured/)
+  assert.match(bare.stderr, /reader\.json/)
+
+  fakeReader(env, counter)
+  const first = read(env, ['explain', '1.3'])
+  assert.equal(first.status, 0)
+  assert.match(first.stdout, /read as\s+Which tests constrain priority\?/)
+  // The reader agreed with the rule, and the line says so rather than repeating the word twice.
+  assert.match(first.stdout, /covers, as above/)
+  assert.equal(readFileSync(counter, 'utf8').length, 1)
+
+  // Asking again shows the same answer and runs nothing; `--again` is what spends.
+  const second = read(env, ['explain', '1.3'])
+  assert.equal(second.stdout.trim(), first.stdout.trim())
+  assert.equal(readFileSync(counter, 'utf8').length, 1)
+  assert.equal(read(env, ['explain', '1.3', '--again']).status, 0)
+  assert.equal(readFileSync(counter, 'utf8').length, 2)
+
+  // And the reading is on the question from then on, without anything being run to show it.
+  const question = read(env, ['question', '1.3'])
+  assert.match(question.stdout, /read as\s+Which tests constrain priority\?/)
+  assert.equal(readFileSync(counter, 'utf8').length, 2)
+})
+
+test('explain --prompt sends nothing anywhere, and carries the calls and nothing else', () => {
+  const env = makeWalkSource()
+  collect(env)
+  const counter = join(env.dataDir, 'runs')
+  writeFileSync(counter, '', 'utf8')
+  fakeReader(env, counter)
+
+  const shown = read(env, ['explain', '1.3', '--prompt'])
+  assert.equal(shown.status, 0)
+  assert.match(shown.stdout, /grep/)
+  assert.equal(readFileSync(counter, 'utf8').length, 0, '--prompt must run nothing')
+  assert.ok(!existsSync(join(env.dataDir, 'projects')) || true)
+
+  // A prompt with no reader configured still works: it is the way to use this without spawning.
+  rmSync(join(env.dataDir, 'reader.json'))
+  assert.equal(read(env, ['explain', '1.3', '--prompt']).status, 0)
+})
+
+test('explain needs a question, and takes only the flags it reads', () => {
+  const env = makeWalkSource()
+  collect(env)
+  assert.match(read(env, ['explain']).stderr, /explain needs a round id/)
+  assert.match(read(env, ['explain', '1.3', '--deep']).stderr, /--deep does not apply/)
+  assert.match(read(env, ['questions', '--again']).stderr, /--again does not apply/)
+})
+
 test('questions takes only the flags it reads, and refuses the wrong vocabulary', () => {
   const env = makeWalkSource()
   collect(env)

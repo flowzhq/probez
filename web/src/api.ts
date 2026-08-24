@@ -218,6 +218,28 @@ export interface Question {
   out_tokens: number
 }
 
+/**
+ * One model's reading of one question. Mirrors `Reading` in src/reading.ts.
+ *
+ * Shown beside `kind`, never instead of it: `kind` is a rule anyone can check against the calls and
+ * this is a sentence a model wrote about them. Nothing derived from one enters a number on any page.
+ */
+export interface Reading {
+  asked: string
+  /** The model's read of the kind, or null when it named nothing in the table. */
+  kind: Ask | null
+  why: string
+  /** The reader that answered, as it was configured. */
+  by: string
+  at: string
+  evidence: string
+}
+
+/** How a reading is addressed. Mirrors `readingKey` in src/reading.ts. */
+export function readingKey(session: string, task: number, at: number): string {
+  return `${session}#${task}.${at}`
+}
+
 /** A run of calls that followed one another into the repository. Mirrors `Trail` in src/trail.ts. */
 export interface Trail {
   session: string
@@ -435,6 +457,12 @@ export interface TaskPayload {
   trace: Trace
   trails: Trail[]
   questions: Question[]
+  /** Readings already asked for, keyed by `readingKey`. */
+  readings: Record<string, Reading>
+  /** Keys of the readings whose calls have changed since they were made. */
+  stale: string[]
+  /** The configured reader, or null when there is nothing probez could run. */
+  reader: string | null
 }
 
 export interface RoundPayload {
@@ -461,11 +489,41 @@ export interface TrailsPayload {
 export interface QuestionsPayload {
   project: StoredProject
   questions: Question[]
+  /** Readings already asked for, keyed by `readingKey`. */
+  readings: Record<string, Reading>
+  /** Keys of the readings whose calls have changed since they were made. */
+  stale: string[]
+  /** The configured reader, or null when there is nothing probez could run. */
+  reader: string | null
   calls: number
   repeats: number
   fetches: number
   sweeps: number
   reasked: number
+}
+
+/** What `explain` came back with. Mirrors `ExplainPayload` in src/viewdata.ts. */
+export interface ExplainPayload {
+  key: string
+  reading: Reading
+  /** False when it came out of the store and nothing was run. */
+  asked: boolean
+  stale: boolean
+}
+
+/** What would be sent, unsent. Mirrors `PromptPayload` in src/viewdata.ts. */
+export interface PromptPayload {
+  project: StoredProject
+  key: string
+  prompt: string
+}
+
+/** The command `explain` runs. Mirrors `ReaderPayload` in src/viewdata.ts. */
+export interface ReaderPayload {
+  file: string
+  /** argv, empty when nothing is configured. */
+  command: string[]
+  timeout_ms: number
 }
 
 /** One tool result's body, fetched on request. Nothing renders it until someone asks. */
@@ -632,7 +690,21 @@ export const api = {
     get<ResultPayload>(
       `/projects/${slug}/sessions/${session}/results/${encodeURIComponent(toolUseId)}`,
     ),
+  // The one call in the view that runs a program on this machine: it hands one question's calls to
+  // the command in `reader.json` and keeps what it answers. A POST for that reason, like `sync`.
+  explain: (slug: string, session: string, task: number, at: number, again = false) =>
+    post<ExplainPayload>(`/projects/${slug}/explain`, { session, task, at, again }),
+  // The same text `explain` would send, for anyone who would rather paste it into a chat they
+  // already have open. It runs nothing, so unlike `explain` it is a GET and needs no reader.
+  prompt: (slug: string, session: string, task: number, at: number) =>
+    get<PromptPayload>(
+      `/projects/${slug}/prompt?session=${encodeURIComponent(session)}` +
+        `&task=${String(task)}&at=${String(at)}`,
+    ),
   pricing: () => get<PricingPayload>('/pricing'),
+  reader: () => get<ReaderPayload>('/reader'),
+  saveReader: (command: string[], timeoutMs: number) =>
+    post<ReaderPayload>('/reader', { command, timeout_ms: timeoutMs }),
   savePricing: (models: Record<string, Rates>) => post<PricingPayload>('/pricing', { models }),
   import: (text: string, from: string) => post<ImportResult>('/import', { text, from }),
 }

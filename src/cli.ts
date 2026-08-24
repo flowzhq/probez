@@ -47,8 +47,17 @@ import type {
   ToolRow,
   TrailShare,
 } from './inspect.js'
-import { ASKS, isAsk, questionsOf } from './question.js'
+import { ASK_MEANING, ASKS, isAsk, questionsOf } from './question.js'
 import type { Question } from './question.js'
+import { readerFile, readReader } from './reader.js'
+import {
+  explainQuestion,
+  isStale,
+  promptFor,
+  readingKey,
+  readReadings,
+} from './reading.js'
+import type { Explained } from './reading.js'
 import { MIN_DEPTH, trailsOf } from './trail.js'
 import type { Trail } from './trail.js'
 import { idsToRead } from './trail.js'
@@ -63,6 +72,7 @@ import {
   findStored,
   importProject,
   listStored,
+  projectDir,
   readResults,
   readRounds,
   slugFor,
@@ -87,6 +97,7 @@ const COMMANDS = new Set([
   'trail',
   'questions',
   'question',
+  'explain',
   'tools',
   'analyze',
   'view',
@@ -133,6 +144,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   trail: ['session', 'deep'],
   questions: ['limit', 'session', 'task', 'kind', 'min-calls'],
   question: ['session'],
+  explain: ['session', 'again', 'prompt'],
   tools: ['limit', 'kinds'],
   analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified', 'deep'],
   view: ['port', 'no-open'],
@@ -236,9 +248,11 @@ Trails
 Questions
   probez questions [project]   What the agent needed to know, and what finding out cost
   probez question <id>         One of them, call by call, named by any round it was asked at
+  probez explain <id>          Ask your own LLM what one of them was, in a sentence
+  --again                      Ask again rather than showing the answer already held
+  --prompt                     Print what would be sent and run nothing
   --kind <name>                Only questions of this kind:
-                               ${ASKS.slice(0, 4).join(' · ')}
-                               ${ASKS.slice(4).join(' · ')}
+${ASKS.map((kind) => `                               ${pad(kind, 10)}${ASK_MEANING[kind]}`).join('\n')}
   --min-calls <n>              Only questions that took at least this many calls
   --session <id>               Only this session
   --task <n>                   Only this task number
@@ -253,9 +267,16 @@ Questions
   CALLS is what it cost. AGAIN is the same words asked of the same places over again. FETCH is
   calls that only turned a line number into a body, the second half of locate-then-fetch. GUESS
   is calls that named three or more different words at once, which is an agent reaching for
-  vocabulary it has not learned. KIND is which of six questions it was, by one readable table:
-  a seventh — how does A reach B — is left out because no grep expresses it, so no reading of
-  one can recover it.
+  vocabulary it has not learned. KIND is which of the six above it was, decided by the first
+  rule that reads it. A seventh — how does A reach B — is left out because no grep expresses
+  it, so no reading of one can recover it.
+
+  KIND is a rule, so it holds for six shapes and says \`other\` for everything else. \`explain\`
+  is the sentence instead, and it comes from a model rather than a rule: probez writes the
+  question's calls to a command you name in \`<data-dir>/reader.json\` — \`{"command": ["claude",
+  "-p"]}\` — and keeps what it answers beside the measurement, never in place of it. Nothing is
+  sent anywhere else, nothing but those calls is sent at all, and with no reader configured
+  there is nothing probez can run. \`--prompt\` prints what would go, for reading it yourself.
 
 Tools
   probez tools [project]       Every tool called, and what Bash actually ran
@@ -922,16 +943,49 @@ function questionId(question: Question, showSession: boolean): string {
   return showSession ? `${question.session.slice(0, 8)}#${question.ref}` : question.ref
 }
 
+/**
+ * A model's reading of the question, above the calls it was read from.
+ *
+ * Printed under `asked about` and never in place of the `kind` on the line above it. Where the two
+ * disagree the reader is told so in as many words: the rule is the measurement, and a model saying
+ * something else about the same calls is worth seeing rather than worth resolving.
+ */
+function printReading(read: Explained, question: Question, width: number): void {
+  const room = Math.max(30, width - 11)
+  const lines = wrap(read.reading.asked, room)
+  lines.forEach((line, at) => {
+    console.log(`  ${pad(at === 0 ? 'read as' : '', 9)}${line}`)
+  })
+  const kind = read.reading.kind
+  const said = [
+    kind === null ? '' : kind === question.kind ? `${kind}, as above` : `${kind}, not ${question.kind}`,
+    read.reading.why,
+    read.reading.by,
+  ].filter((part) => part !== '')
+  for (const line of wrap(said.join(' · '), room)) console.log(`  ${pad('', 9)}${line}`)
+  if (read.stale) {
+    console.log(`  ${pad('', 9)}asked of calls that have changed since. \`--again\` re-reads it`)
+  }
+}
+
 /** The question drawn as what it cost: every call it took, and what each one asked. */
-function printQuestion(question: Question, width: number, showSession: boolean): void {
+function printQuestion(
+  question: Question,
+  width: number,
+  showSession: boolean,
+  read?: Explained | null,
+): void {
   const calls = question.calls.length
   console.log('')
+  // The kind is one word, and one word never says what it means. Glossed here rather than left
+  // for `--help`, because this is the screen a person reads it on.
   console.log(
-    `  question ${questionId(question, showSession)} → ${question.last} · ${calls} call${calls === 1 ? '' : 's'} · ${question.kind}`,
+    `  question ${questionId(question, showSession)} → ${question.last} · ${calls} call${calls === 1 ? '' : 's'} · ${question.kind} — ${ASK_MEANING[question.kind]}`,
   )
   console.log(
     `  asked about ${question.terms.length === 0 ? 'nothing by name' : question.terms.join(', ')}`,
   )
+  if (read !== undefined && read !== null) printReading(read, question, width)
   const waste = [
     question.repeats > 0 ? `${question.repeats} re-asked` : '',
     question.fetches > 0 ? `${question.fetches} fetched a body` : '',
@@ -1008,7 +1062,15 @@ function printQuestions(
     `  ${every.length} asked in all · ${calls} calls · ${(calls / every.length).toFixed(2)} per question · ${reasked} took more than one`,
   )
   console.log('  AGAIN is the same words asked of the same places over again.')
+  // Only the kinds actually in the table, so the legend is about these rows rather than a reprint
+  // of the taxonomy every time. `--help` carries the whole of it, `other` included.
+  const kinds = ASKS.filter((kind) => rows.some((question) => question.kind === kind))
+  if (kinds.length > 0) {
+    console.log('  KIND, in these rows:')
+    for (const kind of kinds) console.log(`    ${pad(kind, 10)}${ASK_MEANING[kind]}`)
+  }
   console.log('  `probez question <id>` shows every call one of them took.')
+  console.log('  `probez explain <id>` asks your own LLM what one of them was, in a sentence.')
   console.log('')
 }
 
@@ -1426,6 +1488,8 @@ async function main(): Promise<void> {
         deep: { type: 'boolean', default: false },
         'min-depth': { type: 'string' },
         'min-calls': { type: 'string' },
+        again: { type: 'boolean', default: false },
+        prompt: { type: 'boolean', default: false },
         outcome: { type: 'string' },
         agent: { type: 'string' },
         errors: { type: 'boolean', default: false },
@@ -1462,7 +1526,8 @@ async function main(): Promise<void> {
     command === 'task' ||
     command === 'round' ||
     command === 'trail' ||
-    command === 'question'
+    command === 'question' ||
+    command === 'explain'
   ) {
     if (positionals[2] !== undefined) {
       selector = positionals[2]
@@ -1627,7 +1692,9 @@ async function main(): Promise<void> {
 
   const targeting = { all: values.all, includeTemp: values['include-temp'] }
 
-  const READ_COMMANDS = ['sessions', 'session', 'tasks', 'task', 'rounds', 'round', 'trails', 'trail', 'questions', 'question', 'tools', 'analyze']
+  // Commands that read a collected project. Two of them also write, and only into their own cache:
+  // `analyze` its labels, `explain` the reading a person asked for.
+  const READ_COMMANDS = ['sessions', 'session', 'tasks', 'task', 'rounds', 'round', 'trails', 'trail', 'questions', 'question', 'explain', 'tools', 'analyze']
   if (READ_COMMANDS.includes(command)) {
     const { projects: found } = await resolveTargets(projects, target, targeting)
     // An imported project is in the store and nowhere else: the agent never ran it here, so
@@ -1684,7 +1751,7 @@ async function main(): Promise<void> {
     }
 
     // Naming one thing inside a project only means something once the project is settled.
-    const DETAIL = ['session', 'task', 'round', 'trail', 'question']
+    const DETAIL = ['session', 'task', 'round', 'trail', 'question', 'explain']
     if (DETAIL.includes(command) && matched.length > 1) {
       fail(
         `"${target ?? process.cwd()}" matches ${matched.length} projects. Name one to look inside it`,
@@ -1696,6 +1763,12 @@ async function main(): Promise<void> {
     if (command === 'question' && selector === undefined) {
       fail(
         'question needs a round id it was asked at, as `probez question 2.250`. ' +
+          '`probez questions` lists them',
+      )
+    }
+    if (command === 'explain' && selector === undefined) {
+      fail(
+        'explain needs a round id the question was asked at, as `probez explain 2.250`. ' +
           '`probez questions` lists them',
       )
     }
@@ -1888,6 +1961,51 @@ async function main(): Promise<void> {
         continue
       }
 
+      if (command === 'explain') {
+        const all = questionsOf(rounds, { root: project.path ?? '' })
+        let question: Question
+        try {
+          question = findQuestion(rounds, all, selector!, session)
+        } catch (error) {
+          if (!(error instanceof SelectorError)) throw error
+          fail(error.message)
+        }
+
+        // Printing the prompt runs nothing and needs no reader, which is what makes it the answer
+        // for anyone who would rather paste it somewhere themselves than have probez spawn.
+        if (values.prompt) {
+          if (values.json) output.push({ prompt: promptFor(question) })
+          else process.stdout.write(promptFor(question))
+          continue
+        }
+
+        const config = await readReader(dataDir)
+        if (config === null) {
+          fail(
+            `no reader configured. Write the command to run in ${shorten(readerFile(dataDir))}, as ` +
+              '{"command": ["claude", "-p"]}. probez runs that and nothing else, and sends it ' +
+              'only this question\'s calls — `probez explain <id> --prompt` shows exactly what',
+          )
+        }
+
+        const dir = projectDir(dataDir, project)
+        let read: Explained
+        try {
+          read = await explainQuestion(dir, config, question, { again: values.again })
+        } catch (error) {
+          fail((error as Error).message)
+        }
+
+        if (values.json) {
+          output.push({ question, reading: read.reading, asked: read.asked, stale: read.stale })
+          continue
+        }
+        // No project header, for the reason `question` prints none: this is one thing inside a
+        // project already named on the command line, and the header belongs to a listing.
+        printQuestion(question, width, sessions.length > 1, read)
+        continue
+      }
+
       if (command === 'questions' || command === 'question') {
         const scope = session === undefined ? rounds : rounds.filter((r) => r.session === session)
         const withTask = taskFilter === undefined
@@ -1906,8 +2024,17 @@ async function main(): Promise<void> {
         if (command === 'question') {
           try {
             const found = findQuestion(rounds, all, selector!, session)
-            if (values.json) output.push(found)
-            else printQuestion(found, width, sessions.length > 1)
+            // A reading already asked for is shown here too. Reading one costs nothing and runs
+            // nothing: `explain` is what spends, and this is what it left behind.
+            const held = (await readReadings(projectDir(dataDir, project)))[
+              readingKey(found.session, found.task, found.at)
+            ]
+            const read: Explained | null =
+              held === undefined
+                ? null
+                : { reading: held, asked: false, stale: isStale(held, found) }
+            if (values.json) output.push(read === null ? found : { ...found, reading: read.reading })
+            else printQuestion(found, width, sessions.length > 1, read)
           } catch (error) {
             if (!(error instanceof SelectorError)) throw error
             fail(error.message)

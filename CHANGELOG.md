@@ -6,9 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
-## [Unreleased]
+## [0.3.7] - 2026-08-24
 
 ### Added
+
+- **`probez explain <id>`: what one question was, read back by your own LLM.** `KIND` is a rule, so
+  it holds for six shapes and says `other` for everything else. This is the sentence instead — and
+  it comes from a model you already have. Write the command in `<data-dir>/reader.json`, as
+  `{"command": ["claude", "-p"]}` or `["ollama", "run", "llama3"]`, or set it under Settings in the
+  view; probez writes the question's calls to that command's stdin and keeps the sentence it answers
+  with. In the view it is a button on any question, and the sentence then fills the *asked about*
+  column so a table of them reads at a glance. Beside it is **copy prompt**, which puts exactly what
+  the reader would be sent on the clipboard so you can paste it into a chat you already have open —
+  the view's half of `probez explain <id> --prompt`. It runs nothing, needs no reader, and is
+  offered whether or not one is configured.
+
+  The reading sits beside the measurement and never replaces it. Where the model's kind differs from
+  the rule's, both are shown — the disagreement is the interesting part — and nothing that comes
+  back enters a share, a tally or a filter, so every number probez prints stays derivable from the
+  rounds alone. Answers are cached in `readings.json` beside that project's rounds, so asking twice
+  runs nothing and `--again` is what spends.
+
+  probez has never opened a connection to anything and still does not: this runs a command *you*
+  named, as you, and whatever that command talks to it talks to with your credentials. It is argv
+  and never a shell line, it runs only from `probez explain` or the `explain` POST — never from
+  collect, analyze or browsing — and what is sent is that question's calls and nothing else: no
+  prompts you typed, no assistant text, no tool output. `--prompt` prints exactly what would go and
+  runs nothing. With no `reader.json` there is nothing probez can run at all. CI now greps for
+  `child_process` outside `src/open.ts` and `src/reader.ts`, and for a shell inside either.
 
 - **`probez questions` and `probez question <id>`: what the agent needed to know, and what finding
   out cost it.** A trail is a walk that went somewhere, and its edges exist only where a call
@@ -26,7 +51,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   same places over again; `FETCH`, calls that only turned a line number into a body; and `GUESS`,
   calls that named three or more different words at once, which is an agent reaching for vocabulary
   it has not learned yet. `KIND` is which of six questions it was — `define`, `refs`, `outline`,
-  `flow`, `touches`, `covers` — by one readable table in `question.ts`. A seventh, *how does A reach
+  `flow`, `touches`, `covers` — by one readable table in `question.ts`, which is also where each
+  one's meaning is written: a kind is one word, and one word never says what it means, so the
+  listing glosses the kinds it used, a detail view glosses the one it shows, `--help` carries all
+  seven, and in the view every kind hangs its meaning off a hover. A seventh, *how does A reach
   B*, is deliberately absent: no grep expresses it, so no reading of a grep can recover it, and a
   kind the evidence can never produce would be a claim about intent the inputs do not carry.
 
@@ -843,7 +871,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/flowzhq/probez/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/flowzhq/probez/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/flowzhq/probez/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/flowzhq/probez/compare/v0.3.3...v0.3.4

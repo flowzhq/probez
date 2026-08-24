@@ -7,12 +7,14 @@ import { extname, join, resolve, sep } from 'node:path'
 
 import {
   BadRequest,
+  explainOne,
   exportProject,
   importExport,
   NotFound,
   pricingPayload,
   projectPayload,
   projectsPayload,
+  promptPayload,
   removeStored,
   renameStored,
   resultPayload,
@@ -23,6 +25,9 @@ import {
   taskPayload,
   toolsPayload,
   questionsPayload,
+  readerPayload,
+  readingsPayload,
+  saveReaderConfig,
   trailsPayload,
 } from './viewdata.js'
 
@@ -44,13 +49,21 @@ import {
  * Reading never writes. `analyze` caches its work as a side effect of being run; every `GET` here
  * refuses to, so browsing leaves the store exactly as it found it.
  *
- * Five routes write, and every one of them is a `POST`: `sync` on a project does what `collect` and
+ * Six routes write, and every one of them is a `POST`: `sync` on a project does what `collect` and
  * `analyze` do, `rename` sets a label, `delete` removes a project and everything recorded for it,
- * `import` takes in a file, and `pricing` stores rates. It is worth being clear about what that
+ * `import` takes in a file, `pricing` stores rates, and `reader` stores the command `explain` runs.
+ * A seventh, `explain`, keeps what a reader answered about one question — and is the one thing here
+ * that runs a program, which is why it is a `POST` although what a person means by it is "read this
+ * one to me". It is worth being clear about what that
  * costs. Before any of them, the token and the `Host` check stood between a page you did not open
  * and *reading* your prompts; now they also stand between it and collecting, and between it and
  * deleting. Which is why `POST` is accepted on those paths and nowhere else, why they refuse `GET`
  * outright rather than merely not answering it, and why every other method is refused everywhere.
+ *
+ * `explain` raises that stake once more: behind the token and the `Host` check now sits a command
+ * on this machine. So it is reachable by nothing but a `POST` carrying the token, it runs only the
+ * argv the person wrote into `reader.json`, it sends that command nothing but the calls the
+ * question is made of, and with no reader configured there is nothing it can run at all.
  */
 
 const HOST = '127.0.0.1'
@@ -203,7 +216,7 @@ async function serveAsset(res: ServerResponse, pathname: string): Promise<void> 
  * collects, renames or deletes when it is merely visited is a URL that can be put in an `<img>` tag
  * on any page you happen to open.
  */
-const PROJECT_WRITES = new Set(['sync', 'rename', 'delete'])
+const PROJECT_WRITES = new Set(['sync', 'rename', 'delete', 'explain'])
 
 function isProjectWritePath(parts: string[]): boolean {
   return parts.length === 3 && parts[0] === 'projects' && PROJECT_WRITES.has(parts[2]!)
@@ -214,6 +227,11 @@ function isPricingPath(parts: string[]): boolean {
   return parts.length === 1 && parts[0] === 'pricing'
 }
 
+/** The command `explain` runs: readable with GET, writable with POST. Same shape as pricing. */
+function isReaderPath(parts: string[]): boolean {
+  return parts.length === 1 && parts[0] === 'reader'
+}
+
 /** Taking in an exported project. POST only: it writes. */
 function isImportPath(parts: string[]): boolean {
   return parts.length === 1 && parts[0] === 'import'
@@ -221,7 +239,12 @@ function isImportPath(parts: string[]): boolean {
 
 /** Every path that accepts a POST. */
 function isWritePath(parts: string[]): boolean {
-  return isProjectWritePath(parts) || isPricingPath(parts) || isImportPath(parts)
+  return (
+    isProjectWritePath(parts) ||
+    isPricingPath(parts) ||
+    isReaderPath(parts) ||
+    isImportPath(parts)
+  )
 }
 
 /**
@@ -253,6 +276,18 @@ async function readJsonBody(req: IncomingMessage, cap = MAX_BODY): Promise<unkno
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
+/**
+ * A whole number out of a query string, or nothing.
+ *
+ * Anything that is not one comes back `undefined` rather than `NaN`, so a mistyped query is
+ * refused by the same sentence that refuses a missing one instead of hunting for question −1.
+ */
+function asIndex(value: string | null): number | undefined {
+  if (value === null || value.trim() === '') return undefined
+  const index = Number(value)
+  return Number.isInteger(index) ? index : undefined
+}
+
 async function serveApi(
   req: IncomingMessage,
   res: ServerResponse,
@@ -265,6 +300,9 @@ async function serveApi(
   // /api/projects/<slug>
   // /api/projects/<slug>/tools
   // /api/projects/<slug>/trails, /api/projects/<slug>/questions
+  // /api/projects/<slug>/readings
+  // /api/projects/<slug>/prompt?session=&task=&at=
+  // /api/projects/<slug>/explain                                POST
   // /api/projects/<slug>/export?format=jsonl|json
   // /api/projects/<slug>/sync                                   POST
   // /api/projects/<slug>/rename                                 POST
@@ -302,6 +340,22 @@ async function serveApi(
       return
     }
     sendJson(res, 200, await pricingPayload(dataDir))
+    return
+  }
+
+  if (group === 'reader' && slug === undefined) {
+    if (method === 'POST') {
+      let body: unknown
+      try {
+        body = await readJsonBody(req)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+        return
+      }
+      sendJson(res, 200, await saveReaderConfig(dataDir, body))
+      return
+    }
+    sendJson(res, 200, await readerPayload(dataDir))
     return
   }
 
@@ -366,6 +420,36 @@ async function serveApi(
   }
   if (kind === 'trails' && id === undefined) {
     sendJson(res, 200, await trailsPayload(dataDir, slug))
+    return
+  }
+  if (kind === 'readings' && id === undefined) {
+    sendJson(res, 200, await readingsPayload(dataDir, slug))
+    return
+  }
+  // What `explain` would send, without sending it: a read, so a GET, and it needs no reader. The
+  // question is named in the query rather than a body for the same reason — nothing here writes.
+  if (kind === 'prompt' && id === undefined) {
+    sendJson(
+      res,
+      200,
+      await promptPayload(dataDir, slug, {
+        session: url.searchParams.get('session') ?? undefined,
+        task: asIndex(url.searchParams.get('task')),
+        at: asIndex(url.searchParams.get('at')),
+      }),
+    )
+    return
+  }
+  if (kind === 'explain' && id === undefined) {
+    // Reachable only as POST; the method check upstream has already refused a GET here.
+    let body: unknown
+    try {
+      body = await readJsonBody(req)
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+      return
+    }
+    sendJson(res, 200, await explainOne(dataDir, slug, body))
     return
   }
   if (kind !== 'sessions' || id === undefined) {

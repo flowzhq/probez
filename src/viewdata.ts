@@ -35,6 +35,16 @@ import { shorten } from './format.js'
 import { MAX_RESULT_CHARS, readToolResult, readToolResults } from './result.js'
 import { questionsOf, questionShare } from './question.js'
 import type { Question } from './question.js'
+import {
+  DEFAULT_TIMEOUT_MS,
+  READER_VERSION,
+  readerFile,
+  readerName,
+  readReader,
+  writeReader,
+} from './reader.js'
+import { explainQuestion, isStale, promptFor, readingKey, readReadings } from './reading.js'
+import type { Reading } from './reading.js'
 import { idsToRead, trailsOf } from './trail.js'
 import type { Trail } from './trail.js'
 import {
@@ -167,6 +177,12 @@ export interface TaskPayload {
    * pass behind it.
    */
   questions: Question[]
+  /** The readings already asked for in this task. See `QuestionsPayload`. */
+  readings: Record<string, Reading>
+  /** Keys of the readings whose calls have changed since they were made. */
+  stale: string[]
+  /** The configured reader, or null when there is nothing probez could run. */
+  reader: string | null
 }
 
 export interface RoundPayload {
@@ -199,6 +215,18 @@ export interface TrailsPayload {
 export interface QuestionsPayload {
   project: StoredProject
   questions: Question[]
+  /**
+   * The readings already asked for, keyed the way `readingKey` names one.
+   *
+   * Carried on the payload rather than fetched beside it, because a reading is what a row shows
+   * instead of its search terms and a page that drew the table twice — once without them — would
+   * flicker between two readings of the same question.
+   */
+  readings: Record<string, Reading>
+  /** Keys of the readings whose calls have changed since they were made. */
+  stale: string[]
+  /** The configured reader, or null when there is nothing probez could run. */
+  reader: string | null
   /** Every call that was finding something out, which is what the questions divide up. */
   calls: number
   repeats: number
@@ -463,6 +491,8 @@ export async function taskPayload(
 
   const work = workIndex(rounds)
   const row = taskRows(mine, pricing)[0]!
+  const questions = questionsOf(mine, { root: stored.path ?? '' })
+  const readings = await readReadings(stored.dir)
   return {
     project: shown(stored),
     session: mine[0]!.session,
@@ -476,7 +506,10 @@ export async function taskPayload(
     analysis: categoryTally(mine, pricing),
     trace: traceOf(mine),
     trails: await taskTrails(stored, mine),
-    questions: questionsOf(mine, { root: stored.path ?? '' }),
+    questions,
+    readings,
+    stale: staleKeys(readings, questions),
+    reader: await readerLabel(dataDir),
   }
 }
 
@@ -615,14 +648,231 @@ export async function questionsPayload(dataDir: string, slug: string): Promise<Q
   const questions = questionsOf(rounds, { root: stored.path ?? '' }).sort(
     (a, b) => b.calls.length - a.calls.length || a.session.localeCompare(b.session) || a.task - b.task,
   )
+  const readings = await readReadings(stored.dir)
   return {
     project: shown(stored),
     questions,
+    readings,
+    stale: staleKeys(readings, questions),
+    reader: await readerLabel(dataDir),
     calls: share.calls,
     repeats: share.repeats,
     fetches: share.fetches,
     sweeps: share.sweeps,
     reasked: share.reasked,
+  }
+}
+
+/* Readings: the one place the view runs something. --------------------------------------------- */
+
+/**
+ * The reader as it would be run, or null when there is none.
+ *
+ * A label rather than the config, because this rides on every payload that carries questions and
+ * the page needs exactly two things from it: whether there is anything to run, and what to call it.
+ */
+/**
+ * Which held readings are about calls that have since moved.
+ *
+ * Computed here because staleness is a digest over the calls and the calls are here; the page would
+ * otherwise have to hash them in the browser to find out. Listed rather than folded into each
+ * reading, so what is stored stays exactly what the reader said.
+ */
+function staleKeys(readings: Record<string, Reading>, questions: Question[]): string[] {
+  const out: string[] = []
+  for (const question of questions) {
+    const key = readingKey(question.session, question.task, question.at)
+    const held = readings[key]
+    if (held !== undefined && isStale(held, question)) out.push(key)
+  }
+  return out
+}
+
+async function readerLabel(dataDir: string): Promise<string | null> {
+  const config = await readReader(dataDir)
+  return config === null ? null : readerName(config)
+}
+
+export interface ReaderPayload {
+  /** Where the command is written, shortened for showing. */
+  file: string
+  /** argv, empty when nothing is configured. */
+  command: string[]
+  timeout_ms: number
+}
+
+export async function readerPayload(dataDir: string): Promise<ReaderPayload> {
+  const config = await readReader(dataDir)
+  return {
+    file: shorten(readerFile(dataDir)),
+    command: config?.command ?? [],
+    timeout_ms: config?.timeout_ms ?? DEFAULT_TIMEOUT_MS,
+  }
+}
+
+/**
+ * Set the command `explain` runs.
+ *
+ * argv and never a shell line, which is why it is a list here and stays a list all the way to
+ * `spawn`. An empty list is how a person turns the reader off: it writes a config that reads back
+ * as none, rather than deleting a file — nothing here removes anything from disk.
+ */
+export async function saveReaderConfig(dataDir: string, body: unknown): Promise<ReaderPayload> {
+  if (body === null || typeof body !== 'object') throw new BadRequest('that is not a reader')
+  const sent = (body as { command?: unknown; timeout_ms?: unknown }).command
+  const argv: string[] = []
+  if (Array.isArray(sent)) {
+    for (const part of sent) {
+      if (typeof part !== 'string') throw new BadRequest('a command is a list of strings')
+      if (part.trim() !== '') argv.push(part.trim())
+    }
+  } else if (typeof sent === 'string') {
+    // The settings field is one line, and it is argv split on whitespace rather than a shell line:
+    // there is no quoting to honour here because there is no shell to honour it.
+    for (const part of sent.trim().split(/\s+/)) if (part !== '') argv.push(part)
+  } else if (sent !== undefined) {
+    throw new BadRequest('a command is a list of strings')
+  }
+
+  const timeout = (body as { timeout_ms?: unknown }).timeout_ms
+  const ms =
+    typeof timeout === 'number' && Number.isFinite(timeout) && timeout > 0
+      ? Math.min(Math.round(timeout), 10 * 60_000)
+      : DEFAULT_TIMEOUT_MS
+  await writeReader(dataDir, { schema_version: READER_VERSION, command: argv, timeout_ms: ms })
+  return readerPayload(dataDir)
+}
+
+export interface ReadingsPayload {
+  project: StoredProject
+  readings: Record<string, Reading>
+  reader: string | null
+}
+
+/** Every reading held for a project. A read, and the only route here that touches the file. */
+export async function readingsPayload(dataDir: string, slug: string): Promise<ReadingsPayload> {
+  const stored = await findStored(dataDir, slug)
+  if (stored === null) throw new NotFound(`no project ${slug} in this store`)
+  return {
+    project: shown(stored),
+    readings: await readReadings(stored.dir),
+    reader: await readerLabel(dataDir),
+  }
+}
+
+export interface ExplainPayload {
+  /** How the reading is addressed, so the page can put it straight into the map it holds. */
+  key: string
+  reading: Reading
+  /** False when the reading came out of the file and nothing was run. */
+  asked: boolean
+  stale: boolean
+}
+
+/**
+ * The one question a request names, or the reason it names none.
+ *
+ * Shared by `explain` and `prompt` so that the sentence a reader is given and the text a person
+ * copies are about the same calls. Everything a caller can get wrong is a `BadRequest`; a question
+ * that is simply not in the store is a `NotFound`.
+ */
+async function oneQuestion(
+  dataDir: string,
+  slug: string,
+  named: { session?: unknown; task?: unknown; at?: unknown },
+): Promise<{ stored: StoredProject; question: Question }> {
+  if (typeof named.session !== 'string' || named.session === '') {
+    throw new BadRequest('that names no session')
+  }
+  if (!Number.isInteger(named.task) || (named.task as number) < 0) {
+    throw new BadRequest('that names no task')
+  }
+  if (!Number.isInteger(named.at) || (named.at as number) < 0) {
+    throw new BadRequest('that names no question')
+  }
+
+  const stored = await findStored(dataDir, slug)
+  if (stored === null) throw new NotFound(`no project ${slug} in this store`)
+  const rounds = (await roundsOf(stored.dir)).filter(
+    (round) => round.session === named.session && round.task === named.task,
+  )
+  const question = questionsOf(rounds, { root: stored.path ?? '' }).find(
+    (one) => one.at === named.at,
+  )
+  if (question === undefined) {
+    throw new NotFound(`no question at ${String(named.task)}.${String(named.at)} in that session`)
+  }
+  return { stored, question }
+}
+
+export interface PromptPayload {
+  project: StoredProject
+  /** How the question is addressed, so a caller can tell an answer from a stale request. */
+  key: string
+  /** Exactly what `explain` would send, and exactly what `probez explain <id> --prompt` prints. */
+  prompt: string
+}
+
+/**
+ * What would be sent, without sending it.
+ *
+ * The view's half of `explain --prompt`: it runs no program, needs no reader, and spends nothing,
+ * which is what makes it a GET where `explain` is a POST. It exists because handing the question to
+ * a chat you already have open is a supported way to use probez, not a workaround for one.
+ */
+export async function promptPayload(
+  dataDir: string,
+  slug: string,
+  named: { session?: unknown; task?: unknown; at?: unknown },
+): Promise<PromptPayload> {
+  const { stored, question } = await oneQuestion(dataDir, slug, named)
+  return {
+    project: shown(stored),
+    key: readingKey(question.session, question.task, question.at),
+    prompt: promptFor(question),
+  }
+}
+
+/**
+ * Hand one question to the configured reader, and keep what it says.
+ *
+ * The only thing in the view that runs a program, and it runs exactly the one the person wrote into
+ * `reader.json`, with exactly this question's calls on its stdin. It is a POST for the same reason
+ * `sync` is: a URL that spends someone's tokens when it is merely visited is a URL that can be put
+ * in an `<img>` tag on a page they did not write.
+ *
+ * Everything the reader can do wrong — missing, failing, timing out, answering in prose — comes
+ * back as a `BadRequest` with what it said, because all of it is the person's setup to fix rather
+ * than probez being broken.
+ */
+export async function explainOne(
+  dataDir: string,
+  slug: string,
+  body: unknown,
+): Promise<ExplainPayload> {
+  if (body === null || typeof body !== 'object') throw new BadRequest('that names no question')
+  const sent = body as { session?: unknown; task?: unknown; at?: unknown; again?: unknown }
+  const { stored, question } = await oneQuestion(dataDir, slug, sent)
+
+  const config = await readReader(dataDir)
+  if (config === null) {
+    throw new BadRequest(
+      `no reader configured. Write the command to run in ${shorten(readerFile(dataDir))}, as ` +
+        '{"command": ["claude", "-p"]}',
+    )
+  }
+
+  let read
+  try {
+    read = await explainQuestion(stored.dir, config, question, { again: sent.again === true })
+  } catch (error) {
+    throw new BadRequest(error instanceof Error ? error.message : 'the reader failed')
+  }
+  return {
+    key: readingKey(question.session, question.task, question.at),
+    reading: read.reading,
+    asked: read.asked,
+    stale: read.stale,
   }
 }
 

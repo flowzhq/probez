@@ -262,7 +262,7 @@ test('the routes that write are the only ones that are not GETs, and none of the
     // Collecting, renaming or deleting on GET would mean a URL that does it when merely visited,
     // which is a URL that can be put in an <img> tag on any page you happen to open. Deleting is
     // the one where that would cost something nobody can put back.
-    for (const verb of ['sync', 'rename', 'delete']) {
+    for (const verb of ['sync', 'rename', 'delete', 'explain']) {
       const asGet = await get(server, `/api/projects/${slug}/${verb}?t=${server.token}`)
       assert.equal(asGet.status, 405, `GET ${verb}`)
       assert.equal(asGet.headers.get('allow'), 'POST', `GET ${verb}`)
@@ -617,6 +617,8 @@ test('browsing a store leaves it exactly as it was', async () => {
       `/api/projects/${slug}/sessions/${session}/results/tu_1`,
       `/api/projects/${slug}/export?format=jsonl`,
       `/api/projects/${slug}/export?format=json`,
+      `/api/projects/${slug}/readings`,
+      '/api/reader',
     ]) {
       assert.equal((await withToken(server, path)).status, 200, path)
     }
@@ -626,6 +628,155 @@ test('browsing a store leaves it exactly as it was', async () => {
   // `analyze` writes analysis.jsonl on the way through. Reading is not a reason to write, and
   // exporting is reading. Only sync writes, and only when asked.
   assert.deepEqual(snapshot(dataDir), before)
+})
+
+test('explaining needs the token, a reader, and a question that exists', async () => {
+  const { dataDir, slug } = makeStore()
+  const before = snapshot(dataDir)
+  const server = await serving(dataDir)
+  const explain = (body: unknown, token = true): Promise<Response> =>
+    get(server, `/api/projects/${slug}/explain${token ? `?t=${server.token}` : ''}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+  try {
+    const questions = await body(withToken(server, `/api/projects/${slug}/questions`))
+    const one = questions.questions[0]
+    assert.ok(one !== undefined, 'the fixture asked nothing')
+
+    // The token stands between a page you did not open and a program running on this machine.
+    assert.equal((await explain({ session: one.session, task: one.task, at: one.at }, false)).status, 403)
+
+    // With no reader there is nothing to run, and the answer names the file to write.
+    const none = await explain({ session: one.session, task: one.task, at: one.at })
+    assert.equal(none.status, 400)
+    assert.match(String((await none.json() as { error: string }).error), /no reader configured/)
+
+    // A reader that would answer, so what is refused next is refused for its own reason.
+    writeFileSync(
+      join(dataDir, 'reader.json'),
+      JSON.stringify({ command: [process.execPath, '-e', 'process.stdout.write("{}")'] }) + '\n',
+    )
+    const missing = await explain({ session: 'nobody', task: 1, at: 0 })
+    assert.equal(missing.status, 404)
+    assert.equal((await explain({ session: 'nobody' })).status, 400)
+  } finally {
+    await server.close()
+  }
+  // Every one of those was refused, so nothing about the project moved. The reader config is the
+  // one file written here, and it is not part of any project.
+  const after = snapshot(dataDir)
+  delete after['reader.json']
+  assert.deepEqual(after, before, 'a refused explain must not have written')
+})
+
+test('the prompt is served without a reader, and runs nothing', async () => {
+  const { dataDir, slug } = makeStore()
+  const before = snapshot(dataDir)
+  const server = await serving(dataDir)
+  try {
+    const questions = await body(withToken(server, `/api/projects/${slug}/questions`))
+    const one = questions.questions[0]
+    assert.ok(one !== undefined, 'the fixture asked nothing')
+    const where = `session=${encodeURIComponent(String(one.session))}&task=${String(one.task)}&at=${String(one.at)}`
+
+    // No reader is configured, and that is the point: copying the prompt is the way to ask when
+    // there is nothing on this machine to run.
+    const got = await body(withToken(server, `/api/projects/${slug}/prompt?${where}`))
+    assert.equal(got.key, `${String(one.session)}#${String(one.task)}.${String(one.at)}`)
+    assert.match(String(got.prompt), /A coding agent made the tool calls below/)
+    // What is sent is the calls and nothing else, which is the promise the button makes.
+    assert.ok(String(got.prompt).includes(String(one.calls[0].text)), 'the calls are in it')
+
+    // A question that is not there is a 404, and a query that names none is a 400 — the same two
+    // sentences `explain` answers with, because it is the same lookup.
+    assert.equal((await withToken(server, `/api/projects/${slug}/prompt?session=nobody&task=1&at=0`)).status, 404)
+    assert.equal((await withToken(server, `/api/projects/${slug}/prompt?task=1&at=0`)).status, 400)
+    assert.equal((await withToken(server, `/api/projects/${slug}/prompt?${where.replace(/task=\d+/, 'task=nope')}`)).status, 400)
+  } finally {
+    await server.close()
+  }
+  assert.deepEqual(snapshot(dataDir), before, 'reading the prompt must not have written')
+})
+
+test('a reader answers one question, and what it said is kept where the project is', async () => {
+  const { dataDir, slug, session } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const questions = await body(withToken(server, `/api/projects/${slug}/questions`))
+    const one = questions.questions[0]
+    assert.ok(one !== undefined, 'the fixture asked nothing')
+    assert.deepEqual(questions.readings, {}, 'nothing has been explained yet')
+    assert.equal(questions.reader, null, 'no reader is configured yet')
+
+    writeFileSync(
+      join(dataDir, 'reader.json'),
+      JSON.stringify({
+        command: [
+          process.execPath,
+          '-e',
+          'process.stdout.write(JSON.stringify({asked:"What is this?",kind:"refs",why:"a word, a tree"}))',
+        ],
+      }) + '\n',
+    )
+
+    const answered = await body(
+      get(server, `/api/projects/${slug}/explain?t=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ session: one.session, task: one.task, at: one.at }),
+      }),
+    )
+    assert.equal(answered.asked, true)
+    assert.equal(answered.reading.asked, 'What is this?')
+    assert.equal(answered.reading.kind, 'refs')
+
+    // It is kept beside the rounds it is about, so it is there on the next read and goes with the
+    // project if the project goes.
+    const again = await body(withToken(server, `/api/projects/${slug}/readings`))
+    assert.equal(again.readings[answered.key].asked, 'What is this?')
+    assert.ok(existsSync(join(dataDir, 'projects', slug, 'readings.json')))
+
+    // And it travels with the task, so the panel draws it without a second fetch.
+    const task = await body(
+      withToken(server, `/api/projects/${slug}/sessions/${session}/tasks/${one.task}`),
+    )
+    assert.equal(task.readings[answered.key].asked, 'What is this?')
+    assert.deepEqual(task.stale, [], 'a reading made from these calls is not stale')
+  } finally {
+    await server.close()
+  }
+})
+
+test('the reader is argv, and setting it is a POST', async () => {
+  const { dataDir } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    assert.deepEqual((await body(withToken(server, '/api/reader'))).command, [])
+
+    const saved = await body(
+      get(server, `/api/reader?t=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command: '  claude   -p  ', timeout_ms: 5000 }),
+      }),
+    )
+    assert.deepEqual(saved.command, ['claude', '-p'])
+    assert.equal(saved.timeout_ms, 5000)
+    // Blanking it is how a person turns the reader off, and it leaves nothing runnable behind.
+    const cleared = await body(
+      get(server, `/api/reader?t=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command: [] }),
+      }),
+    )
+    assert.deepEqual(cleared.command, [])
+  } finally {
+    await server.close()
+  }
 })
 
 test('the assets it serves are typed, so a browser will use them', async () => {

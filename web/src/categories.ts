@@ -68,3 +68,32 @@ export function orderOf(id: string): number {
 export function fillOf(style: CategoryStyle): string {
   return style.hatched === true ? 'url(#probez-hatch)' : style.fill
 }
+
+/**
+ * What each question kind stands for.
+ *
+ * A hand-maintained copy of `ASK_MEANING` in `src/question.ts`, for the same reason the table above
+ * is a copy of `CATEGORIES`: the view is built separately and cannot import from the CLI.
+ * `test/question.test.ts` asserts the two agree.
+ *
+ * It exists because a kind is one word in a column, and one word never says what it means. Every
+ * place the view prints a kind hangs this off it.
+ */
+export const ASK_MEANING: Record<string, string> = {
+  define: "show me this symbol's body",
+  refs: 'where is this used',
+  outline: 'what does this file declare',
+  flow: 'where does this value travel across layers',
+  touches: 'every artifact naming a concept, code and prose alike',
+  covers: 'what constrains this — the tests that exercise it',
+  other: 'asked something no rule in the table reads',
+}
+
+/** The six a rule can name, in the order `question.ts` tries them. `other` is the hole, not a kind. */
+export const ASKS = ['define', 'refs', 'outline', 'flow', 'touches', 'covers'] as const
+
+/** The kind with its meaning, for a tooltip. An unknown kind is just itself. */
+export function askTitle(kind: string): string {
+  const meaning = ASK_MEANING[kind]
+  return meaning === undefined ? kind : `${kind}: ${meaning}`
+}

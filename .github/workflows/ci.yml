@@ -89,17 +89,21 @@ jobs:
           fi
           echo "ok: loopback only"
 
-      - name: Only the opener touches child_process
+      - name: Only the opener and the reader touch child_process
         run: |
-          # Opening a browser is one spawn of one platform command, with the URL as an argv element.
-          # Anywhere else, or through a shell, it is a way to run something the user did not ask for.
-          if grep -rln "child_process" src/ | grep -v "^src/open\.ts$"; then
-            echo "child_process belongs in src/open.ts and nowhere else"; exit 1
+          # Two files start a program, and they are the only two.
+          #
+          # src/open.ts opens a browser: one spawn of one platform command with the URL as an argv
+          # element. src/reader.ts runs the command a person wrote into reader.json, which is how
+          # `probez explain` hands one question to a model they already have -- see CONTRIBUTING
+          # rule 2. Anywhere else, or through a shell, is a way to run something nobody asked for.
+          if grep -rln "child_process" src/ | grep -vE "^src/(open|reader)\.ts$"; then
+            echo "child_process belongs in src/open.ts and src/reader.ts and nowhere else"; exit 1
           fi
-          if grep -nE "exec\(|execFile|shell:\s*true" src/open.ts; then
-            echo "src/open.ts must spawn argv directly, never through a shell"; exit 1
+          if grep -nE "exec\(|execFile|shell:\s*true" src/open.ts src/reader.ts; then
+            echo "these must spawn argv directly, never through a shell"; exit 1
           fi
-          echo "ok: opener is argv-only"
+          echo "ok: two spawns, both argv-only"
 
       - name: Only the reflog reader looks inside a repository
         run: |

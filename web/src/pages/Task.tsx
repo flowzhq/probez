@@ -1,6 +1,6 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
-import { api } from '../api'
+import { api, readingKey } from '../api'
 import { Chrome, Facts, Info, Loading, Problem } from '../components/Chrome'
 import type { Fact } from '../components/Chrome'
 import { Inspector } from '../components/Inspector'
@@ -17,7 +17,7 @@ import { WorkBars } from '../components/WorkBars'
 import { duration, money, percent, shortCommit, shortId, tokens, when } from '../format'
 import { go, href } from '../router'
 import { useData } from '../useData'
-import type { Question } from '../api'
+import type { Question, Reading } from '../api'
 import type { ReactElement } from 'react'
 
 /**
@@ -51,6 +51,26 @@ export function Task({
   const { data, error } = useData(() => api.task(slug, session, task), [slug, session, task])
   const trail = (data?.trails ?? []).find((one) => one.ref === trailRef) ?? null
   const question = (data?.questions ?? []).find((one) => one.at === questionRef) ?? null
+
+  /**
+   * Readings asked for since the page loaded, over the ones the payload arrived with.
+   *
+   * Kept here rather than refetching the task: explaining one question changes one sentence, and
+   * re-reading a whole task's rounds to learn it would redraw the trace under the person's cursor.
+   */
+  const [fresh, setFresh] = useState<Record<string, Reading>>({})
+  const [explaining, setExplaining] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const readings = { ...(data?.readings ?? {}), ...fresh }
+  const explain = (one: Question, again: boolean): void => {
+    setExplaining(true)
+    setProblem(null)
+    api
+      .explain(slug, one.session, one.task, one.at, again)
+      .then((got) => setFresh((held) => ({ ...held, [got.key]: got.reading })))
+      .catch((failed: Error) => setProblem(failed.message))
+      .finally(() => setExplaining(false))
+  }
 
 
   /**
@@ -216,6 +236,7 @@ export function Task({
               </div>
               <QuestionsTable
                 questions={data.questions}
+                readings={readings}
                 selected={questionRef}
                 onOpen={(picked) =>
                   // Opening a question closes any trail, for the reason the lane does the reverse:
@@ -228,7 +249,26 @@ export function Task({
               />
               {question === null ? null : (
                 <QuestionPanel
+                  key={question.at}
                   question={question}
+                  reading={readings[readingKey(question.session, question.task, question.at)] ?? null}
+                  reader={data.reader}
+                  // A reading made since the page loaded is about the calls in front of us, so only
+                  // the ones the payload arrived with can be stale.
+                  stale={
+                    fresh[readingKey(question.session, question.task, question.at)] === undefined &&
+                    data.stale.includes(readingKey(question.session, question.task, question.at))
+                  }
+                  explaining={explaining}
+                  problem={problem}
+                  onExplain={(again) => explain(question, again)}
+                  // Fetched when it is asked for rather than with the task: it is every call in
+                  // the question spelled out, and most questions are never copied anywhere.
+                  onPrompt={() =>
+                    api
+                      .prompt(slug, question.session, question.task, question.at)
+                      .then((got) => got.prompt)
+                  }
                   selected={round}
                   onSelect={(picked) => select(picked)}
                   onClose={() => select(round, trailRef, null)}

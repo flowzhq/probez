@@ -25,8 +25,14 @@ These are choices, not omissions:
 
 - **No analysis in v0.1.** Classification is a distinct problem with distinct failure modes. It
   shipped in v0.2 against a schema that was already stable, and needed no new collection.
-- **Nothing leaves the machine.** No network calls, no telemetry, no account, no upload. This is a
-  property of the codebase, not a setting.
+- **Nothing leaves the machine on its own.** No network calls, no telemetry, no account, no upload.
+  probez opens no socket, and that is a property of the codebase rather than a setting. There is one
+  way for anything to leave, and it is shaped so that property survives: `probez explain` runs a
+  command *the person wrote into a config file* — their own LLM, hosted or local —
+  and writes one question's calls to its stdin. probez is not the thing making the connection, it
+  never runs unasked, there is no default command to fall back to, and `--prompt` — *copy prompt* in
+  the view — hands over exactly what would be sent while running nothing, so the reading can be had
+  from a chat already open without probez starting anything at all. See CONTRIBUTING § rule 2.
 - **Claude Code and Cursor.** Other agents follow once the round schema has proven itself against
   these two formats. Cursor transcripts do not record token usage or model names; those rounds are
   collected and classified, and cost stays blank rather than invented.
@@ -329,6 +335,14 @@ words asked of the same places over again. `FETCH` is calls that only turned a l
 body — protocol overhead, not thinking. `GUESS` is calls that named three or more different words at
 once, which is an agent reaching for vocabulary it has not learned. All three are the numbers a
 category tally averages away and a trail cannot see.
+
+**And one thing the table cannot do.** `KIND` is a rule over six shapes, so a question it does not
+read comes back `other` rather than as the closest guess — a named hole, deliberately. What a person
+usually wants from an eleven-call question is the sentence, and no rule over greps produces one.
+`probez explain` gets it from a model instead, one question at a time, and keeps it *beside* the
+measurement: the model's kind is printed against the rule's rather than over it, and nothing from a
+reading enters a share, a tally or a filter. That boundary is what lets the analysis stay
+re-derivable from the rounds while the reading is a thing someone chose to ask for.
 
 **One correction this required.** `Read` records an absolute path and a shell command records what
 was typed, and nothing normalized the two, so a read and a search never named the same file. In

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
-import { questionShare, questionsOf } from '../src/question.js'
+import { ASK_MEANING, ASKS, questionShare, questionsOf } from '../src/question.js'
 import type { Question } from '../src/question.js'
 import type { Round, ToolCall } from '../src/types.js'
 import { ROUND_DEFAULTS, TOOL_DEFAULTS } from './support.js'
@@ -269,4 +272,38 @@ test('an absolute path and a typed one are one place once the checkout is known'
   assert.equal(joined.length, 1)
   assert.equal(joined[0]!.fetches, 1)
   assert.deepEqual(joined[0]!.files, ['src/store.ts'])
+})
+
+// ---------------------------------------------------------------------------------------------
+// What a kind stands for
+// ---------------------------------------------------------------------------------------------
+
+test('every kind says what it stands for', () => {
+  // A kind is one word in a column, and every screen that prints one prints this beside it. A kind
+  // added to `Ask` without a meaning would show up as a blank gloss rather than as an error.
+  for (const kind of ASKS) {
+    assert.equal(typeof ASK_MEANING[kind], 'string', `no meaning for ${kind}`)
+    assert.ok(ASK_MEANING[kind]!.length > 0, `empty meaning for ${kind}`)
+  }
+  assert.deepEqual(Object.keys(ASK_MEANING).sort(), [...ASKS].sort(), 'a meaning for nothing')
+})
+
+test('the view\u2019s copy of the meanings matches this one', () => {
+  // `web/src/categories.ts` is built separately and cannot import from here, and `askTitle` falls
+  // back to the bare kind for one it does not know — so a drift would show up as a missing tooltip
+  // rather than as an error. Checked here the way the category taxonomy is checked in
+  // `test/classify.test.ts`.
+  const here = dirname(fileURLToPath(import.meta.url))
+  const source = readFileSync(join(here, '..', '..', 'web', 'src', 'categories.ts'), 'utf8')
+  const table = source.slice(source.indexOf('export const ASK_MEANING'))
+  const said = new Map(
+    [...table.matchAll(/^ {2}(\w+): (?:'([^']*)'|"([^"]*)"),$/gm)].map((match) => [
+      match[1]!,
+      match[2] ?? match[3]!,
+    ]),
+  )
+  for (const kind of ASKS) {
+    assert.equal(said.get(kind), ASK_MEANING[kind], `the view says something else for ${kind}`)
+  }
+  assert.equal(said.size, ASKS.length, 'the view names a kind this one does not')
 })

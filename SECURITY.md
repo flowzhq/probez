@@ -12,9 +12,11 @@ probez reads real work sessions, so the data-handling rules matter as much as th
 Claude Code session files under `~/.claude/projects` and Cursor agent transcripts under
 `~/.cursor/projects`.
 
-**Nothing leaves your machine.** probez never opens a connection to anything. There is no telemetry,
-no account, no upload path, and no remote configuration. This is enforced by the codebase containing
-no HTTP client and no outbound socket use, and checked in CI.
+**Nothing leaves your machine, unless you set up a reader and press explain.** probez never opens a
+connection to anything. There is no telemetry, no account, no upload path, and no remote
+configuration. This is enforced by the codebase containing no HTTP client and no outbound socket
+use, and checked in CI. The one exception is spelled out below under *the reader*, and it is a
+program you name and a moment you choose.
 
 **One file is read outside the agent's session directory.** To say which commit a task started
 from, probez opens `.git/logs/HEAD` — git's HEAD reflog — in the directory the agent ran in. It is
@@ -36,14 +38,15 @@ ways:
   DNS rebinding, where a page you visit resolves its own domain to `127.0.0.1` and talks to the
   server from inside your browser. The token alone would not stop that, because the browser would
   send it.
-- `GET` is the only method with an implementation, apart from five: `POST .../sync`, which runs a
+- `GET` is the only method with an implementation, apart from seven: `POST .../sync`, which runs a
   collection on that project, `POST .../rename`, which sets the name a project is shown under,
-  `POST .../delete`, which removes a project from the store, `POST /api/pricing`, which saves the
-  token rates, and `POST /api/import`, which takes in a project someone sent you. Nothing else
-  accepts anything but `GET`, and all five refuse `GET` themselves — a URL that collects, renames,
-  deletes or imports when it is merely visited is a URL that can be put in an `<img>` tag on any
-  page you happen to open. Pricing is readable with `GET` because reading a rate table changes
-  nothing.
+  `POST .../delete`, which removes a project from the store, `POST .../explain`, which runs the
+  reader on one question, `POST /api/pricing`, which saves the token rates, `POST /api/reader`,
+  which sets the command `explain` runs, and `POST /api/import`, which takes in a project someone
+  sent you. Nothing else accepts anything but `GET`, and all seven refuse `GET` themselves — a URL
+  that collects, renames, deletes, imports or starts a program when it is merely visited is a URL
+  that can be put in an `<img>` tag on any page you happen to open. Pricing and the reader are
+  readable with `GET` because reading a setting changes nothing.
 - The page it serves may load only from its own origin, enforced by a content-security-policy on
   every response, and there is nothing off-origin in it to load.
 
@@ -51,12 +54,14 @@ ways:
 leaves the store byte-identical, and there is a test that asserts exactly that. Pressing **Sync**
 writes, because that is what it is for: it runs `collect` and then rebuilds the analysis cache, the
 same two things the commands of those names do. **Rename** rewrites one field of one manifest.
-**Delete** removes one project's directory. Saving under **Settings** writes the rate table, and
-**Import** writes a new project. Those five are the only writes the view can make.
+**Delete** removes one project's directory. Saving under **Settings** writes the rate table and the
+reader, **Explain** writes what a reader answered about one question, and **Import** writes a new
+project. Those seven are the only writes the view can make.
 
 Those buttons change what the token protects. Before them, the token and the `Host` check stood
 between a page you did not open and *reading* your prompts; now they also stand between it and
-starting a collection on your machine, and between it and deleting what has been recorded.
+starting a collection on your machine, between it and deleting what has been recorded, and — where
+a reader is configured — between it and running that command.
 
 **Delete is the only thing in probez that destroys data.** It removes one project's directory from
 the store — its rounds, the session copies beside them, the analysis cache and the manifest — and
@@ -120,11 +125,38 @@ round record leaves out, and it is the larger part of the store by far. "Charact
 describes `rounds.jsonl`, not `~/.probez`. Note also that agents prune their own old sessions while
 these copies are permanent.
 
+**The reader: the one thing probez can run, and the one thing it can send.** `probez explain <id>`
+takes a single question — one thing the agent needed to know, and the calls it spent finding out —
+and asks a model what it was. The model is one you already have. You write the command in
+`<data-dir>/reader.json`, as `{"command": ["claude", "-p"]}` or `{"command": ["ollama", "run",
+"llama3"]}`, or set it under **Settings**; probez writes a prompt to that command's stdin and reads
+its stdout. Six things bound it:
+
+- probez still opens no socket. Whatever the command talks to, it talks to as you, under your
+  account and your credentials, exactly as if you had typed it. probez holds no API key and has
+  nowhere to put one.
+- The command is argv and is run with no shell. A `;`, a `|` or a `$(…)` in it is an argument, not a
+  second command, and nothing read out of a session can reach the argv — only the config file can.
+- It runs when you ask, on the question you asked about: `probez explain <id>`, or the **explain**
+  button on one question. Collecting, analyzing, browsing and every `GET` run nothing.
+- What is sent is that question's calls, and only those: the verb, how wide it reached, the words it
+  searched for, the paths it named, and the command as it ran. No prompts you typed, no assistant
+  text, no tool output. `probez explain <id> --prompt` prints exactly what would be sent and runs
+  nothing — which is also how to use this with no reader configured at all.
+- Those calls are still your data. A shell command in them can contain a path, a hostname, or a
+  secret you typed, and sending them to a hosted model sends them off this machine. A local model
+  keeps them on it. That choice is the command you write in the file.
+- With no `reader.json` there is nothing probez can run, and it says so rather than falling back to
+  anything. What a reader answers is kept in `readings.json` beside that project's rounds, goes when
+  the project goes, and is shown beside probez's own measurement rather than replacing it.
+
 **One more file, and one more write.** `pricing.json` sits beside `projects/` and holds the token
 rates the analysis uses. It is written owner-only like everything else, contains no personal data,
 and is the only thing the view's Settings screen can change. `POST /api/pricing` needs the run's
 token and a matching `Host` like `sync` does, and it accepts a JSON body of at most 64 KB whose every
-field must be a non-negative number before anything is saved.
+field must be a non-negative number before anything is saved. `reader.json` sits beside it and holds
+the command above, under the same mode and the same checks; `POST /api/reader` takes the argv as a
+list and stores it as one, so nothing is ever re-parsed into a shell line.
 
 **What probez removes.** Only two things, both its own derived files. When `collect` meets a store
 written by an older probez it rebuilds `rounds.jsonl` from the session copies — writing a temporary

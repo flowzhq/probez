@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { api } from '../api'
-import type { PricedModel, PricingPayload, Rates } from '../api'
+import type { PricedModel, PricingPayload, Rates, ReaderPayload } from '../api'
 import { Chrome, Loading, Problem } from '../components/Chrome'
 import { count } from '../format'
 import { href } from '../router'
@@ -127,7 +127,9 @@ export function Settings(): ReactElement {
               Shares under <em>where agent work goes</em> are shares of cost, so these rates decide
               them. They ship at the published list prices; edit any that are wrong for you — a
               negotiated rate, a price that has moved, or a model probez does not know. Stored at{' '}
-              <span className="mono">{data.file}</span>, owner-only, and never sent anywhere.
+              <span className="mono">{data.file}</span>, owner-only, and never sent anywhere — like
+              everything else probez holds, apart from the one thing the reader below sends when you
+              ask it to.
             </p>
 
             <section>
@@ -194,10 +196,134 @@ export function Settings(): ReactElement {
                 then reported as outside the shares rather than counted as free.
               </p>
             </section>
+
+            <hr />
+            <Reader />
           </>
         )}
       </main>
     </>
+  )
+}
+
+/**
+ * The command `explain` runs, which is the only program probez ever starts.
+ *
+ * Everything else here reads files and draws them. This is the one setting that gives probez
+ * something to execute, so the screen says exactly what that means: it is argv and not a shell
+ * line, it runs only when someone presses <em>explain</em> on one question, and the only thing
+ * written to its stdin is that question's own calls. Blank it out and there is nothing to run.
+ */
+function Reader(): ReactElement {
+  const [data, setData] = useState<ReaderPayload | null>(null)
+  const [command, setCommand] = useState('')
+  const [seconds, setSeconds] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = (payload: ReaderPayload): void => {
+    setData(payload)
+    setCommand(payload.command.join(' '))
+    setSeconds(String(Math.round(payload.timeout_ms / 1000)))
+  }
+
+  useEffect(() => {
+    let live = true
+    api
+      .reader()
+      .then((payload) => {
+        if (live) load(payload)
+      })
+      .catch((problem: Error) => {
+        if (live) setError(problem.message)
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  const save = async (): Promise<void> => {
+    setSaving(true)
+    setError(null)
+    try {
+      const wait = Number(seconds)
+      const payload = await api.saveReader(
+        command.trim() === '' ? [] : command.trim().split(/\s+/),
+        Number.isFinite(wait) && wait > 0 ? Math.round(wait * 1000) : 60_000,
+      )
+      load(payload)
+      setSaved(
+        payload.command.length === 0
+          ? 'Saved. With no command there is nothing probez can run.'
+          : `Saved. \`explain\` now runs ${payload.command.join(' ')}.`,
+      )
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : String(problem))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (data === null) return <section />
+
+  return (
+    <section>
+      <div className="head">
+        {/* An h1, like `Token pricing` above it: this is the page's other subject, not a
+            subsection of the rates. */}
+        <h1>Reader</h1>
+        <span className="muted">the command `explain` runs</span>
+      </div>
+      <p className="note">
+        A question is one thing an agent needed to know, and probez says which of six kinds it was
+        by a rule. <em>explain</em>, on any question, asks a model instead — and the model is one
+        you already have: name the command here and probez writes the question's calls to its stdin
+        and keeps the sentence it answers with. <span className="mono">claude -p</span>,{' '}
+        <span className="mono">ollama run llama3</span>, anything that reads a prompt and prints an
+        answer. Stored at <span className="mono">{data.file}</span>, owner-only.
+      </p>
+      <p className="note">
+        This is <strong>argv, not a shell line</strong>: it is split on spaces and run directly, so
+        a pipe, a semicolon or a <span className="mono">$(…)</span> in it is an argument and never a
+        second command. It runs only when you press <em>explain</em>, only on the one question you
+        pressed it on, and the only thing sent is that question's calls — no prompts you typed, no
+        output any tool returned. Leave it blank and probez has nothing to run.
+      </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <input
+          className="rate"
+          style={{ width: 320, textAlign: 'left' }}
+          aria-label="Reader command"
+          placeholder="claude -p"
+          value={command}
+          onChange={(event) => {
+            setSaved(null)
+            setCommand(event.target.value)
+          }}
+        />
+        <label className="muted">
+          timeout{' '}
+          <input
+            className="rate"
+            inputMode="numeric"
+            aria-label="Reader timeout in seconds"
+            value={seconds}
+            onChange={(event) => {
+              setSaved(null)
+              setSeconds(event.target.value)
+            }}
+          />{' '}
+          s
+        </label>
+        <button className="save" onClick={() => void save()} disabled={saving}>
+          {saving ? 'Saving…' : 'Save reader'}
+        </button>
+        {saved === null ? null : <span className="muted">{saved}</span>}
+        {error === null ? null : <span className="bad">{error}</span>}
+      </div>
+    </section>
   )
 }
 

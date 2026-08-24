@@ -365,6 +365,7 @@ function Questions({ slug, read }: { slug: string; read: number }): ReactElement
   return (
     <QuestionsTable
       questions={data.questions}
+      readings={data.readings}
       onOpen={(picked) => {
         if (picked !== null) go(questionHref(slug, picked))
       }}
@@ -378,7 +379,8 @@ function Questions({ slug, read }: { slug: string; read: number }): ReactElement
           the same thing over again narrows nothing and so appears in no trail at all. Here it does:{' '}
           {data.repeats} calls re-asked something already asked, {data.fetches} only turned a line
           number into a body, and {data.sweeps} named three or more different words at once. A row
-          opens the task it was asked in, on the call it started with.
+          opens the task it was asked in, on the call it started with — and that is where{' '}
+          <em>explain</em> is, which asks your own LLM what one of them was after.
         </p>
       }
     />

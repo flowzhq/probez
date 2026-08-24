@@ -100,7 +100,10 @@ followed something; a question is what was being asked, including the asking tha
 since a trail's hops exist only where a call narrowed, a call that asks the same thing over again
 appears in no trail at all. Clicking a question lights the rounds it touched and lists every call it
 took, with `↺` against the ones that asked what had already been asked. Questions answered in a
-single call are counted under the table rather than listed in it. See `probez questions` below.
+single call are counted under the table rather than listed in it. **Explain** on any one of them
+hands its calls to your own LLM and puts back the sentence it was after, beside the measured kind
+rather than over it; from then on the table shows the sentence in place of the search terms. See
+`probez questions` and `probez explain` below.
 
 Three things worth knowing:
 
@@ -115,6 +118,9 @@ Three things worth knowing:
 
 **Settings** holds the token rates every cost is computed from — one row per model, five rates
 each, at published list prices and yours to change. Stored in `~/.probez/pricing.json`, owner-only.
+Under them sits the **reader**: the command *explain* runs, which is the only program probez ever
+starts. It is argv and not a shell line, it runs only when you press explain on one question, and
+leaving it blank leaves probez with nothing it could run.
 
 Each project carries a **⋮** menu, on its own page and on every row of the projects list. *Sync*
 runs `collect` then `analyze` for that project. *Rename* gives it a name of your own — a label, on
@@ -150,6 +156,7 @@ project                a directory an agent was started in    its name, or its p
 | `probez tools` | Every tool called, and what `Bash` actually ran |
 | `probez trails` · `trail <id>` | Runs of calls that followed one another into the repository |
 | `probez questions` · `question <id>` | What the agent needed to know, and what finding out cost |
+| `probez explain <id>` | Ask your own LLM what one question was, in a sentence |
 | `probez analyze` | Where the work went |
 | `probez view` | Open the profiler |
 | `probez collect` | Collect one project, or every project under a folder |
@@ -159,7 +166,8 @@ project                a directory an agent was started in    its name, or its p
 Lists take `--limit` and always say how many rows they withheld. `rounds` filters by `--session`,
 `--task`, `--tool`, `--command`, `--kind`, `--category`, `--target`, `--agent` and `--errors`.
 `analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
-`--outcome`. `questions` takes `--kind` and `--min-calls`. `--source` selects Claude Code, Cursor, or
+`--outcome`. `questions` takes `--kind` and `--min-calls`, and `explain` takes `--again` and `--prompt`.
+`--source` selects Claude Code, Cursor, or
 both. `--json` works everywhere. `probez --help` lists every flag under the command it belongs to.
 
 ```console
@@ -185,14 +193,14 @@ $ probez sessions flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   SESSION    ROUNDS  TASKS  TOOLS           IN      OUT  WORK       LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 37%   9 days ago
-  0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   9 days ago
-  51cced08      134      4  131          24.3M   138.1K  Impl 39%   9 days ago
-  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 55%  9 days ago
-  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 34%  9 days ago
-  6ffef9bc       33      4  30            2.2M    17.5K  Recon 52%  4 days ago
-  c21c7448      146      2  145 ✗5       22.8M   112.6K  Recon 43%  4 days ago
-  069d8593       31      1  30 ✗3         1.9M    11.3K  Recon 72%  3 days ago
+  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 37%   13 days ago
+  0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   13 days ago
+  51cced08      134      4  131          24.3M   138.1K  Impl 39%   13 days ago
+  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 55%  13 days ago
+  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 34%  13 days ago
+  6ffef9bc       33      4  30            2.2M    17.5K  Recon 52%  8 days ago
+  c21c7448      146      2  145 ✗5       22.8M   112.6K  Recon 43%  8 days ago
+  069d8593       31      1  30 ✗3         1.9M    11.3K  Recon 72%  7 days ago
 
   8 sessions · 652 rounds
   `probez session <id>` shows one of them, task by task.
@@ -262,7 +270,7 @@ $ probez analyze flowz-mcp
   633 rounds did something a tool can see, out of 652. Shares are of the $80.21 they cost
   19 rounds of prose only (2.9%) · 5.0% unclassified · 69.4% of work has a known target
   Unclassified is mostly codebase-memory-mcp, ToolSearch, Skill. --unclassified lists it
-  9.1% of the finding was inside 4 trails, 0 of which ended in a change
+  28.6% of the finding was inside 10 trails, 4 of which ended in a change
   The deepest went 3 hops from a listing: `probez trail 069d8593#1.1`
 ```
 
@@ -362,7 +370,13 @@ $ probez questions flowz-mcp --min-calls 2 --limit 8
   showing 8 of 31 questions, --limit 0 for all
   152 asked in all · 220 calls · 1.45 per question · 31 took more than one
   AGAIN is the same words asked of the same places over again.
+  KIND, in these rows:
+    refs      where is this used
+    outline   what does this file declare
+    flow      where does this value travel across layers
+    touches   every artifact naming a concept, code and prose alike
   `probez question <id>` shows every call one of them took.
+  `probez explain <id>` asks your own LLM what one of them was, in a sentence.
 ```
 
 `CALLS` is what the question cost. `AGAIN` is the same words asked of the same places over again.
@@ -370,17 +384,29 @@ $ probez questions flowz-mcp --min-calls 2 --limit 8
 protocol overhead rather than thinking. `GUESS` is calls that named three or more different words at
 once, which is an agent reaching for vocabulary it has not learned yet.
 
-`KIND` is which question it was, by one readable table: `define` show me this, `refs` where is it
-used, `outline` what does this file declare, `flow` where does this value travel, `touches` every
-artifact naming a concept, `covers` what constrains it. There is no `path` — how does A reach B —
-because no grep expresses that question, so no reading of a grep can recover it.
+`KIND` is which question it was, decided by the first rule that reads the calls:
+
+| kind | what it stands for |
+| --- | --- |
+| `define` | show me this symbol's body |
+| `refs` | where is this used |
+| `outline` | what does this file declare |
+| `flow` | where does this value travel across layers |
+| `touches` | every artifact naming a concept, code and prose alike |
+| `covers` | what constrains this — the tests that exercise it |
+| `other` | asked something no rule in the table reads |
+
+The listing prints the ones it used under the table, a detail view glosses the one it is showing,
+and `probez questions --help` carries the whole of it — a kind is one word, and one word never says
+what it means. There is no `path` — how does A reach B — because no grep expresses that question, so
+no reading of a grep can recover it.
 
 A question is named by a round it was asked at, and asking for any round in it finds it:
 
 ```console
 $ probez question flowz-mcp 0b2cc149#1.2
 
-  question 0b2cc149#1.2 → 1.4 · 3 calls · refs
+  question 0b2cc149#1.2 → 1.4 · 3 calls · refs — where is this used
   asked about enqueuer, status
   1 place · 1 re-asked · 116.1K in · 508 out · 2.2s
 
@@ -398,6 +424,71 @@ commands and merely plausible as a column of derived labels — the reason there
 already asked. Three calls, one thing wanted,
 and the last of them bought nothing — which is a shape that no trail records, because none of these
 three narrowed anything for the next.
+
+### Explain: the same question, read back by your own LLM
+
+`KIND` is a rule, so it holds for six shapes and says `other` for everything else. `explain` is the
+sentence instead — and it comes from a model you already have, not from probez.
+
+Write the command in `~/.probez/reader.json`, or set it under **Settings** in the view:
+
+```json
+{ "command": ["claude", "-p"] }
+```
+
+`["ollama", "run", "llama3"]` works the same way, and so does anything else that reads a prompt on
+stdin and prints an answer. Then ask about one question:
+
+```console
+$ probez explain flowz-mcp 0b2cc149#1.2
+
+  question 0b2cc149#1.2 → 1.4 · 3 calls · refs — where is this used
+  asked about enqueuer, status
+  read as  Where does the Enqueuer exist in this codebase — which internal packages
+           reference it, and what do the task docs say about its status?
+           touches, not refs · the same concept word "Enqueuer" is swept across all Go
+           sources under internal/, plus directory listings of indexer/ and githubapp/ and a
+           grep of Status lines in docs/tasks/*.md, gathering code and prose artifacts alike
+           rather than a single symbol's callers · claude
+  1 place · 1 re-asked · 116.1K in · 508 out · 2.2s
+
+  ROUND   REACHED ASKED                     CALL
+  1.2     dir     enqueuer                  ls internal/ && echo "---INDEXER---" && ls in…
+  1.3     dir     enqueuer status           grep -rn "Enqueuer" internal/ --include=*.go …
+  1.4     dir     enqueuer ↺                grep -rn "Enqueuer" internal/ | head -20; ech…
+
+  `probez round 1.2` shows any one of these calls in full.
+```
+
+The reading sits *beside* the measurement and never replaces it: the header still says `refs`,
+because that is what the rule reads off these three calls, and the model's `touches` is printed as a
+disagreement rather than as a correction. Nothing that comes back enters a share, a tally or a
+filter — every number probez prints stays derivable from the rounds alone. The answer is kept beside
+that project's rounds, so `probez question 0b2cc149#1.2` shows it too and asking again runs nothing;
+`--again` is what spends.
+
+In the view it is a button on any question, and the sentence then fills the *asked about* column so
+a table of them can be read at a glance. Beside it is **copy prompt**, which puts exactly what the
+reader would be sent on the clipboard — the same text `--prompt` prints — so you can paste it into
+a chat you already have open. It runs nothing and needs no reader, so it is there whether or not one
+is configured.
+
+What this costs is worth being exact about, because probez otherwise opens no connection to
+anything:
+
+- probez still opens no socket. It runs the command you named, as you, and whatever that command
+  talks to it talks to with your credentials. probez holds no API key.
+- The command is argv and never goes through a shell.
+- It runs when you ask, on the question you asked about. Collecting, analyzing and browsing run
+  nothing, and with no `reader.json` there is nothing probez can run at all.
+- What is sent is that question's calls — the words searched for, the paths named, the command as it
+  ran — and nothing else. No prompts you typed, no assistant text, no tool output.
+  `probez explain <id> --prompt` prints exactly what would go and runs nothing, which is also how to
+  use this without probez spawning anything; *copy prompt* in the view is the same text on the
+  clipboard, to paste wherever you like.
+
+Those calls are still your data, and a shell command can hold a path or a secret you typed. A hosted
+model sends them off the machine; a local one does not. That choice is the command in the file.
 
 Any single round opens in full, down to what each tool was given:
 
@@ -438,7 +529,7 @@ report or a review the way a log does.
 $ probez export flowz-mcp --bundle --out flowz-mcp.json
 
   exported  flowz-mcp  →  ~/probez-demo/flowz-mcp.json
-  1432 KB · they read it with `probez import flowz-mcp.json`
+  1448 KB · they read it with `probez import flowz-mcp.json`
 ```
 
 ```console
@@ -525,10 +616,18 @@ collected here and not on one that arrived as an export. Collecting every projec
 on a machine with a year of history took about 305 MB, of which the session copies were 284 MB and
 the normalized rounds 30 MB.
 
+Two derived files sit beside the rounds, and both are caches: `analysis.jsonl`, which `analyze`
+rebuilds from the rounds every time it runs, and `readings.json`, which holds what a reader answered
+about the questions you asked it about. Deleting either loses nothing that cannot be produced again
+— though a reading costs a model call to produce, which is why it is kept at all.
+
 ## Privacy
 
-**probez sends nothing anywhere.** No network calls, no telemetry, no account, no upload path.
-Everything stays under `~/.probez` on your machine.
+**probez sends nothing anywhere, unless you configure a reader and press explain.** No network
+calls, no telemetry, no account, no upload path. Everything stays under `~/.probez` on your machine.
+The one exception is [explain](#explain-the-same-question-read-back-by-your-own-llm), which runs a
+command you name, on a question you name, with that question's calls and nothing else — and which
+does not exist until you write the file.
 
 It does read your real work. `rounds.jsonl` holds prompts and assistant messages in full, and tool
 inputs including file paths and shell commands. One file outside the agent's session directory is
