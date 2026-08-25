@@ -14,7 +14,8 @@ import {
   matchProjects,
   projectName,
 } from './discover.js'
-import { ago, clip, duration, pad, padStart, shortCommit, shorten, span, tokens, wrap } from './format.js'
+import { parentSession } from './agents/paths.js'
+import { ago, clip, duration, pad, padStart, shortCommit, shorten, shortSession, span, tokens, wrap } from './format.js'
 import { contextShare } from './models.js'
 import {
   analysisRecords,
@@ -134,7 +135,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   export: ['bundle', 'out'],
   import: ['as'],
   projects: [],
-  sessions: ['limit'],
+  sessions: ['limit', 'agent'],
   session: ['limit'],
   tasks: ['limit', 'session'],
   task: ['limit', 'session'],
@@ -169,6 +170,7 @@ const HELP = `probez: see what your coding agents actually did.
 What is recorded, and what names it
   project            a directory an agent was started in    its name, or its path
   └ session          one agent run                          504799b8
+    ├ subagent       one run the agent handed off           504799b8/a8261ff4
     └ task           a user turn, and everything it led to  504799b8#3
       └ round        one LLM call                           504799b8#3.12
         └ tool call                                         shown in full by its round
@@ -184,8 +186,14 @@ Usage
 Sessions
   probez sessions [project]    One row per session
   probez session <id>          One session: its tasks, and what each one asked
+  --agent <main|sub>           Only sessions someone opened, or only ones handed to a subagent
   --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT} for the list,
                                all of them for one session; 0 for all)
+
+  A subagent's run is a session of its own, named for the one that handed it the work:
+  \`504799b8/a8261ff4\`. It is listed and priced separately, because it is a separate context
+  with its own model, and \`probez session 504799b8\` says underneath its tasks what it handed
+  off. Naming a session on its own means that session and not the subagents beneath it.
 
 Tasks
   probez tasks [project]       One row per task, across every session
@@ -708,18 +716,31 @@ function printableWork(rounds: Round[]): Work {
   }
 }
 
+/**
+ * How wide an id column has to be. A project with no subagents in it prints the table it always
+ * has; one with them widens by exactly what the longest id needs, rather than by a constant that
+ * would pad every other project out for a case it does not have.
+ */
+function idColumn(base: number, ids: string[]): number {
+  return Math.max(base, ...ids.map((id) => id.length + 2))
+}
+
 function printSessions(all: ReturnType<typeof sessionRows>, limit: number, work: Work): void {
   // Totals describe the project, not the page, so they are counted before the limit is applied.
   const totals = all.reduce((sum, row) => sum + row.rounds, 0)
   const rows = shown(all, limit)
+  const idWidth = idColumn(11, rows.map((row) => shortSession(row.session)))
+  // Only where there are any. A project nobody delegated in has one kind of session and does not
+  // need a column saying so on every row.
+  const kinds = rows.some((row) => row.agent === 'sub')
   console.log(
-    `  ${pad('SESSION', 11)}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('OUT', 7)}  ${pad('WORK', 11)}LAST`,
+    `  ${pad('SESSION', idWidth)}${kinds ? pad('AGENT', 6) : ''}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('OUT', 7)}  ${pad('WORK', 11)}LAST`,
   )
   for (const row of rows) {
     const calls = `${row.tool_calls}${row.errors > 0 ? ` ✗${row.errors}` : ''}`
     const last = row.last_ts === null ? '—' : ago(Date.parse(row.last_ts))
     console.log(
-      `  ${pad(row.session.slice(0, 8), 11)}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}  ${pad(work.session(row.session), 11)}${last}`,
+      `  ${pad(shortSession(row.session), idWidth)}${kinds ? pad(row.agent, 6) : ''}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}  ${pad(work.session(row.session), 11)}${last}`,
     )
   }
   console.log('')
@@ -732,13 +753,13 @@ function printSessions(all: ReturnType<typeof sessionRows>, limit: number, work:
 
 /** How a task is named on screen, and typed back: `504799b8#3`, or `3` inside a lone session. */
 function taskId(row: TaskRow, showSession: boolean): string {
-  return showSession ? `${row.session.slice(0, 8)}#${row.task}` : String(row.task)
+  return showSession ? `${shortSession(row.session)}#${row.task}` : String(row.task)
 }
 
 function printTaskRows(tasks: TaskRow[], width: number, showSession: boolean, work: Work): void {
   // The id column is named after what it identifies. Calling it `#` in a table that also counts
   // rounds reads as "round number", which is the one thing it is not.
-  const idWidth = showSession ? 13 : 6
+  const idWidth = showSession ? idColumn(13, tasks.map((task) => taskId(task, true))) : 6
   // FROM is the commit the task was asked against, and it earns its width only where there is one:
   // a project outside a checkout, or one collected before probez recorded commits, gets the table
   // it has always had rather than a column of dashes taking room from what was asked.
@@ -782,7 +803,7 @@ function printTask(
   // Absent for a project that is not a git checkout, and for tasks collected before probez looked.
   const from = shortCommit(row.commit)
   console.log(
-    `  task ${row.task} of session ${row.session.slice(0, 8)}  ·  ${rounds.length} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out · ${duration(row.gen_ms)} working${from === null ? '' : ` · from ${from}`}`,
+    `  task ${row.task} of session ${shortSession(row.session)}  ·  ${rounds.length} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out · ${duration(row.gen_ms)} working${from === null ? '' : ` · from ${from}`}`,
   )
 
   if (row.asked !== '') {
@@ -810,9 +831,31 @@ function printTask(
  * One session, as its tasks. A task is the unit someone actually remembers: what they asked, and
  * what it cost, which the round list never shows however far you scroll it.
  */
+/**
+ * The subagents a session handed work to, under the tasks it did itself.
+ *
+ * Each is its own session, so the totals above do not include it: what a session cost and what it
+ * delegated are two numbers, and adding them silently would make neither readable. They are listed
+ * as tasks because that is what a subagent's session is — one prompt, and what it did about it.
+ */
+function printDelegated(delegated: TaskRow[], width: number, work: Work): void {
+  if (delegated.length === 0) return
+  const count = new Set(delegated.map((task) => task.session)).size
+  const rounds = delegated.reduce((sum, task) => sum + task.rounds, 0)
+  const into = delegated.reduce((sum, task) => sum + (task.in_tokens ?? 0), 0)
+  const out = delegated.reduce((sum, task) => sum + (task.out_tokens ?? 0), 0)
+  console.log(
+    `  handed to ${count} subagent${count === 1 ? '' : 's'} · ${rounds} rounds · ${tokens(into)} in · ${tokens(out)} out, none of it counted above`,
+  )
+  console.log('')
+  printTaskRows(delegated, width, true, work)
+  console.log('')
+}
+
 function printSession(
   row: SessionRow,
   all: TaskRow[],
+  delegated: TaskRow[],
   width: number,
   showSession: boolean,
   limit: number,
@@ -820,7 +863,7 @@ function printSession(
 ): void {
   const errors = row.errors > 0 ? ` · ${row.errors} tool error${row.errors === 1 ? '' : 's'}` : ''
   console.log(
-    `  session ${row.session.slice(0, 8)}  ·  ${all.length} task${all.length === 1 ? '' : 's'} · ${row.rounds} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out${errors} · ${span(row.first_ts, row.last_ts)}`,
+    `  session ${shortSession(row.session)}  ·  ${all.length} task${all.length === 1 ? '' : 's'} · ${row.rounds} rounds · ${tokens(row.in_tokens)} in · ${tokens(row.out_tokens)} out${errors} · ${span(row.first_ts, row.last_ts)}`,
   )
   console.log('')
   const tasks = shown(all, limit)
@@ -830,6 +873,7 @@ function printSession(
     `  ${counted(tasks.length, all.length, 'task')} · ${row.rounds} rounds${more(tasks.length, all.length)}. \`probez task ${taskId(tasks[0] ?? ({ session: row.session, task: 1 } as TaskRow), showSession)}\` shows one in full`,
   )
   console.log('')
+  printDelegated(delegated, width, work)
 }
 
 /**
@@ -840,11 +884,11 @@ function printSession(
 /** How a round is named on screen, and typed back: `504799b8#3.12`, or `3.12` inside a lone session. */
 function roundId(round: Round, showSession: boolean): string {
   const local = `${round.task}.${round.round}`
-  return showSession ? `${round.session.slice(0, 8)}#${local}` : local
+  return showSession ? `${shortSession(round.session)}#${local}` : local
 }
 
 function printRoundRows(rounds: Round[], showSession: boolean, work: Work): void {
-  const idWidth = showSession ? 16 : 9
+  const idWidth = showSession ? idColumn(16, rounds.map((round) => roundId(round, true))) : 9
   // No TASK column: a round's id carries its task, so a second one would print the same number
   // twice. `probez task 504799b8#3` opens the task any row belongs to.
   console.log(
@@ -897,7 +941,7 @@ function outcome(tool: ToolCall): string {
 
 /** How a trail is named on screen, and typed back: `504799b8#1.7`, or `1.7` in a lone session. */
 function trailId(trail: Trail, showSession: boolean): string {
-  return showSession ? `${trail.session.slice(0, 8)}#${trail.ref}` : trail.ref
+  return showSession ? `${shortSession(trail.session)}#${trail.ref}` : trail.ref
 }
 
 /** The walk drawn as what it is: where it started, and what each hop had to go on. */
@@ -940,7 +984,7 @@ function printTrail(trail: Trail, width: number, showSession: boolean): void {
 
 /** How a question is named on screen, and typed back: `59921bd4#2.250`, or `2.250` alone. */
 function questionId(question: Question, showSession: boolean): string {
-  return showSession ? `${question.session.slice(0, 8)}#${question.ref}` : question.ref
+  return showSession ? `${shortSession(question.session)}#${question.ref}` : question.ref
 }
 
 /**
@@ -1046,12 +1090,13 @@ function printQuestions(
     (a, b) => b.calls.length - a.calls.length || a.session.localeCompare(b.session) || a.task - b.task,
   )
   const rows = shown(sorted, limit)
+  const idWidth = showSession ? idColumn(16, rows.map((row) => questionId(row, true))) : 10
   console.log(
-    `  ${pad('QUESTION', showSession ? 16 : 10)}${padStart('CALLS', 5)}  ${padStart('AGAIN', 5)}  ${padStart('FETCH', 5)}  ${padStart('GUESS', 5)}  ${pad('KIND', 9)}${padStart('IN', 7)}  ${padStart('TIME', 6)}  ASKED ABOUT`,
+    `  ${pad('QUESTION', idWidth)}${padStart('CALLS', 5)}  ${padStart('AGAIN', 5)}  ${padStart('FETCH', 5)}  ${padStart('GUESS', 5)}  ${pad('KIND', 9)}${padStart('IN', 7)}  ${padStart('TIME', 6)}  ASKED ABOUT`,
   )
   for (const question of rows) {
     console.log(
-      `  ${pad(questionId(question, showSession), showSession ? 16 : 10)}${padStart(String(question.calls.length), 5)}  ${padStart(String(question.repeats), 5)}  ${padStart(String(question.fetches), 5)}  ${padStart(String(question.sweeps), 5)}  ${pad(question.kind, 9)}${padStart(tokens(question.in_tokens), 7)}  ${padStart(duration(question.ms), 6)}  ${clip(question.terms.join(' ') || '—', 30)}`,
+      `  ${pad(questionId(question, showSession), idWidth)}${padStart(String(question.calls.length), 5)}  ${padStart(String(question.repeats), 5)}  ${padStart(String(question.fetches), 5)}  ${padStart(String(question.sweeps), 5)}  ${pad(question.kind, 9)}${padStart(tokens(question.in_tokens), 7)}  ${padStart(duration(question.ms), 6)}  ${clip(question.terms.join(' ') || '—', 30)}`,
     )
   }
   console.log('')
@@ -1076,12 +1121,13 @@ function printQuestions(
 
 function printTrails(all: Trail[], limit: number, showSession: boolean, deep: boolean): void {
   const rows = shown(all, limit)
+  const idWidth = showSession ? idColumn(14, rows.map((row) => trailId(row, true))) : 8
   console.log(
-    `  ${pad('TRAIL', showSession ? 14 : 8)}${padStart('STEPS', 6)}  ${padStart('DEPTH', 5)}  ${padStart('WIDE', 4)}  ${padStart('PATHS', 5)}  ${pad('ROOT', 9)}${pad('OUTCOME', 10)}${padStart('IN', 7)}  ${padStart('TIME', 6)}`,
+    `  ${pad('TRAIL', idWidth)}${padStart('STEPS', 6)}  ${padStart('DEPTH', 5)}  ${padStart('WIDE', 4)}  ${padStart('PATHS', 5)}  ${pad('ROOT', 9)}${pad('OUTCOME', 10)}${padStart('IN', 7)}  ${padStart('TIME', 6)}`,
   )
   for (const trail of rows) {
     console.log(
-      `  ${pad(trailId(trail, showSession), showSession ? 14 : 8)}${padStart(String(trail.steps.length), 6)}  ${padStart(String(trail.depth), 5)}  ${padStart(String(trail.breadth), 4)}  ${padStart(String(trail.paths), 5)}  ${pad(trail.root, 9)}${pad(trail.outcome, 10)}${padStart(tokens(trail.in_tokens), 7)}  ${padStart(duration(trail.ms), 6)}`,
+      `  ${pad(trailId(trail, showSession), idWidth)}${padStart(String(trail.steps.length), 6)}  ${padStart(String(trail.depth), 5)}  ${padStart(String(trail.breadth), 4)}  ${padStart(String(trail.paths), 5)}  ${pad(trail.root, 9)}${pad(trail.outcome, 10)}${padStart(tokens(trail.in_tokens), 7)}  ${padStart(duration(trail.ms), 6)}`,
     )
   }
   console.log('')
@@ -1325,7 +1371,7 @@ function printAnalysis(
     )
     if (deepest !== null) {
       console.log(
-        `  The deepest went ${deepest.depth} hops from a ${deepest.root}: \`probez trail ${deepest.session.slice(0, 8)}#${deepest.ref}\``,
+        `  The deepest went ${deepest.depth} hops from a ${deepest.root}: \`probez trail ${shortSession(deepest.session)}#${deepest.ref}\``,
       )
     }
   }
@@ -1799,7 +1845,12 @@ async function main(): Promise<void> {
       const pricing = await readPricing(dataDir)
 
       if (command === 'sessions') {
-        const rows = sessionRows(rounds, pricing)
+        // The same flag the rounds table takes, meaning the same thing one level up: a session is
+        // a subagent's or it is not, and the rounds in it all agree.
+        const kind = values.agent as 'main' | 'sub' | undefined
+        const rows = sessionRows(rounds, pricing).filter(
+          (row) => kind === undefined || row.agent === kind,
+        )
         if (values.json) {
           output.push(matched.length > 1 ? { project: projectName(project), path: project.path, sessions: rows } : rows)
           continue
@@ -1823,12 +1874,12 @@ async function main(): Promise<void> {
         const groups: { name: string; rounds: Round[] }[] =
           values.by === 'session'
             ? [...new Set(scope.map((r) => r.session))].map((id) => ({
-                name: id.slice(0, 8),
+                name: shortSession(id),
                 rounds: scope.filter((r) => r.session === id),
               }))
             : values.by === 'task'
               ? [...new Set(scope.map((r) => `${r.session}#${r.task}`))].map((id) => ({
-                  name: `${id.slice(0, 8)}#${id.split('#')[1]}`,
+                  name: `${shortSession(id.slice(0, id.lastIndexOf('#')))}#${id.slice(id.lastIndexOf('#') + 1)}`,
                   rounds: scope.filter((r) => `${r.session}#${r.task}` === id),
                 }))
               : [{ name: projectName(project), rounds: scope }]
@@ -1927,14 +1978,18 @@ async function main(): Promise<void> {
         const mine = rounds.filter((round) => round.session === id)
         const row = sessionRows(mine, pricing)[0]!
         const tasks = taskRows(mine, pricing)
+        // Its subagents are sessions of their own and are not in `mine`. Read here so the one
+        // place that shows a session whole can say what it handed off as well as what it did.
+        const under = rounds.filter((round) => parentSession(round.session) === id)
+        const delegated = taskRows(under, pricing)
         if (values.json) {
           // The session's own row, except that `tasks` carries the tasks rather than counting
           // them: the count is the length, and a second key for it would be the same fact twice.
-          output.push({ ...row, tasks })
+          output.push({ ...row, tasks, delegated })
           continue
         }
         projectHeader(project)
-        printSession(row, tasks, width, sessions.length > 1, detailLimit, work)
+        printSession(row, tasks, delegated, width, sessions.length > 1, detailLimit, work)
         continue
       }
 

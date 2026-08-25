@@ -123,6 +123,15 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | `tools[].stderr_chars`, `interrupted` | What actually happened, which the harness flag does not report |
 | `tools[].patch` | Lines an edit changed, for attributing work to the files it touched |
 
+**A session id is a path, and that is what says who ran it.** Both agents write a subagent's
+transcript to a `subagents/` directory beside the session that spawned it, so a session is named for
+where its transcript sits relative to the project's transcript root: `504799b8` for a run someone
+opened, `504799b8/a8261ff4` for one it handed off. `agent` is read from that name rather than from a
+flag one agent sets and the other does not, which is what keeps a subagent the same thing across
+vendors. A subagent is a separate context with its own model and its own bill, so it is a session
+of its own and its rounds are never folded into the totals of the session that delegated it; what a
+session handed off is reported beside what it did, not inside it.
+
 **Pricing is not in the round.** A round records tokens; what they cost depends on rates that change
 and that differ per contract, so they live in `~/.probez/pricing.json` and are applied at read time.
 Every share under "where agent work goes" is a share of cost, so a wrong rate is a wrong answer;

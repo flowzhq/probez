@@ -672,11 +672,11 @@ export const api = {
   projects: () => get<ProjectsPayload>('/projects'),
   project: (slug: string) => get<ProjectPayload>(`/projects/${slug}`),
   session: (slug: string, session: string) =>
-    get<SessionPayload>(`/projects/${slug}/sessions/${session}`),
+    get<SessionPayload>(`/projects/${slug}/sessions/${encodeURIComponent(session)}`),
   task: (slug: string, session: string, task: number) =>
-    get<TaskPayload>(`/projects/${slug}/sessions/${session}/tasks/${task}`),
+    get<TaskPayload>(`/projects/${slug}/sessions/${encodeURIComponent(session)}/tasks/${task}`),
   round: (slug: string, session: string, round: number) =>
-    get<RoundPayload>(`/projects/${slug}/sessions/${session}/rounds/${round}`),
+    get<RoundPayload>(`/projects/${slug}/sessions/${encodeURIComponent(session)}/rounds/${round}`),
   tools: (slug: string) => get<ToolsPayload>(`/projects/${slug}/tools`),
   // Reads every archived session in the project, so like `tools` it is fetched on the tab rather
   // than on the way to the page.
@@ -688,7 +688,7 @@ export const api = {
   // inspector opens without paying for any of them.
   result: (slug: string, session: string, toolUseId: string) =>
     get<ResultPayload>(
-      `/projects/${slug}/sessions/${session}/results/${encodeURIComponent(toolUseId)}`,
+      `/projects/${slug}/sessions/${encodeURIComponent(session)}/results/${encodeURIComponent(toolUseId)}`,
     ),
   // The one call in the view that runs a program on this machine: it hands one question's calls to
   // the command in `reader.json` and keeps what it answers. A POST for that reason, like `sync`.

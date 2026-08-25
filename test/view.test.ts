@@ -32,10 +32,11 @@ import { forgetRounds } from '../src/viewdata.js'
 const here = dirname(fileURLToPath(import.meta.url))
 const CLI = join(here, '..', 'src', 'cli.js')
 const FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'session.jsonl')
+const SUBAGENT_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'claude-subagent.jsonl')
 const VIEW = join(here, '..', 'view')
 
 /** A collected store of one project, built by running the real `collect`. */
-function makeStore(): {
+function makeStore(delegated = false): {
   dataDir: string
   claudeDir: string
   sourceDir: string
@@ -55,6 +56,14 @@ function makeStore(): {
     join(sourceDir, `${session}.jsonl`),
     readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', project),
   )
+  if (delegated) {
+    const under = join(sourceDir, session, 'subagents')
+    mkdirSync(under, { recursive: true })
+    writeFileSync(
+      join(under, 'agent-a1234567.jsonl'),
+      readFileSync(SUBAGENT_FIXTURE, 'utf8').replaceAll('/tmp/demo', project),
+    )
+  }
   const cursorDir = join(root, 'cursor')
   mkdirSync(cursorDir, { recursive: true })
   execFileSync(
@@ -440,6 +449,36 @@ test('a result body is served from the archived session, and only when asked for
       withToken(server, `/api/projects/${slug}/sessions/${session.slice(0, 8)}/results/tu_3`),
     )
     assert.equal(byPrefix.body, 'ok')
+  } finally {
+    await server.close()
+  }
+})
+
+test('a subagent session answers, and its archived copy is found by the name it was stored under', async () => {
+  const store = makeStore(true)
+  const server = await serving(store.dataDir)
+  const session = `${store.session}/subagents/agent-a1234567`
+  const encoded = encodeURIComponent(session)
+  try {
+    // The id is a path, so it travels as one segment and the server puts it back together. Sent
+    // unencoded it would be read as three route segments and answer for something else.
+    const one = await body(withToken(server, `/api/projects/${store.slug}/sessions/${encoded}`))
+    assert.equal(one.session.session, session)
+    assert.equal(one.session.agent, 'sub')
+    assert.equal(one.session.rounds, 2)
+
+    const task = await body(
+      withToken(server, `/api/projects/${store.slug}/sessions/${encoded}/tasks/1`),
+    )
+    assert.equal(task.session, session)
+    assert.equal(task.trace.rounds.length, 2)
+
+    // The archived copy is stored under a flattened name. Looked up by the id itself this would
+    // be a path into a directory the store never wrote, and the body would read as absent.
+    const result = await body(
+      withToken(server, `/api/projects/${store.slug}/sessions/${encoded}/results/call_s1`),
+    )
+    assert.equal(result.body, 'export const CATEGORIES = []')
   } finally {
     await server.close()
   }

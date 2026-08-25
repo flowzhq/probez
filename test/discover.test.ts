@@ -40,6 +40,28 @@ test('Cursor discovery walks nested agent-transcripts including subagents', asyn
   assert.ok(projects[0]!.sessions.every((s) => s.source === 'cursor'))
 })
 
+test('Claude discovery finds the subagents beside the session that spawned them', async () => {
+  const root = workspace()
+  const claudeDir = join(root, 'claude')
+  const project = join(claudeDir, '-tmp-demo')
+  const uuid = 'aaaa1111-0000-0000-0000-000000000000'
+  mkdirSync(join(project, uuid, 'subagents'), { recursive: true })
+  writeFileSync(join(project, `${uuid}.jsonl`), '{"cwd": "/tmp/demo"}\n')
+  writeFileSync(join(project, uuid, 'subagents', 'agent-bbbb2222.jsonl'), '{"cwd": "/tmp/demo"}\n')
+  // Only `subagents/` is followed. Anything else the agent keeps beside its transcripts is not a
+  // session, and picking one up would make it one — named, archived and listed like the rest.
+  mkdirSync(join(project, 'memory'), { recursive: true })
+  writeFileSync(join(project, 'memory', 'notes.jsonl'), '{"cwd": "/tmp/demo"}\n')
+
+  const projects = await discoverClaudeProjects(claudeDir)
+  assert.equal(projects.length, 1)
+  assert.deepEqual(projects[0]!.sessions.map((s) => s.id).sort(), [
+    uuid,
+    `${uuid}/subagents/agent-bbbb2222`,
+  ])
+  assert.ok(projects[0]!.sessions.every((s) => s.source === 'claude-code'))
+})
+
 test('Claude and Cursor checkouts of the same path merge into one project', async () => {
   const root = workspace()
   // Cursor infers the path from the folder name, and dashes in a temp directory would decode as

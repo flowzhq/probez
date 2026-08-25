@@ -32,6 +32,7 @@ const FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'session.jsonl')
 const CURSOR_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'cursor-session.jsonl')
 const CURSOR_SUB = join(here, '..', '..', 'test', 'fixtures', 'cursor-subagent.jsonl')
 const WALK_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'walk-session.jsonl')
+const SUBAGENT_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'claude-subagent.jsonl')
 
 interface Run {
   status: number
@@ -53,7 +54,7 @@ function run(args: string[]): Run {
  * A source tree of `sessions` sessions, each a copy of the fixture rewritten to a fresh id and to a
  * working directory this test owns.
  */
-function makeSource(sessions: number): {
+function makeSource(sessions: number, delegated = false): {
   claudeDir: string
   cursorDir: string
   dataDir: string
@@ -75,6 +76,15 @@ function makeSource(sessions: number): {
   for (let i = 0; i < sessions; i++) {
     const id = `${String(i).repeat(8)}-0000-0000-0000-000000000000`
     writeFileSync(join(sourceDir, `${id}.jsonl`), template.replaceAll('/tmp/demo', project))
+  }
+  if (delegated && sessions > 0) {
+    const id = `${'0'.repeat(8)}-0000-0000-0000-000000000000`
+    const under = join(sourceDir, id, 'subagents')
+    mkdirSync(under, { recursive: true })
+    writeFileSync(
+      join(under, 'agent-a1234567.jsonl'),
+      readFileSync(SUBAGENT_FIXTURE, 'utf8').replaceAll('/tmp/demo', project),
+    )
   }
   return { claudeDir, cursorDir, dataDir, project }
 }
@@ -441,6 +451,72 @@ test('a rebuild keeps rounds whose session the agent has since pruned', () => {
   const sessions = new Set(after.map((round) => round.session))
   assert.equal(sessions.size, 2)
   assert.ok(after.every((round) => Array.isArray(round.events)))
+})
+
+test('a subagent is collected as its own session, under the one that spawned it', () => {
+  const env = makeSource(1, true)
+  assert.equal(collect(env).status, 0)
+
+  const listed = read(env, ['sessions', '--json'])
+  assert.equal(listed.status, 0)
+  const rows = JSON.parse(listed.stdout) as Array<{ session: string; agent: string; rounds: number }>
+  const sub = rows.find((row) => row.agent === 'sub')
+  assert.ok(sub, 'the subagent transcript is a session of its own')
+  assert.equal(sub.session, '00000000-0000-0000-0000-000000000000/subagents/agent-a1234567')
+  assert.equal(sub.rounds, 2)
+  assert.equal(rows.filter((row) => row.agent === 'main').length, 1)
+
+  // Printed and typed the same way: the session it ran under, then which subagent.
+  const table = read(env, ['sessions'])
+  assert.match(table.stdout, /00000000\/a1234567\s+sub/)
+
+  const one = read(env, ['session', '00000000/a1234567'])
+  assert.equal(one.status, 0)
+  assert.match(one.stdout, /session 00000000\/a1234567/)
+
+  // Naming the parent still means the parent, and now says what it handed off.
+  const parent = read(env, ['session', '00000000'])
+  assert.equal(parent.status, 0)
+  assert.match(parent.stdout, /handed to 1 subagent/)
+})
+
+test('a subagent keeps its own model, which is not always its parent\'s', () => {
+  const env = makeSource(1, true)
+  assert.equal(collect(env).status, 0)
+  // Named by session rather than by `--agent sub`, which would also pick up the one sidechain
+  // round the parent fixture carries inline, from back when they were written that way.
+  const listed = read(env, ['rounds', '--session', '00000000/a1234567', '--json'])
+  assert.equal(listed.status, 0)
+  const rounds = JSON.parse(listed.stdout) as Array<{ model: string; out_tokens: number }>
+  assert.equal(rounds.length, 2)
+  assert.ok(rounds.every((round) => round.model === 'claude-sonnet-5'))
+  // And its tokens are counted, which is the whole point of reading the file at all.
+  assert.equal(rounds.reduce((sum, round) => sum + round.out_tokens, 0), 180)
+})
+
+test('a pruned subagent is rebuilt from the archived copy, as the agent that wrote it', () => {
+  const env = makeSource(1, true)
+  assert.equal(collect(env).status, 0)
+  const store = ageStore(env)
+
+  // The agent prunes the transcript, and the store's state loses the entry that recorded which
+  // agent wrote it. What is left is the archived copy and its name — and the name cannot say,
+  // since both agents name a subagent's transcript for the path it sat at.
+  rmSync(join(env.claudeDir, 'encoded-project-name', '00000000-0000-0000-0000-000000000000'), {
+    recursive: true,
+  })
+  const state = join(store, 'state.json')
+  const json = JSON.parse(readFileSync(state, 'utf8')) as { sessions: Record<string, unknown> }
+  delete json.sessions['00000000-0000-0000-0000-000000000000/subagents/agent-a1234567']
+  writeFileSync(state, JSON.stringify(json, null, 2) + '\n')
+
+  assert.equal(collect(env).status, 0)
+  const rounds = storedRounds(store).filter(
+    (round) => round.session === '00000000-0000-0000-0000-000000000000/subagents/agent-a1234567',
+  )
+  assert.equal(rounds.length, 2, 'the subagent survives the rebuild')
+  assert.ok(rounds.every((round) => round.agent === 'sub'))
+  assert.ok(rounds.every((round) => round.model === 'claude-sonnet-5'))
 })
 
 test('a rebuild drops the analysis computed from the rounds it replaced', () => {

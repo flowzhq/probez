@@ -141,6 +141,7 @@ type back:
 ```
 project                a directory an agent was started in    its name, or its path
 └─ session             one agent run                          504799b8
+   ├─ subagent         one run the agent handed off           504799b8/a8261ff4
    └─ task             a user turn, and everything it led to  504799b8#3
       └─ round         one LLM call                           504799b8#3.12
          └─ tool call                                         shown in full by its round
@@ -164,7 +165,8 @@ project                a directory an agent was started in    its name, or its p
 | `probez import <file>` | Read a project someone sent you |
 
 Lists take `--limit` and always say how many rows they withheld. `rounds` filters by `--session`,
-`--task`, `--tool`, `--command`, `--kind`, `--category`, `--target`, `--agent` and `--errors`.
+`--task`, `--tool`, `--command`, `--kind`, `--category`, `--target`, `--agent` and `--errors`, and
+`sessions` takes `--agent` too.
 `analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
 `--outcome`. `questions` takes `--kind` and `--min-calls`, and `explain` takes `--again` and `--prompt`.
 `--source` selects Claude Code, Cursor, or
@@ -204,6 +206,50 @@ $ probez sessions flowz-mcp
 
   8 sessions · 652 rounds
   `probez session <id>` shows one of them, task by task.
+```
+
+When the agent hands work to a subagent, that run is a session of its own, named for the one that
+handed it over. It is a separate context with its own model and its own bill, so it is counted
+separately rather than folded into the session that delegated it:
+
+```console
+$ probez sessions flowz-agentic-sdlc --limit 6
+
+  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
+
+  SESSION            AGENT ROUNDS  TASKS  TOOLS           IN      OUT  WORK       LAST
+  6b45d8d7/a5420a73  sub        7      1  17          182.4K     5.8K  Recon 83%  25 days ago
+  6b45d8d7/ab80aaad  sub        8      1  16          197.9K     5.4K  Recon 86%  25 days ago
+  6b45d8d7           main     122      8  234 ✗3       58.6M   139.5K  Docs 29%   25 days ago
+  15ac167d/a29da1c6  sub        7      1  19          135.0K     9.1K  Recon 93%  25 days ago
+  15ac167d/ad108a22  sub       18      1  38          515.5K    17.7K  Plan 65%   25 days ago
+  15ac167d           main     150     16  298 ✗3       27.6M   180.4K  Docs 28%   25 days ago
+
+  showing 6 of 23 sessions · 3744 rounds, --limit 0 for all
+  `probez session <id>` shows one of them, task by task.
+```
+
+`probez session <id>` says underneath a session's own tasks what it handed off, and what that cost:
+
+```console
+$ probez session flowz-agentic-sdlc 15ac167d --limit 3
+
+  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
+
+  session 15ac167d  ·  16 tasks · 150 rounds · 27.6M in · 180.4K out · 3 tool errors · Jul 31, 2026
+
+  TASK         ROUNDS       IN     OUT     TIME  WORK       FROM     ASKED
+  15ac167d#1       12   517.7K   10.8K     2.6m  Docs 55%   a938f1f  start tracking the proje…
+  15ac167d#2        5   275.1K    5.9K     1.4m  Docs 75%   6e9716d  once i a while i'll post…
+  15ac167d#3        1    58.4K    1.5K    23.8s  —          9e4e660  we are implementing task…
+
+  showing 3 of 16 tasks · 150 rounds, --limit 0 for all. `probez task 15ac167d#1` shows one in full
+
+  handed to 2 subagents · 25 rounds · 650.5K in · 26.7K out, none of it counted above
+
+  TASK                 ROUNDS       IN     OUT     TIME  WORK       FROM     ASKED
+  15ac167d/a29da1c6#1       7   135.0K    9.1K     2.1m  Recon 93%  9e4e660  Decompose PRD-001 (…
+  15ac167d/ad108a22#1      18   515.5K   17.7K     4.0m  Plan 65%   a1b59fd  Audit this repo's S…
 ```
 
 A session as its tasks, each with the commit the tree was on when it was asked:

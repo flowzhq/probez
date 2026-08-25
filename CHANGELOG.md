@@ -8,7 +8,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+### Added
+
+- **A subagent's run is now a session of its own, and its rounds are counted.** Claude Code writes
+  a subagent's transcript to `<session>/subagents/agent-<id>.jsonl`, a directory beside the session
+  that spawned it. Discovery only ever read the files sitting directly in the project directory, so
+  none of those transcripts were opened: everything a subagent did was missing from the store, and
+  all that survived of it was the one `Agent` tool call in the parent, which reads as twenty
+  seconds and a few thousand characters however much work went on behind it. On the machine this
+  was found on that was 44 transcripts, two thirds of them running a model other than their
+  parent's — so per-model token and cost totals were low by whatever the delegated work came to.
+
+  A session id is now the transcript's path relative to the project's transcript root for both
+  agents alike, which is the shape Cursor's ids already had, so a subagent is named
+  `504799b8/a8261ff4` and `agent` is read from that name rather than from a per-vendor flag. The
+  sessions table marks them and takes `--agent main|sub`; `probez session <id>` lists what a
+  session handed off, under its own tasks and separate from its own totals; `probez rounds --agent
+  sub` finds the rounds. Sessions someone opened keep exactly the id they had, so existing stores
+  stay valid and the subagents arrive as new sessions on the next collect.
+
+  Project session counts go up accordingly, and so do token totals — the work was always there.
+
+### Changed
+
+- **A session id is printed and typed as what identifies it, not as its first eight characters.**
+  A subagent's id begins with the id of the session that spawned it, so eight characters named
+  every subagent of a session the same thing, and named it the same as its parent. Tables now print
+  `504799b8/a8261ff4`, `--session` matches part by part, and the id columns widen only where a
+  project actually has subagents in it. Naming a session on its own still means that session and
+  not the subagents beneath it, so nothing that worked before resolves differently now.
+
 ### Fixed
+
+- **An archived session with no state entry was assigned to an agent by guessing from its id.**
+  The rule was that an id containing `/` came from Cursor, which is wrong now that Claude names a
+  subagent's transcript the same way. It reads a record out of the archived copy instead.
+
+- **The view looked for a subagent's archived session at a path, not at the name it was stored
+  under.** `sessions/` holds one flat file per session, its id flattened; two lookups in the view
+  built the name by appending `.jsonl` to the id instead. For a session id that is a path that
+  named a directory the store never wrote, so a subagent's tool-result bodies read as absent and
+  its trails fell back to what the inputs alone could show. This was already true of Cursor's
+  subagents and is now reachable for Claude's.
+
+- **A subagent's own id could not be typed into `probez task` or `probez round`.** The shape those
+  selectors accept before the `#` admitted hex and dashes only, so `504799b8/a8261ff4#1.0` — what
+  the tables print — was rejected as malformed.
 
 - **A raw NUL byte in `QuestionPanel.tsx` made the file invisible to every grep over `web/src`.**
   The key separator in `signature` was written as the byte itself rather than as `\0`, which is the

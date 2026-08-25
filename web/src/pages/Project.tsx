@@ -169,6 +169,10 @@ export function Project({ slug }: { slug: string }): ReactElement {
                         <a {...linkProps(href.session(slug, session.session))}>
                           {shortId(session.session)}
                         </a>
+                        {/* The id already carries the session it ran under, but says so only to
+                            someone who knows the shape. The tag is what makes the row readable
+                            at a glance as work the agent handed off. */}
+                        {session.agent === 'sub' ? <> <span className="tag">sub</span></> : null}
                       </td>
                       <td className="muted">{when(session.first_ts)}</td>
                       <td className="dim">{shortModel(session.model)}</td>

@@ -1,6 +1,7 @@
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
+import { isSubagent } from './agents/paths.js'
 import type { HeadHistory } from './git.js'
 import type { Compaction, Patch, Round, RoundEvent, ToolCall } from './types.js'
 
@@ -224,6 +225,10 @@ export async function extractSession(
   sessionId: string,
   head: HeadHistory | null = null,
 ): Promise<Round[]> {
+  // A subagent's transcript is its own file and so its own session, named for where it sits. What
+  // it holds is one thread from end to end: the prompt it was handed opens its first task, and a
+  // compaction inside it happened to it.
+  const subFile = isSubagent(sessionId)
   const rounds: Round[] = []
   const builders: Builder[] = []
   const byMsgId = new Map<string, Builder>()
@@ -268,7 +273,10 @@ export async function extractSession(
     if (!message || typeof message !== 'object') continue
     const msg = message as Json
     const ts = parseTs(timestamp)
-    const sidechain = record.isSidechain === true
+    // Older releases interleaved a subagent's records into the session that spawned it, marked
+    // with this flag. Current ones give the subagent its own file, which arrives here as its own
+    // session; the flag is still set on every record in it, and means something different there.
+    const inlineSub = record.isSidechain === true && !subFile
 
     if (record.type === 'assistant' && msg.role === 'assistant') {
       const id = msg.id
@@ -287,7 +295,7 @@ export async function extractSession(
             // fallback for the rounds of a session that opens without a user turn, which have no
             // task start to date them by.
             commit: head === null ? null : head.at(taskStart ?? ts),
-            agent: sidechain ? 'sub' : 'main',
+            agent: subFile || inlineSub ? 'sub' : 'main',
             id,
             ts: timestamp,
             ms: null,
@@ -303,8 +311,9 @@ export async function extractSession(
             in_cache_read: 0,
             out_tokens: 0,
             // A compaction belongs to the round that followed it, and to the thread that was
-            // actually compacted: a subagent answering next was never part of that context.
-            compaction: sidechain ? null : pendingCompaction,
+            // actually compacted: a subagent answering next was never part of that context. In a
+            // subagent's own file there is only the one thread, so the compaction is its own.
+            compaction: inlineSub ? null : pendingCompaction,
             mcp_server: null,
             mcp_tool: null,
             skill: null,
@@ -320,7 +329,7 @@ export async function extractSession(
           textParts: [],
         }
         pending = { events: [], text: [], wait: null }
-        if (!sidechain) pendingCompaction = null
+        if (!inlineSub) pendingCompaction = null
         taskUsed = true
         byMsgId.set(id, builder)
         builders.push(builder)
@@ -435,7 +444,7 @@ export async function extractSession(
         pending.wait = ts - lastOutputTs
       }
     }
-    if (!sidechain && (task === 0 || taskUsed)) {
+    if (!inlineSub && (task === 0 || taskUsed)) {
       task += 1
       taskUsed = false
       taskStart = ts

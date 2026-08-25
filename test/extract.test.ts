@@ -11,6 +11,7 @@ import type { Round } from '../src/types.js'
 const here = dirname(fileURLToPath(import.meta.url))
 const FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'session.jsonl')
 const COMPACTED = join(here, '..', '..', 'test', 'fixtures', 'compaction-session.jsonl')
+const SUBAGENT = join(here, '..', '..', 'test', 'fixtures', 'claude-subagent.jsonl')
 
 const rounds = await extractSession(FIXTURE, 'demo')
 const byId = new Map(rounds.map((r) => [r.id, r]))
@@ -295,4 +296,55 @@ test('a subagent answering after a compaction does not take it', () => {
 test('a compaction shows up as input tokens collapsing between rounds', () => {
   assert.equal(compactedRound('msg_pre').in_tokens, 999038)
   assert.equal(compactedRound('msg_post').in_tokens, 23977)
+})
+
+// --- a subagent's own transcript ------------------------------------------------------------------
+//
+// Current releases give a subagent a file of its own, under the session that spawned it, and set
+// `isSidechain` on every record in it. That flag means something different there than it did when
+// these records were interleaved into the parent's file: this file is one thread from end to end,
+// so what it says about compaction and about where a task starts is about itself.
+
+const SUB_ID = 'demo/subagents/agent-a1234567'
+const subagent = await extractSession(SUBAGENT, SUB_ID)
+
+test('a subagent transcript is a session of its own, and all of it is sub', () => {
+  assert.deepEqual(subagent.map((r) => r.id), ['msg_s1', 'msg_s2'])
+  assert.ok(subagent.every((r) => r.agent === 'sub'))
+  assert.ok(subagent.every((r) => r.session === SUB_ID))
+})
+
+test('a subagent running another model is recorded as that model', () => {
+  assert.ok(subagent.every((r) => r.model === 'claude-sonnet-5'))
+  assert.equal(subagent[0]!.in_tokens, 943)
+  assert.equal(subagent[0]!.out_tokens, 60)
+})
+
+test('the prompt a subagent was handed opens its first task', () => {
+  // Every round of it is task 1: the one prompt is all it was ever asked, and the tool result in
+  // the middle is the round before it answering, not somebody asking again.
+  assert.deepEqual(subagent.map((r) => r.task), [1, 1])
+  assert.equal(subagent[0]!.user_text, 'map the classification module')
+  assert.equal(subagent[0]!.first_input, 'user_message')
+  assert.equal(subagent[1]!.first_input, 'tool_result')
+})
+
+test('a compaction inside a subagent transcript belongs to the round after it', () => {
+  // In the parent's file a sidechain round is another thread and cannot take the boundary. Here
+  // there is no other thread, so dropping it would throw away the only record of it.
+  assert.equal(subagent[0]!.compaction, null)
+  assert.deepEqual(subagent[1]!.compaction, {
+    trigger: 'auto',
+    pre_tokens: 140000,
+    post_tokens: 9000,
+    dropped_tokens: 131000,
+    ms: 4200,
+    ts: '2026-01-01T00:10:06.000Z',
+  })
+})
+
+test('a tool call in a subagent transcript pairs with its result', () => {
+  const read = subagent[0]!.tools[0]!
+  assert.equal(read.name, 'Read')
+  assert.equal(read.result_chars, 'export const CATEGORIES = []'.length)
 })

@@ -1,7 +1,9 @@
+import { isSubagent, sessionSegments } from './agents/paths.js'
 import { commandOf, parseCommands, UNPARSED } from './bash.js'
 import type { Command } from './bash.js'
 import { CATEGORIES, categoryInfo, classifyCall } from './classify.js'
 import type { Category, Label } from './classify.js'
+import { shortSession } from './format.js'
 import { costOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
 import type { Question } from './question.js'
@@ -38,6 +40,8 @@ export interface Totals {
 /** One session as recorded in the store, not as it exists on disk under ~/.claude. */
 export interface SessionRow extends Totals {
   session: string
+  /** "sub" when a subagent ran this session, matching the field a round carries. */
+  agent: 'main' | 'sub'
   rounds: number
   tasks: number
   tool_calls: number
@@ -217,6 +221,7 @@ export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
       entry = {
         row: {
           session: round.session,
+          agent: isSubagent(round.session) ? 'sub' : 'main',
           rounds: 0,
           tasks: 0,
           tool_calls: 0,
@@ -978,26 +983,40 @@ export function toolSummary(round: Round): string {
 export class SelectorError extends Error {}
 
 /**
- * Resolve a session id from any unique prefix, so the 8 characters the tables print are enough to
- * type back. An ambiguous prefix names its candidates rather than picking one.
+ * Resolve a session id from any unique prefix, so what the tables print is enough to type back.
+ * An ambiguous prefix names its candidates rather than picking one.
+ *
+ * A prefix is matched part by part, the way the id is printed: `dbb93d13` against the session,
+ * `dbb93d13/a826` against a subagent that ran under it. Naming a session on its own means that
+ * session and not the subagents beneath it, so eight characters go on meaning what they have
+ * always meant; a prefix that names no session falls through to the subagents it does match.
  */
 export function matchSession(sessions: string[], prefix: string): string {
   const wanted = prefix.toLowerCase()
   const exact = sessions.find((id) => id.toLowerCase() === wanted)
   if (exact !== undefined) return exact
-  const hits = sessions.filter((id) => id.toLowerCase().startsWith(wanted))
-  if (hits.length === 1) return hits[0]!
-  if (hits.length === 0) throw new SelectorError(`no session in this project starts with "${prefix}"`)
+  const typed = wanted.split(/[/\\]/).filter((part) => part !== '')
+  const hits = sessions.filter((id) => {
+    const segments = sessionSegments(id).map((part) => part.toLowerCase())
+    return typed.length <= segments.length && typed.every((part, i) => segments[i]!.startsWith(part))
+  })
+  const named = hits.filter((id) => sessionSegments(id).length === typed.length)
+  const found = named.length > 0 ? named : hits
+  if (found.length === 1) return found[0]!
+  if (found.length === 0) throw new SelectorError(`no session in this project starts with "${prefix}"`)
   throw new SelectorError(
-    `"${prefix}" matches ${hits.length} sessions: ${hits.map((id) => id.slice(0, 8)).join(', ')}`,
+    `"${prefix}" matches ${found.length} sessions: ${found.map(shortSession).join(', ')}`,
   )
 }
 
 /**
  * Whether a positional is an id (`3`, `3.12`, `fe64e716#3.12`) rather than a project name.
+ *
+ * What precedes the `#` is a session, and a session id is a path when a subagent ran it, so the
+ * shape has to admit one. A project name never carries a `#`, which is what keeps the two apart.
  */
 export function looksLikeSelector(value: string): boolean {
-  return /^(?:[0-9a-fA-F-]{4,}#)?\d+(?:\.\d+)?$/.test(value)
+  return /^(?:[0-9a-zA-Z_/\\-]{4,}#)?\d+(?:\.\d+)?$/.test(value)
 }
 
 /**
@@ -1025,17 +1044,17 @@ function resolveSession(
   if (prefix !== undefined) return { session: matchSession(sessions, prefix), rest }
   if (sessions.length === 1) return { session: sessions[0]!, rest }
   throw new SelectorError(
-    `this project has ${sessions.length} sessions. Say which, as ${sessions[0]!.slice(0, 8)}#${rest}`,
+    `this project has ${sessions.length} sessions. Say which, as ${shortSession(sessions[0]!)}#${rest}`,
   )
 }
 
 /** Find the round a selector names, as `<task>.<round>` within its session. */
 export function findRound(rounds: Round[], selector: string, sessionHint?: string): Round {
-  const shape = /^(?:[0-9a-fA-F-]{4,}#)?(\d+)\.(\d+)$/.exec(selector)
+  const shape = /^(?:[0-9a-zA-Z_/\\-]{4,}#)?(\d+)\.(\d+)$/.exec(selector)
   if (shape === null) {
     // A bare number is a task id. Saying so beats "not a round selector", because it is almost
     // always an id copied from the task column of a table.
-    const task = /^((?:[0-9a-fA-F-]{4,}#)?\d+)$/.exec(selector)
+    const task = /^((?:[0-9a-zA-Z_/\\-]{4,}#)?\d+)$/.exec(selector)
     if (task !== null) {
       throw new SelectorError(
         `"${selector}" names a task. A round is written ${selector}.<round>, or try \`probez task ${selector}\``,
@@ -1051,14 +1070,14 @@ export function findRound(rounds: Round[], selector: string, sessionHint?: strin
   if (found === undefined) {
     const last = rounds.filter((round) => round.session === session).length - 1
     throw new SelectorError(
-      `session ${session.slice(0, 8)} has no round ${index}${last >= 0 ? `, which runs 0 to ${last}` : ''}`,
+      `session ${shortSession(session)} has no round ${index}${last >= 0 ? `, which runs 0 to ${last}` : ''}`,
     )
   }
   // The task in the id is derivable, which makes it a check: a mismatch means the id was assembled
   // by hand from two different rows, and answering it anyway would answer a question nobody asked.
   if (found.task !== task) {
     throw new SelectorError(
-      `round ${index} of session ${session.slice(0, 8)} is in task ${found.task}, not task ${task}. Try ${session.slice(0, 8)}#${found.task}.${index}`,
+      `round ${index} of session ${shortSession(session)} is in task ${found.task}, not task ${task}. Try ${shortSession(session)}#${found.task}.${index}`,
     )
   }
   return found
@@ -1066,7 +1085,7 @@ export function findRound(rounds: Round[], selector: string, sessionHint?: strin
 
 /** Every round belonging to the task a selector names, in order. */
 export function findTask(rounds: Round[], selector: string, sessionHint?: string): Round[] {
-  if (!/^(?:[0-9a-fA-F-]{4,}#)?\d+$/.test(selector)) {
+  if (!/^(?:[0-9a-zA-Z_/\\-]{4,}#)?\d+$/.test(selector)) {
     const round = /\.\d+$/.test(selector)
     throw new SelectorError(
       round
@@ -1083,7 +1102,7 @@ export function findTask(rounds: Round[], selector: string, sessionHint?: string
   if (found.length === 0) {
     const last = Math.max(0, ...mine.map((round) => round.task))
     throw new SelectorError(
-      `session ${session.slice(0, 8)} has no task ${index}${last > 0 ? `, which runs 1 to ${last}` : ''}`,
+      `session ${shortSession(session)} has no task ${index}${last > 0 ? `, which runs 1 to ${last}` : ''}`,
     )
   }
   return found

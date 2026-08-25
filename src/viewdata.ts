@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { safeSessionFilename } from './agents/paths.js'
 import { discoverProjects } from './discover.js'
 import {
   analysisRecords,
@@ -523,7 +524,9 @@ export async function taskPayload(
 async function taskTrails(stored: StoredProject, rounds: Round[]): Promise<Trail[]> {
   const session = rounds[0]?.session
   if (session === undefined) return []
-  const file = join(stored.dir, 'sessions', `${session}.jsonl`)
+  // The archived copy is named by `safeSessionFilename`, not by the id: a subagent's id is a path
+  // and would otherwise be read as one, looking for a directory the store never wrote.
+  const file = join(stored.dir, 'sessions', safeSessionFilename(session))
   const results = await readToolResults(file, idsToRead(rounds))
   return shownTrails(trailsOf(rounds, { results, root: stored.path ?? '' }))
 }
@@ -576,7 +579,7 @@ export async function resultPayload(
   }
   if (found === null) throw new NotFound(`no tool call ${toolUseId} in session ${session}`)
 
-  const file = join(stored.dir, 'sessions', `${found.session}.jsonl`)
+  const file = join(stored.dir, 'sessions', safeSessionFilename(found.session))
   if ((await stat(file).catch(() => null)) === null) {
     // Worth separating from "no result recorded": nothing is wrong with the call, there is simply
     // no log here to read it out of. An export carries the rounds probez normalized and not the

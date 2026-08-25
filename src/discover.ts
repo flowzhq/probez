@@ -60,30 +60,57 @@ async function readCwd(file: string): Promise<string | null> {
   }
 }
 
-async function readFlatSessions(dir: string, source: AgentSource): Promise<SessionFile[]> {
-  let names: string[]
+/** Record one transcript as a session, named by its path relative to the project's root. */
+async function addSession(
+  path: string,
+  root: string,
+  source: AgentSource,
+  out: SessionFile[],
+): Promise<void> {
   try {
-    names = await readdir(dir)
+    const info = await stat(path)
+    if (!info.isFile()) return
+    const rel = relative(root, path).replaceAll('\\', '/')
+    out.push({
+      id: rel.slice(0, -'.jsonl'.length),
+      file: path,
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      source,
+    })
+  } catch {
+    // vanished between readdir and stat
+  }
+}
+
+/**
+ * Claude's transcripts: one file per session at the top of the project directory, and one file per
+ * subagent under `<session>/subagents/`.
+ *
+ * Only that one nesting is followed. A session id is a path, so anything picked up here becomes a
+ * session that has to be named, archived and read back — and the project directory holds other
+ * things beside the transcripts, such as the memory directory. A file directly in the directory
+ * keeps exactly the id it always had, since its path relative to the root is its own name.
+ */
+async function readClaudeSessions(dir: string, source: AgentSource): Promise<SessionFile[]> {
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
   } catch {
     return []
   }
   const sessions: SessionFile[] = []
-  for (const name of names) {
-    if (!name.endsWith('.jsonl')) continue
-    const file = join(dir, name)
-    try {
-      const info = await stat(file)
-      if (!info.isFile()) continue
-      sessions.push({
-        id: name.slice(0, -'.jsonl'.length),
-        file,
-        size: info.size,
-        mtimeMs: info.mtimeMs,
-        source,
-      })
-    } catch {
-      // vanished between readdir and stat
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const nested = join(dir, entry.name, 'subagents')
+      for (const name of await readdir(nested).catch(() => [] as string[])) {
+        if (!name.endsWith('.jsonl')) continue
+        await addSession(join(nested, name), dir, source, sessions)
+      }
+      continue
     }
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
+    await addSession(join(dir, entry.name), dir, source, sessions)
   }
   sessions.sort((a, b) => a.mtimeMs - b.mtimeMs)
   return sessions
@@ -103,19 +130,7 @@ async function walkJsonl(dir: string, root: string, source: AgentSource, out: Se
       continue
     }
     if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
-    try {
-      const info = await stat(path)
-      const rel = relative(root, path).replaceAll('\\', '/')
-      out.push({
-        id: rel.slice(0, -'.jsonl'.length),
-        file: path,
-        size: info.size,
-        mtimeMs: info.mtimeMs,
-        source,
-      })
-    } catch {
-      // vanished between readdir and stat
-    }
+    await addSession(path, root, source, out)
   }
 }
 
@@ -138,7 +153,7 @@ export async function discoverClaudeProjects(claudeDir: string): Promise<Project
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     const dir = join(claudeDir, entry.name)
-    const sessions = await readFlatSessions(dir, 'claude-code')
+    const sessions = await readClaudeSessions(dir, 'claude-code')
     if (sessions.length === 0) continue
 
     // Newest first: the most recent session is likeliest to carry a usable cwd.

@@ -67,8 +67,16 @@ export function clip(text: string, width: number): string {
   return line.length <= width ? line : `${line.slice(0, Math.max(1, width - 1))}…`
 }
 
+/**
+ * A session as it is shown: eight characters, and for a subagent the session it ran under first —
+ * `dbb93d13`, `dbb93d13/a8261ff4`. The same rule the CLI prints by, since a subagent's id starts
+ * with its parent's and eight characters alone would name every one of them the same thing.
+ */
 export function shortId(session: string): string {
-  return session.slice(0, 8)
+  return session
+    .split(/[/\\]subagents[/\\]/)
+    .map((part, i) => (i === 0 ? part : part.replace(/^agent-/, '')).slice(0, 8))
+    .join('/')
 }
 
 /** A commit at the length git itself abbreviates to. The full hash stays in the API payload. */

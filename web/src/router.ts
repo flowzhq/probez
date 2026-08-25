@@ -32,12 +32,23 @@ export type Route =
     }
   | { name: 'missing'; path: string }
 
+/** One path segment as it was written, or as-is when it is not valid percent-encoding. */
+function decodeSegment(part: string): string {
+  try {
+    return decodeURIComponent(part)
+  } catch {
+    return part
+  }
+}
+
 export function parse(pathname: string, search: string): Route {
   const parts = pathname.split('/').filter((part) => part !== '')
   if (parts.length === 0) return { name: 'projects' }
   if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
 
-  const [p, slug, s, session, t, task] = parts
+  const [p, slug, s, encoded, t, task] = parts
+  // A subagent's session id is a path, so it travels percent-encoded in a single segment.
+  const session = encoded === undefined ? undefined : decodeSegment(encoded)
   if (p !== 'p' || slug === undefined) return { name: 'missing', path: pathname }
   if (s === undefined) return { name: 'project', slug }
   if (s !== 's' || session === undefined) return { name: 'missing', path: pathname }
@@ -67,7 +78,7 @@ export const href = {
   projects: () => '/',
   settings: () => '/settings',
   project: (slug: string) => `/p/${slug}`,
-  session: (slug: string, session: string) => `/p/${slug}/s/${session}`,
+  session: (slug: string, session: string) => `/p/${slug}/s/${encodeURIComponent(session)}`,
   task: (
     slug: string,
     session: string,
@@ -81,7 +92,7 @@ export const href = {
     if (trail !== undefined && trail !== null) query.set('trail', trail)
     if (question !== undefined && question !== null) query.set('question', String(question))
     const search = query.toString()
-    return `/p/${slug}/s/${session}/t/${task}${search === '' ? '' : `?${search}`}`
+    return `/p/${slug}/s/${encodeURIComponent(session)}/t/${task}${search === '' ? '' : `?${search}`}`
   },
 }
 
