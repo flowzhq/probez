@@ -337,15 +337,15 @@ $ probez trails flowz-mcp --deep --limit 8
 
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
-  TRAIL          STEPS  DEPTH  WIDE  PATHS  ROOT     OUTCOME        IN    TIME
-  069d8593#1.0       6      5     2      7  listing  abandoned  268.5K    6.0s
-  0b2cc149#1.0       5      4     2      3  listing  abandoned  188.4K    3.0s
-  0b2cc149#3.8       3      2     2      3  listing  test       131.8K    1.6s
-  0b2cc149#3.13      4      4     1      4  path     test       214.1K    2.8s
-  0bfa7fe3#1.0       3      2     2      2  listing  test       105.7K    1.0s
-  51cced08#2.1      16      6    11     23  listing  edit       999.1K    8.6s
-  51cced08#2.70      3      3     1      4  doc      test       567.2K   500ms
-  6ffef9bc#1.0       5      4     2      9  listing  abandoned  204.2K    6.7s
+  TRAIL           STEPS  DEPTH  WIDE  PATHS  ROOT     OUTCOME        IN    TIME
+  069d8593#1.0        6      5     2      7  listing  abandoned  268.5K    6.0s
+  0b2cc149#1.0        5      4     2      3  listing  abandoned  188.4K    3.0s
+  0b2cc149#3.8        3      2     2      3  listing  test       131.8K    1.6s
+  0b2cc149#3.13       4      4     1      4  path     test       214.1K    2.8s
+  0bfa7fe3#1.0        3      2     2      2  listing  test       105.7K    1.0s
+  51cced08#2.1       16      6    11     23  listing  edit       999.1K    8.6s
+  51cced08#2.70       3      3     1      4  doc      test       567.2K   500ms
+  6ffef9bc#1.0        5      4     2      9  listing  abandoned  204.2K    6.7s
 
   showing 8 of 14 trails, --limit 0 for all · 13 proven from result bodies
   `probez trail <id>` draws one of them, hop by hop.
