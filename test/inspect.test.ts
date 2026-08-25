@@ -352,6 +352,40 @@ test('a session named on its own means that session, not the subagents under it'
   })
 })
 
+test('a session says what it cost, and how much of it went unpriced', () => {
+  const rows = sessionRows(
+    [
+      {
+        ...ROUND_DEFAULTS,
+        session: 'aaaa1111',
+        id: 'm1',
+        task: 1,
+        model: 'claude-opus-5',
+        in_tokens: 1_000_000,
+        in_uncached: 1_000_000,
+        out_tokens: 0,
+      },
+      // No rate for this one, so it adds nothing to the total and something in reality. Counted
+      // rather than folded in, or the session reads as costing only what happened to be priced.
+      {
+        ...ROUND_DEFAULTS,
+        session: 'aaaa1111',
+        id: 'm2',
+        task: 1,
+        model: 'some-model-nobody-priced',
+        in_tokens: 1_000_000,
+        in_uncached: 1_000_000,
+        out_tokens: 0,
+      },
+    ],
+    PRICING,
+  )
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!.cost, 10)
+  assert.equal(rows[0]!.unpriced, 1)
+  assert.equal(rows[0]!.rounds, 2)
+})
+
 test('a subagent session can be named in a task or round selector', () => {
   // The part before the `#` is a session, and a subagent's session id is a path with `subagents`
   // and an `agent-` prefix in it. A selector shape that only admitted hex would reject its own

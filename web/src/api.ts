@@ -278,7 +278,11 @@ export interface Totals {
 
 export interface ViewSession extends Totals {
   session: string
+  /** "sub" when a subagent ran this session, matching the field a round carries. */
+  agent: 'main' | 'sub'
   rounds: number
+  /** Rounds whose model has no rate, and which therefore added nothing to `cost`. */
+  unpriced: number
   tasks: number
   tool_calls: number
   errors: number

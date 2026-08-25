@@ -43,6 +43,13 @@ export interface SessionRow extends Totals {
   /** "sub" when a subagent ran this session, matching the field a round carries. */
   agent: 'main' | 'sub'
   rounds: number
+  /**
+   * Rounds whose model has no published rate, and which therefore added nothing to `cost`.
+   *
+   * `cost` is a sum over what could be priced. Without this a session run on a model nobody has
+   * set a rate for reads as free, which is a wrong answer rather than a missing one.
+   */
+  unpriced: number
   tasks: number
   tool_calls: number
   errors: number
@@ -223,6 +230,7 @@ export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
           session: round.session,
           agent: isSubagent(round.session) ? 'sub' : 'main',
           rounds: 0,
+          unpriced: 0,
           tasks: 0,
           tool_calls: 0,
           errors: 0,
@@ -237,6 +245,7 @@ export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
     const { row, tasks } = entry
     row.rounds += 1
     tasks.add(round.task)
+    if (costOf(round, pricing) === null) row.unpriced += 1
     addTotals(row, round, pricing)
     for (const tool of round.tools ?? []) {
       row.tool_calls += 1

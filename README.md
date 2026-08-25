@@ -194,17 +194,17 @@ $ probez sessions flowz-mcp
 
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
-  SESSION    ROUNDS  TASKS  TOOLS           IN      OUT  WORK       LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K  Impl 37%   13 days ago
-  0b2cc149       87      4  84 ✗2        10.1M    97.6K  Impl 38%   13 days ago
-  51cced08      134      4  131          24.3M   138.1K  Impl 39%   13 days ago
-  be254122       21      2  19 ✗1         1.0M     8.2K  Recon 55%  13 days ago
-  bfd594d9       73      2  72 ✗1        10.4M    74.6K  Recon 34%  13 days ago
-  6ffef9bc       33      4  30            2.2M    17.5K  Recon 52%  8 days ago
-  c21c7448      146      2  145 ✗5       22.8M   112.6K  Recon 43%  8 days ago
-  069d8593       31      1  30 ✗3         1.9M    11.3K  Recon 72%  7 days ago
+  SESSION    ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
+  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   14 days ago
+  0b2cc149       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   14 days ago
+  51cced08      134      4  131          24.3M   138.1K     $22.57  Impl 39%   14 days ago
+  be254122       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  14 days ago
+  bfd594d9       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  14 days ago
+  6ffef9bc       33      4  30            2.2M    17.5K      $2.19  Recon 52%  9 days ago
+  c21c7448      146      2  145 ✗5       22.8M   112.6K     $18.83  Recon 43%  9 days ago
+  069d8593       31      1  30 ✗3         1.9M    11.3K      $1.76  Recon 72%  8 days ago
 
-  8 sessions · 652 rounds
+  8 sessions · 652 rounds · $82.58
   `probez session <id>` shows one of them, task by task.
 ```
 
@@ -217,15 +217,15 @@ $ probez sessions flowz-agentic-sdlc --limit 6
 
   flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
-  SESSION            AGENT ROUNDS  TASKS  TOOLS           IN      OUT  WORK       LAST
-  6b45d8d7/a5420a73  sub        7      1  17          182.4K     5.8K  Recon 83%  25 days ago
-  6b45d8d7/ab80aaad  sub        8      1  16          197.9K     5.4K  Recon 86%  25 days ago
-  6b45d8d7           main     122      8  234 ✗3       58.6M   139.5K  Docs 29%   25 days ago
-  15ac167d/a29da1c6  sub        7      1  19          135.0K     9.1K  Recon 93%  25 days ago
-  15ac167d/ad108a22  sub       18      1  38          515.5K    17.7K  Plan 65%   25 days ago
-  15ac167d           main     150     16  298 ✗3       27.6M   180.4K  Docs 28%   25 days ago
+  SESSION            AGENT ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
+  6b45d8d7/a5420a73  sub        7      1  17          182.4K     5.8K      $0.84  Recon 83%  25 days ago
+  6b45d8d7/ab80aaad  sub        8      1  16          197.9K     5.4K      $0.86  Recon 86%  25 days ago
+  6b45d8d7           main     122      8  234 ✗3       58.6M   139.5K     $76.13  Docs 29%   25 days ago
+  15ac167d/a29da1c6  sub        7      1  19          135.0K     9.1K      $0.94  Recon 93%  25 days ago
+  15ac167d/ad108a22  sub       18      1  38          515.5K    17.7K      $1.99  Plan 65%   25 days ago
+  15ac167d           main     150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   25 days ago
 
-  showing 6 of 23 sessions · 3744 rounds, --limit 0 for all
+  showing 6 of 23 sessions · 3744 rounds · $941.53, --limit 0 for all
   `probez session <id>` shows one of them, task by task.
 ```
 

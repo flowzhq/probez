@@ -190,6 +190,10 @@ Sessions
   --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT} for the list,
                                all of them for one session; 0 for all)
 
+  COST is what the session came to at the rates under Settings in \`probez view\`, worked out per
+  round from its own model's prices and summed. A session with rounds whose model has no rate is
+  marked \`+\`, since the figure is real but short; one where none of them has a rate shows \`—\`.
+
   A subagent's run is a session of its own, named for the one that handed it the work:
   \`504799b8/a8261ff4\`. It is listed and priced separately, because it is a separate context
   with its own model, and \`probez session 504799b8\` says underneath its tasks what it handed
@@ -734,19 +738,33 @@ function printSessions(all: ReturnType<typeof sessionRows>, limit: number, work:
   // need a column saying so on every row.
   const kinds = rows.some((row) => row.agent === 'sub')
   console.log(
-    `  ${pad('SESSION', idWidth)}${kinds ? pad('AGENT', 6) : ''}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('OUT', 7)}  ${pad('WORK', 11)}LAST`,
+    `  ${pad('SESSION', idWidth)}${kinds ? pad('AGENT', 6) : ''}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('OUT', 7)}  ${padStart('COST', 9)}  ${pad('WORK', 11)}LAST`,
   )
   for (const row of rows) {
     const calls = `${row.tool_calls}${row.errors > 0 ? ` ✗${row.errors}` : ''}`
     const last = row.last_ts === null ? '—' : ago(Date.parse(row.last_ts))
+    // What is printed is what could be priced. A session where some rounds had no rate is marked
+    // `+`, since the figure is real but short; one where none did prints the same `—` every
+    // unmeasured value here does, rather than a `$0.00` that would read as free.
+    const cost =
+      row.unpriced === row.rounds ? '—' : `${money(row.cost)}${row.unpriced > 0 ? '+' : ''}`
     console.log(
-      `  ${pad(shortSession(row.session), idWidth)}${kinds ? pad(row.agent, 6) : ''}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}  ${pad(work.session(row.session), 11)}${last}`,
+      `  ${pad(shortSession(row.session), idWidth)}${kinds ? pad(row.agent, 6) : ''}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}  ${padStart(cost, 9)}  ${pad(work.session(row.session), 11)}${last}`,
     )
   }
   console.log('')
+  const spent = all.reduce((sum, row) => sum + row.cost, 0)
+  const unpriced = all.reduce((sum, row) => sum + row.unpriced, 0)
   console.log(
-    `  ${counted(rows.length, all.length, 'session')} · ${totals} rounds${more(rows.length, all.length)}`,
+    `  ${counted(rows.length, all.length, 'session')} · ${totals} rounds · ${money(spent)}${more(rows.length, all.length)}`,
   )
+  // Named rather than folded in, the same way `analyze` names them: a model with no rate costs
+  // nothing here and something in reality.
+  if (unpriced > 0) {
+    console.log(
+      `  + ${unpriced} round${unpriced === 1 ? '' : 's'} have no rate for their model and are outside COST. Set one in \`probez view\` → Settings`,
+    )
+  }
   console.log('  `probez session <id>` shows one of them, task by task.')
   console.log('')
 }

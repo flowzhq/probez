@@ -453,6 +453,54 @@ test('a rebuild keeps rounds whose session the agent has since pruned', () => {
   assert.ok(after.every((round) => Array.isArray(round.events)))
 })
 
+test('the sessions table says what each session cost', () => {
+  const env = makeSource(1, true)
+  assert.equal(collect(env).status, 0)
+
+  const table = read(env, ['sessions'])
+  assert.equal(table.status, 0)
+  assert.match(table.stdout, /\bCOST\b/)
+  // The fixture's rounds run on a model with a published rate, so every row carries a figure and
+  // the listing totals them.
+  assert.match(table.stdout, /\$\d/)
+
+  const rows = JSON.parse(read(env, ['sessions', '--json']).stdout) as Array<{
+    cost: number
+    unpriced: number
+  }>
+  assert.ok(rows.every((row) => row.cost > 0), 'every session priced')
+  assert.ok(rows.every((row) => row.unpriced === 0), 'nothing in the fixture is unpriced')
+  assert.doesNotMatch(table.stdout, /have no rate for their model/)
+})
+
+test('a session with a model nobody priced is marked, not reported as free', () => {
+  const env = makeSource(1)
+  // The rate table ships published prices; a model outside it costs something in reality and
+  // nothing in the sum, so the row is marked and the listing says how many rounds are outside.
+  const sourceDir = join(env.claudeDir, 'encoded-project-name')
+  const name = readdirSync(sourceDir)[0]!
+  const file = join(sourceDir, name)
+  writeFileSync(file, readFileSync(file, 'utf8').replaceAll('claude-opus-5', 'model-nobody-priced'))
+  assert.equal(collect(env).status, 0)
+
+  const table = read(env, ['sessions'])
+  assert.equal(table.status, 0)
+  assert.match(table.stdout, /have no rate for their model and are outside COST/)
+  // Nothing in it could be priced, so the row carries the same dash every unmeasured value does
+  // rather than a figure that would read as free.
+  assert.doesNotMatch(table.stdout, /\$\d/)
+  assert.match(table.stdout, /—/)
+
+  const rows = JSON.parse(read(env, ['sessions', '--json']).stdout) as Array<{
+    cost: number
+    unpriced: number
+    rounds: number
+  }>
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!.cost, 0)
+  assert.equal(rows[0]!.unpriced, rows[0]!.rounds)
+})
+
 test('a subagent is collected as its own session, under the one that spawned it', () => {
   const env = makeSource(1, true)
   assert.equal(collect(env).status, 0)

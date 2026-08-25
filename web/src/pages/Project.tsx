@@ -154,6 +154,12 @@ export function Project({ slug }: { slug: string }): ReactElement {
                     <th className="r">Tools</th>
                     <th>Work</th>
                     <TokenHeaders />
+                    <th
+                      className="r"
+                      title="What this session cost at the rates under Settings, worked out per round from its own model's prices and summed. Rounds whose model has no rate are left out, and the row is marked."
+                    >
+                      Cost
+                    </th>
                     <th className="r">Working</th>
                     <th className="r">Elapsed</th>
                   </tr>
@@ -205,6 +211,26 @@ export function Project({ slug }: { slug: string }): ReactElement {
                         )}
                       </td>
                       <TokenCells of={session} />
+                      {/* What is shown is what could be priced. Some rounds unpriced marks the
+                          figure `+`, since it is real but short; none priced shows the same dash
+                          every unmeasured value does, rather than a total that would read as free. */}
+                      <td
+                        className="r num"
+                        title={
+                          session.unpriced === 0
+                            ? undefined
+                            : `${session.unpriced} of ${session.rounds} rounds have no rate for their model and are outside this`
+                        }
+                      >
+                        {session.unpriced === session.rounds ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          <>
+                            {money(session.cost)}
+                            {session.unpriced > 0 ? <span className="muted">+</span> : null}
+                          </>
+                        )}
+                      </td>
                       <td className="r num dim">{duration(session.active_ms)}</td>
                       <td className="r num dim">{duration(session.elapsed_ms)}</td>
                     </tr>

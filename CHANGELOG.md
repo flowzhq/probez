@@ -29,6 +29,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
   Project session counts go up accordingly, and so do token totals — the work was always there.
 
+- **The sessions table says what each session cost.** A `COST` column in `probez sessions` and in
+  the view's sessions table, worked out per round from its own model's rates and summed — the same
+  figure the session page already showed one level down, now visible across the whole list, and
+  totalled under it. Rates are the ones under Settings in `probez view`.
+
+  A session with rounds whose model has no rate is marked `+`, since the figure is real but short;
+  one where none of them has a rate shows `—` rather than a total that would read as free. The
+  listing says how many rounds are outside, the way `analyze` names its unpriced models. `--json`
+  carries `cost` as it always did, and now `unpriced` beside it.
+
 ### Changed
 
 - **A session id is printed and typed as what identifies it, not as its first eight characters.**
@@ -54,6 +64,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 - **A subagent's own id could not be typed into `probez task` or `probez round`.** The shape those
   selectors accept before the `#` admitted hex and dashes only, so `504799b8/a8261ff4#1.0` — what
   the tables print — was rejected as malformed.
+
+- **`npm run build` now typechecks `web/` as well as `src/`.** `vite build` does not, and nothing
+  else did either, so a payload field the server had grown and the page was already reading could
+  go untyped indefinitely. It caught two on the way in.
 
 - **A raw NUL byte in `QuestionPanel.tsx` made the file invisible to every grep over `web/src`.**
   The key separator in `signature` was written as the byte itself rather than as `\0`, which is the
