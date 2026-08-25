@@ -5,6 +5,7 @@ import {
   chmod,
   copyFile,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -484,6 +485,46 @@ export async function summarize(project: Project, dataDir: string): Promise<Summ
   }
 }
 
+/** How much of an archived copy to read before deciding which agent wrote it. */
+const SNIFF_BYTES = 64 * 1024
+
+/**
+ * Which agent wrote an archived session, for the one case the store cannot simply look up.
+ *
+ * Normally the source is recorded beside the size and mtime. It is missing only for a copy whose
+ * state entry is gone, and the id cannot settle it: both agents name a subagent's transcript for
+ * the path it sits at, so a `/` in the id says a subagent wrote it and nothing about which agent
+ * did. The records themselves are unambiguous — Claude rows are typed and carry a `sessionId`,
+ * Cursor rows carry a `role` and nothing else — so read one.
+ */
+async function sniffSource(file: string): Promise<AgentSource> {
+  const handle = await open(file, 'r').catch(() => null)
+  if (handle === null) return 'claude-code'
+  let text: string
+  try {
+    const buffer = Buffer.alloc(SNIFF_BYTES)
+    const { bytesRead } = await handle.read(buffer, 0, SNIFF_BYTES, 0)
+    text = buffer.subarray(0, bytesRead).toString('utf8')
+  } finally {
+    await handle.close()
+  }
+  // The last line may be cut mid-record; parsing it throws and is skipped below.
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue
+    let record: unknown
+    try {
+      record = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (!record || typeof record !== 'object') continue
+    const row = record as Record<string, unknown>
+    if (typeof row.type === 'string' || typeof row.sessionId === 'string') return 'claude-code'
+    if (typeof row.role === 'string') return 'cursor'
+  }
+  return 'claude-code'
+}
+
 /**
  * The sessions a rebuild has to read: the ones still in the agent's directory, plus the ones only
  * this store still has.
@@ -516,11 +557,7 @@ async function withArchived(
     if (info === null) continue
     const recorded = stored?.sessions[id]?.source
     const source: AgentSource =
-      recorded !== undefined && isAgentSource(recorded)
-        ? recorded
-        : id.includes('/')
-          ? 'cursor'
-          : 'claude-code'
+      recorded !== undefined && isAgentSource(recorded) ? recorded : await sniffSource(file)
     out.push({ id, file, size: info.size, mtimeMs: info.mtimeMs, source })
     known.add(id)
   }

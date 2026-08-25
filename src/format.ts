@@ -1,5 +1,7 @@
 import { homedir, tmpdir } from 'node:os'
 
+import { sessionSegments } from './agents/paths.js'
+
 export function shorten(path: string): string {
   const home = homedir()
   if (path === home || path.startsWith(home + '/')) return '~' + path.slice(home.length)
@@ -8,6 +10,21 @@ export function shorten(path: string): string {
     if (path.startsWith(tmp + '/')) return '$TMPDIR' + path.slice(tmp.length)
   }
   return path
+}
+
+/**
+ * A session as it is printed and typed back.
+ *
+ * `dbb93d13` for a session someone opened, `dbb93d13/a8261ff4` for a subagent that ran under it:
+ * the eight characters the tables have always shown, and for a subagent the session it belongs to
+ * as well. Printing only its own eight would name it after the session that spawned it, since a
+ * subagent's id begins with that session's — every subagent of one session would print as the
+ * same id, and as the same id as its parent.
+ */
+export function shortSession(id: string): string {
+  return sessionSegments(id)
+    .map((part) => part.slice(0, 8))
+    .join('/')
 }
 
 /**

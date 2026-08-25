@@ -34,7 +34,7 @@
   "scripts": {
     "build": "npm run build:cli && npm run build:web",
     "build:cli": "tsc",
-    "build:web": "vite build",
+    "build:web": "tsc -p web/tsconfig.json --noEmit && vite build",
     "dev": "vite",
     "test": "npm run build && node --test dist/test/*.test.js",
     "prepare": "npm run build",

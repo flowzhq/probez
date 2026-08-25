@@ -10,7 +10,9 @@ response within a few business days.
 
 probez reads real work sessions, so the data-handling rules matter as much as the code. It reads
 Claude Code session files under `~/.claude/projects` and Cursor agent transcripts under
-`~/.cursor/projects`.
+`~/.cursor/projects`. Both agents write a subagent's run to a `subagents/` directory beside the
+session that spawned it, and those are read too — a subagent's transcript is a session like any
+other here, and is copied into the store on the same terms as the rest.
 
 **Nothing leaves your machine, unless you set up a reader and press explain.** probez never opens a
 connection to anything. There is no telemetry, no account, no upload path, and no remote

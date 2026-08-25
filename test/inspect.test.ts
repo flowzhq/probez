@@ -331,6 +331,93 @@ test('a session prefix resolves when it is unique, and names the candidates when
   assert.throws(() => matchSession(ids, 'zz'), SelectorError)
 })
 
+test('a session named on its own means that session, not the subagents under it', () => {
+  const parent = 'aaaa1111-2222'
+  const first = `${parent}/subagents/agent-b1111111`
+  const second = `${parent}/subagents/agent-b2222222`
+  const ids = [parent, first, second]
+
+  // Eight characters have always meant the session those characters name, and go on meaning it
+  // however many subagents ran underneath.
+  assert.equal(matchSession(ids, 'aaaa1111'), parent)
+  // A subagent is named the way it is printed: the session, then which subagent.
+  assert.equal(matchSession(ids, 'aaaa1111/b1111111'), first)
+  assert.equal(matchSession(ids, 'aaaa1111/b2'), second)
+  // The `agent-` on the file name is plumbing, and typing it is not required — nor is it wrong.
+  assert.equal(matchSession(ids, first), first)
+  assert.throws(() => matchSession(ids, 'aaaa1111/b'), (error: Error) => {
+    assert.ok(error instanceof SelectorError)
+    assert.match(error.message, /matches 2 sessions: aaaa1111\/b1111111, aaaa1111\/b2222222/)
+    return true
+  })
+})
+
+test('a session says what it cost, and how much of it went unpriced', () => {
+  const rows = sessionRows(
+    [
+      {
+        ...ROUND_DEFAULTS,
+        session: 'aaaa1111',
+        id: 'm1',
+        task: 1,
+        model: 'claude-opus-5',
+        in_tokens: 1_000_000,
+        in_uncached: 1_000_000,
+        out_tokens: 0,
+      },
+      // No rate for this one, so it adds nothing to the total and something in reality. Counted
+      // rather than folded in, or the session reads as costing only what happened to be priced.
+      {
+        ...ROUND_DEFAULTS,
+        session: 'aaaa1111',
+        id: 'm2',
+        task: 1,
+        model: 'some-model-nobody-priced',
+        in_tokens: 1_000_000,
+        in_uncached: 1_000_000,
+        out_tokens: 0,
+      },
+    ],
+    PRICING,
+  )
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!.cost, 10)
+  assert.equal(rows[0]!.unpriced, 1)
+  assert.equal(rows[0]!.rounds, 2)
+})
+
+test('a subagent session can be named in a task or round selector', () => {
+  // The part before the `#` is a session, and a subagent's session id is a path with `subagents`
+  // and an `agent-` prefix in it. A selector shape that only admitted hex would reject its own
+  // printed id, which is the one thing every id has to survive.
+  const id = 'aaaa1111/subagents/agent-b1111111'
+  const delegated = [
+    { ...ROUND_DEFAULTS, session: id, agent: 'sub' as const, id: 's1', task: 1, round: 0 },
+    { ...ROUND_DEFAULTS, session: id, agent: 'sub' as const, id: 's2', task: 1, round: 1 },
+  ]
+  assert.ok(looksLikeSelector(`${id}#1.0`))
+  assert.ok(looksLikeSelector('aaaa1111/b1111111#1'))
+  assert.deepEqual(findTask(delegated, 'aaaa1111/b1111111#1').map((r) => r.id), ['s1', 's2'])
+  assert.equal(findRound(delegated, `${id}#1.1`).id, 's2')
+})
+
+test('a session row says whether a subagent ran it', () => {
+  const rows = sessionRows(
+    [
+      { ...ROUND_DEFAULTS, session: 'aaaa1111', agent: 'main', id: 'm1', task: 1 },
+      {
+        ...ROUND_DEFAULTS,
+        session: 'aaaa1111/subagents/agent-b1111111',
+        agent: 'sub',
+        id: 's1',
+        task: 1,
+      },
+    ],
+    PRICING,
+  )
+  assert.deepEqual(rows.map((row) => row.agent).sort(), ['main', 'sub'])
+})
+
 test('an id is told apart from a project name by its shape', () => {
   assert.ok(looksLikeSelector('7'))
   assert.ok(looksLikeSelector('0'))

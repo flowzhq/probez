@@ -173,6 +173,15 @@ function hostAllowed(req: IncomingMessage, port: number): boolean {
   return host === `${HOST}:${port}` || host === `localhost:${port}`
 }
 
+/** One path segment as it was written, or as-is when it is not valid percent-encoding. */
+function decodeSegment(part: string): string {
+  try {
+    return decodeURIComponent(part)
+  } catch {
+    return part
+  }
+}
+
 async function serveAsset(res: ServerResponse, pathname: string): Promise<void> {
   const root = resolve(assetRoot())
   const wanted = pathname === '/' ? '/index.html' : pathname
@@ -519,7 +528,14 @@ export async function startServer(options: ServeOptions): Promise<Serving> {
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', `http://${HOST}:${port}`)
-    const parts = url.pathname.split('/').filter((part) => part !== '').slice(1)
+    // A session id can be a path — a subagent's transcript is named for where it sits — so the
+    // client percent-encodes each id and the segments are decoded back here. `pathname` keeps the
+    // escapes, so splitting on `/` still lands on the route's own separators and not on an id's.
+    const parts = url.pathname
+      .split('/')
+      .filter((part) => part !== '')
+      .slice(1)
+      .map(decodeSegment)
     const isApi = url.pathname.startsWith('/api/') || url.pathname === '/api'
 
     // GET everywhere, and POST on the one route that writes. Anything else has no implementation

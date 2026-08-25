@@ -10,7 +10,7 @@ Requires Node 20 or newer. There is nothing else to install beyond the dev depen
 git clone https://github.com/flowzhq/probez.git
 cd probez
 npm install
-npm run build         # tsc, then vite build
+npm run build         # tsc, then a web typecheck and vite build
 npm test              # build, then node --test
 ```
 
@@ -19,9 +19,11 @@ npm test              # build, then node --test
 source art changes. It has a note at the top about why the dark logo is derived rather than used.
 
 The build has two halves and either can be run alone. `npm run build:cli` is `tsc`, emitting the
-CLI to `dist/src`. `npm run build:web` is `vite build`, emitting the frontend `probez view` serves
-to `dist/view`. `npm test` needs both, because one test asserts the served page loads nothing from
-off-origin.
+CLI to `dist/src`. `npm run build:web` typechecks `web/` against its own tsconfig and then runs
+`vite build`, emitting the frontend `probez view` serves to `dist/view`. The typecheck is there
+because `vite build` does not do one: without it a payload field the server had grown and the page
+was already reading would go untyped indefinitely. `npm test` needs both halves, because one test
+asserts the served page loads nothing from off-origin.
 
 Run the local build against your own sessions:
 
@@ -123,12 +125,14 @@ Tests use the built-in `node:test` runner, with no framework, and they run again
 output in `dist/test/`, which is why `npm test` builds first.
 
 - `test/extract.test.ts` covers the extractor with a golden test over a fixture session in
-  `test/fixtures/`. If you change how a round is assembled, add a fixture case that fails without
-  your change.
+  `test/fixtures/`, including a subagent's own transcript beside the older layout that interleaved
+  one into its parent's file. If you change how a round is assembled, add a fixture case that fails
+  without your change.
 - `test/extract-cursor.test.ts` covers Cursor transcripts: one round per assistant row, tasks from
   `<user_query>`, synthetic tool ids, null usage, and subagent paths.
-- `test/discover.test.ts` covers Cursor nested transcripts and merging Claude and Cursor checkouts
-  of the same path into one project.
+- `test/discover.test.ts` covers Cursor nested transcripts, Claude's subagent transcripts under the
+  session that spawned them, and merging Claude and Cursor checkouts of the same path into one
+  project.
 - `test/inspect.test.ts` covers the read side — session, task and tool aggregation, the work
   taxonomy's fractional split, the trace and its phase smoothing, round filters, and selector
   parsing — against rounds built in the test file itself, so it needs no fixture.

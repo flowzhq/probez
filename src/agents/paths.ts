@@ -56,6 +56,42 @@ function existingPath(parts: string[], i: number, chosen: string[]): string | nu
 }
 
 /**
+ * What separates a subagent from the session that spawned it, in a session id.
+ *
+ * Both agents write a subagent's transcript to a `subagents/` directory beside that session, and a
+ * session id is the transcript's path relative to the project's transcript root — so this one
+ * separator is what tells the two kinds of session apart, for either agent.
+ */
+const SUBAGENT_SEPARATOR = /[/\\]subagents[/\\]/
+
+/**
+ * The parts of a session id that identify it, with the plumbing dropped.
+ *
+ * `<uuid>` is one part. `<uuid>/subagents/agent-<id>` is two: the session, then the subagent. The
+ * separator and the `agent-` prefix Claude puts on the file name say only that this is a subagent,
+ * which the shape of the answer already says, so neither is kept.
+ */
+export function sessionSegments(id: string): string[] {
+  return id.split(SUBAGENT_SEPARATOR).map((part, i) => (i === 0 ? part : part.replace(/^agent-/, '')))
+}
+
+/** Whether a session id names a subagent's run rather than one someone opened. */
+export function isSubagent(id: string): boolean {
+  return SUBAGENT_SEPARATOR.test(id)
+}
+
+/**
+ * The session a subagent ran under, or null for a session nobody delegated.
+ *
+ * Read from the id rather than from the transcript, so it costs nothing and answers the same way
+ * for both agents. A record that names its parent — Claude's `sessionId` — agrees with it.
+ */
+export function parentSession(id: string): string | null {
+  if (!isSubagent(id)) return null
+  return id.split(SUBAGENT_SEPARATOR)[0] ?? ''
+}
+
+/**
  * A session id as a file name under `sessions/`.
  *
  * Cursor ids are relative paths (`uuid/subagents/sub-uuid`). Written as-is they would create

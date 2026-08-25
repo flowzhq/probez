@@ -1,6 +1,7 @@
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
+import { isSubagent } from './agents/paths.js'
 import { applyTiming, contentChars, inputChars, toText, truncateInput } from './extract.js'
 import type { HeadHistory } from './git.js'
 import type { Round, RoundEvent, ToolCall } from './types.js'
@@ -19,10 +20,6 @@ function userQueryOf(text: string): string | null {
   if (match === null) return null
   const query = match[1]!.trim()
   return query === '' ? null : query
-}
-
-function isSubagent(sessionId: string): boolean {
-  return sessionId.includes('/subagents/') || sessionId.includes('\\subagents\\')
 }
 
 /**
