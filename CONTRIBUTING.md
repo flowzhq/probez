@@ -174,6 +174,24 @@ output in `dist/test/`, which is why `npm test` builds first.
   a shell, that a reader which fails, hangs, vanishes or answers in prose comes back as a message,
   that a `kind` outside the table becomes a named hole rather than a guess, and that a reading is
   kept, reused without running anything, and re-asked only when asked for.
+- `test/query.test.ts` covers the query language: precedence and negation, that printing a query
+  and parsing it back gives the same tree, that every prefix of a real query parses without
+  throwing, that an unfinished atom is neutral while a finished wrong one matches nothing, and that
+  the flags on `rounds` compile to the tree a typed query produces — which is what keeps there from
+  being two filter engines.
+- `test/search.test.ts` covers what a query comes to: the share against the scope it was matched
+  in, the grouped rows carrying the size of the whole group beside what matched, and that a task
+  keeps its name when the round that named it is not among the matches.
+- `test/searchindex.test.ts` is mostly one property, asserted query by query over every kind of
+  field: the index and the rounds answer identically. Beside it, the cases that all mean "read the
+  rounds instead" — no index, a stale one, one from a version this probez does not know, and a
+  half-written one — and that a torn line keeps its place and matches nothing.
+- `test/asking.test.ts` covers reading a sentence as a query. The refusals are the point: a query
+  probez cannot read is quoted and thrown rather than run, an answer with no query in it says what
+  the reader actually said, and a refused answer leaves nothing behind. Beside them, that the prompt
+  carries the schema and the question and nothing else, that it is bounded, and that a query with no
+  *filter* in it is kept — `in:sessions sort:cost limit:1` is the right answer to "what is the most
+  expensive session", and refusing it was a real bug.
 - `test/view.test.ts` runs the local server in-process against a temporary store. The refusals are
   the reason it exists: no token, wrong `Host`, and the method rules — every write path refuses
   `GET` and every read path refuses everything but it. Beside them sit the assertion that the store
@@ -182,6 +200,9 @@ output in `dist/test/`, which is why `npm test` builds first.
   lists, and a delete additionally has to be shown unable to point outside `<data-dir>/projects/`.
   `explain` is in them too, plus its own: that it refuses without the token, that it says so rather
   than falling back when no reader is configured, and that every refusal leaves the store untouched.
+  So is `compile`, which is the other route that starts a program, on the same terms. Searching and
+  its facets are on the read side of all of it, including the byte-identical assertion — answering a
+  query writes nothing, not even the index it is answered from.
 
 If you hit a real session that probez parses incorrectly, the most useful contribution is a minimal
 fixture reproducing it. Please strip anything private before attaching it.

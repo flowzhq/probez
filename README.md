@@ -206,7 +206,7 @@ probez  flowz-mcp  ~/Dev/workspace/flowz-mcp
   span       Aug 11 – Aug 18, 2026
   top tools  Bash 292 · Edit 125 · Write 91 · Read 84 · mcp__codebase-memory-mcp__query_graph 12
 
-  +652 rounds, 9 sessions read
+  up to date, 9 sessions unchanged
   → ~/.probez/projects/flowz-mcp-75ad21ac/rounds.jsonl
 ```
 
@@ -218,12 +218,12 @@ $ probez sessions flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   SESSION    ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   14 days ago
-  0b2cc149       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   14 days ago
+  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   15 days ago
+  0b2cc149       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   15 days ago
   51cced08      134      4  131          24.3M   138.1K     $22.57  Impl 39%   14 days ago
   be254122       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  14 days ago
   bfd594d9       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  14 days ago
-  6ffef9bc       33      4  30            2.2M    17.5K      $2.19  Recon 52%  9 days ago
+  6ffef9bc       33      4  30            2.2M    17.5K      $2.19  Recon 52%  10 days ago
   c21c7448      146      2  145 ✗5       22.8M   112.6K     $18.83  Recon 43%  9 days ago
   069d8593       31      1  30 ✗3         1.9M    11.3K      $1.76  Recon 72%  8 days ago
 
@@ -241,12 +241,12 @@ $ probez sessions flowz-agentic-sdlc --limit 6
   flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
   SESSION            AGENT ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  6b45d8d7/a5420a73  sub        7      1  17          182.4K     5.8K      $0.84  Recon 83%  25 days ago
-  6b45d8d7/ab80aaad  sub        8      1  16          197.9K     5.4K      $0.86  Recon 86%  25 days ago
-  6b45d8d7           main     122      8  234 ✗3       58.6M   139.5K     $76.13  Docs 29%   25 days ago
-  15ac167d/a29da1c6  sub        7      1  19          135.0K     9.1K      $0.94  Recon 93%  25 days ago
-  15ac167d/ad108a22  sub       18      1  38          515.5K    17.7K      $1.99  Plan 65%   25 days ago
-  15ac167d           main     150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   25 days ago
+  6b45d8d7/a5420a73  sub        7      1  17          182.4K     5.8K      $0.84  Recon 83%  26 days ago
+  6b45d8d7/ab80aaad  sub        8      1  16          197.9K     5.4K      $0.86  Recon 86%  26 days ago
+  6b45d8d7           main     122      8  234 ✗3       58.6M   139.5K     $76.13  Docs 29%   26 days ago
+  15ac167d/a29da1c6  sub        7      1  19          135.0K     9.1K      $0.94  Recon 93%  26 days ago
+  15ac167d/ad108a22  sub       18      1  38          515.5K    17.7K      $1.99  Plan 65%   26 days ago
+  15ac167d           main     150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   26 days ago
 
   showing 6 of 23 sessions · 3744 rounds · $941.53, --limit 0 for all
   `probez session <id>` shows one of them, task by task.
@@ -430,29 +430,31 @@ back a *query* — which probez parses, refuses outright if it does not read, pr
 answers the same way it answers one you typed:
 
 ```console
-$ probez find --ask 'which sessions had the most failing shell commands' probez --limit 5
+$ probez find --ask 'which sessions had the most failing shell commands' flowz-mcp
 
   probez read "which sessions had the most failing shell commands" as
 
     tool:Bash is:error in:sessions sort:errors
 
-  claude: "failing shell commands" is rounds whose Bash calls the harness reported as
-  failed, rolled up per session and ranked by that error count
+  claude: "failing shell commands" is a round whose Bash call the harness reported as
+  failed, and "which sessions had the most" is a count per session ranked by that error
+  count
 
   Run the query above to answer this again without asking.
 
-  probez  ~/Dev/workspace/probez
+  flowz-mcp  ~/Dev/workspace/flowz-mcp
 
-  62 rounds · $7.66 · 1.1% of rounds · 0.9% of cost · 25 sessions · 62 tool errors · 62% reconstruction
+  8 rounds · $0.70 · 1.2% of rounds · 0.8% of cost · 6 sessions · 8 tool errors · 40% reconstruction
 
   SESSION      ROUNDS     OF       COST     TIME  LAST
-  59921bd4          8    877      $2.10     1.1m  10 days ago
-  0bf831c7          5    109      $0.45     1.2m  6 days ago
-  3e5a2d62          4    277      $0.65    39.4s  3 hr ago
-  c86d3df9          4    271      $0.46    22.2s  17 hr ago
-  1b9a2b6a          4    133      $0.42    24.4s  10 days ago
+  069d8593          3     31      $0.18    29.4s  8 days ago
+  0bfa7fe3          1    127      $0.21    26.5s  15 days ago
+  bfd594d9          1     73      $0.11     4.6s  14 days ago
+  c21c7448          1    146      $0.10    23.8s  10 days ago
+  be254122          1     21      $0.05     2.2s  14 days ago
+  0b2cc149          1     87      $0.04     8.2s  15 days ago
 
-  showing 5 of 25 sessions, --limit 0 for all
+  6 sessions
 ```
 
 **A model chooses which rounds to look at, and never what any of them came to.** Every figure above
@@ -609,6 +611,12 @@ $ probez question flowz-mcp 0b2cc149#1.2
 
   question 0b2cc149#1.2 → 1.4 · 3 calls · refs — where is this used
   asked about enqueuer, status
+  read as  Where does the Enqueuer exist in this codebase — which internal packages
+           reference it, and what do the task docs say about its status?
+           touches, not refs · the same concept word "Enqueuer" is swept across all Go
+           sources under internal/, plus directory listings of indexer/ and githubapp/ and a
+           grep of Status lines in docs/tasks/*.md, gathering code and prose artifacts alike
+           rather than a single symbol's callers · claude
   1 place · 1 re-asked · 116.1K in · 508 out · 2.2s
 
   ROUND   REACHED ASKED                     CALL

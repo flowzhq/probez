@@ -1,6 +1,6 @@
 {
   "name": "probez-cli",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "See what your coding agents actually did. Every session, measured locally.",
   "keywords": [
     "claude-code",
