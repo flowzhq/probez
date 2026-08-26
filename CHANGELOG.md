@@ -103,6 +103,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   Two new endpoints, both `GET` and both refusing `POST`, because answering a query writes nothing —
   not even the index, which `Sync` builds beside the analysis cache: `/api/search` and `/api/facets`.
 
+- **`probez find --ask`, and an Ask button in the view: a question instead of a query.** Hands
+  what you typed to the command in `<data-dir>/reader.json` — the same one `explain` uses, your own
+  LLM, hosted or local — and gets back **a query**, not an answer. probez parses it, refuses it
+  outright if it does not read cleanly, shows it, and only then answers it by exactly the path a
+  typed query takes.
+
+  ```
+  $ probez find --ask "which sessions had the most failing shell commands"
+
+    probez read "which sessions had the most failing shell commands" as
+
+      tool:Bash is:error in:sessions sort:errors
+  ```
+
+  That distinction is the whole of why this is allowed under the no-outbound-network rule: **a model
+  chooses which rounds to look at and never what any of them came to.** Every total, share and row
+  stays derived from the rounds, so a result compiled from a sentence is re-runnable by someone with
+  no reader configured and comes out identical — and the query is one you can correct by hand.
+
+  What is sent is the field table, the values each field can take, and a sample of the names this
+  store holds (tool names, command names, model names), with your question. About five kilobytes,
+  and it does not grow with the store. **Nothing you typed to the agent and nothing any tool
+  returned, ever.** `--prompt` prints exactly what would go and runs nothing, which is also how to
+  use this with a chat already open. With no `reader.json` there is nothing probez can run and every
+  caller says so. Answers are held in `<data-dir>/asked.json` and keyed by the store they were asked
+  of, so the same question is not paid for twice; `--again` asks afresh.
+
+  In the view: **Ask** beside the query box, or ⌘↵. What comes back lands in the bar to be checked
+  and edited, and the URL is an ordinary search URL with the question carried alongside as a caption.
+
+  This is the second thing in probez that starts a program, and CONTRIBUTING § rule 2 now names both
+  callers of `src/reader.ts` and what would have to be argued to add a third.
+
 ### Changed
 
 - **Free text matches a word or the start of one, rather than any substring anywhere.** `tok` finds
@@ -121,6 +154,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   `subCommands` moved to `bash.ts`, beside the parser it calls, and is re-exported from `inspect.ts`.
   `RoundFilter` moved to `query.ts`, beside the compiler that reads it, and is re-exported the same
   way.
+
+### Fixed
+
+- **A search URL with no `in=` no longer overrode a query's own `in:`.** The view defaulted the
+  entity to `rounds` when the URL did not name one, which silently discarded the grouping of any
+  query carrying its own — including every query `--ask` compiles. Absent now means "whatever the
+  query says", and the tabs write it explicitly.
+
+- **`/api/compile` refuses `GET`**, like every other route that writes or starts a program. It was
+  reachable as a GET and answered with a 400 rather than a 405.
 
 ## [0.3.8] - 2026-08-25
 

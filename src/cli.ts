@@ -3,6 +3,16 @@ import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
+import {
+  AskingError,
+  compileSentence,
+  // `reading.ts` exports a `promptFor` too, and cli.ts uses both: one prints what `explain` would
+  // send about a question, this one what `find --ask` would send about a sentence.
+  promptFor as askPromptFor,
+  queryOf,
+  vocabularyOf,
+} from './asking.js'
+import type { Asked } from './asking.js'
 import { COMMAND_KINDS } from './bash.js'
 import { CATEGORIES, classifyCall, isCategory, isTarget, TARGETS } from './classify.js'
 import {
@@ -62,7 +72,7 @@ import {
 } from './query.js'
 import type { Query } from './query.js'
 import type { Question } from './question.js'
-import { readerFile, readReader } from './reader.js'
+import { readerFile, ReaderError, readReader } from './reader.js'
 import {
   explainQuestion,
   isStale,
@@ -172,7 +182,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   questions: ['limit', 'session', 'task', 'kind', 'min-calls'],
   question: ['session'],
   explain: ['session', 'again', 'prompt'],
-  find: ['limit', 'in', 'sort', 'plan'],
+  find: ['limit', 'in', 'sort', 'plan', 'ask', 'prompt', 'again'],
   tools: ['limit', 'kinds'],
   analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified', 'deep'],
   view: ['port', 'no-open'],
@@ -247,6 +257,10 @@ Search
   --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT}, 0 for all)
   --plan                       Print what probez made of the query and run nothing
   --json                       The whole result: totals, share, distribution, rows
+  --ask                        Read the words as a question and let your own LLM write the
+                               query. See below
+  --prompt                     With --ask: print what would be sent and run nothing
+  --again                      With --ask: ask again rather than using the answer already held
 
   Bare words are free text, over the prompts, the prose, the commands and the paths. A
   \`key:value\` filters, \`-\` negates, one after another means and, \`OR\` is the other one,
@@ -269,6 +283,22 @@ Search
 
   The flags on \`rounds\` are the same language underneath — \`--tool Bash\` is \`tool:Bash\` —
   so the two cannot come to disagree about what a tool name is.
+
+  \`--ask\` is the other way in, for when you would rather not learn the language:
+
+    probez find --ask "which sessions had the most failing shell commands"
+
+  probez writes the field table, the values each field can take, and a sample of the names this
+  store holds — tool names, command names, model names — with your question, to the command in
+  \`<data-dir>/reader.json\`, the same one \`explain\` uses. What comes back is a **query**, not
+  an answer: probez parses it, refuses it outright if it does not read, prints it, and then
+  answers it the way it answers one you typed. So a model chooses which rounds to look at and
+  never what any of them came to — every number stays derived from the rounds, and the query it
+  wrote is one you can correct by hand and run again without asking.
+
+  Nothing you typed to the agent and nothing any tool returned is ever sent. \`--prompt\` prints
+  exactly what would go and runs nothing, which is also how to use this with a chat you already
+  have open. With no reader configured there is nothing probez can run, and it says so.
 
   Free text matches a word or the start of one, so \`tok\` finds \`tokens\` and \`oken\` does not,
   and \`"npm test"\` does not find \`pnpm test\`. That boundary is what lets a search index exist:
@@ -1602,6 +1632,9 @@ function printFound(result: SearchResult): void {
   }
   parts.push(`${result.totals.sessions} session${result.totals.sessions === 1 ? '' : 's'}`)
   if (result.totals.projects > 1) parts.push(`${result.totals.projects} projects`)
+  // Named where there are any, because a query about failures has no column for them in most of
+  // these tables and the count is the thing it was asking about.
+  if (result.totals.errors > 0) parts.push(`${result.totals.errors} tool errors`)
   // A share of the work that carried a label, not of every matched round: rounds of pure prose
   // carry none, and counting them in the denominator would understate every category at once.
   if (result.top !== null) {
@@ -1717,11 +1750,21 @@ async function runFind(
     limit: number | undefined
     sort: string | undefined
     plan: boolean
+    ask: boolean
+    prompt: boolean
+    again: boolean
     json: boolean
   },
 ): Promise<void> {
   if (text === undefined || text.trim() === '') {
-    fail('find needs something to look for, as `probez find "tool:Bash is:error"`. `probez help` lists the fields')
+    fail(
+      options.ask
+        ? 'find --ask needs a question, as `probez find --ask "where did last week go"`'
+        : 'find needs something to look for, as `probez find "tool:Bash is:error"`. `probez help` lists the fields',
+    )
+  }
+  if (!options.ask && options.prompt) {
+    fail('--prompt goes with --ask: it prints the question probez would send, and sends nothing')
   }
 
   if (options.entity !== undefined && !isEntity(options.entity)) {
@@ -1734,7 +1777,8 @@ async function runFind(
   // one that survives being copied out of a shell and into a URL.
   const written = options.entity === undefined ? '' : ` in:${options.entity}`
   const sorted = options.sort === undefined ? '' : ` sort:${options.sort}`
-  const query = parse(`${text}${written}${sorted}`)
+  // A sentence is not a query, so it is not parsed as one; `--ask` replaces this below.
+  let query = options.ask ? parse('') : parse(`${text}${written}${sorted}`)
 
   if (options.plan) {
     // What was read, and nothing run. The counterpart of `explain --prompt`: a way to find out what
@@ -1759,17 +1803,70 @@ async function runFind(
     )
   }
 
+  // A sentence becomes a query here and then stops being special: what runs below is the query,
+  // through the same evaluator a typed one goes through, and every number under it is derived from
+  // the rounds. See `asking.ts` for why that is the whole of the arrangement.
+  let read: Asked | null = null
+  let ranReader = false
+  if (options.ask) {
+    const vocabulary = vocabularyOf(corpora.map((one) => one.index))
+    if (options.prompt) {
+      console.log(askPromptFor(text!, vocabulary))
+      return
+    }
+    const reader = await readReader(dataDir)
+    if (reader === null) {
+      fail(
+        'there is no reader configured, so there is nothing to ask. Write one into ' +
+          `${shorten(readerFile(dataDir))} — {"command": ["claude", "-p"]} — or use ` +
+          '`--prompt` to print the question and answer it yourself',
+      )
+    }
+    try {
+      const compiled = await compileSentence(dataDir, reader, text!, vocabulary, {
+        again: options.again,
+      })
+      read = compiled.asked
+      ranReader = compiled.ran
+    } catch (error) {
+      if (error instanceof AskingError || error instanceof ReaderError) fail(error.message)
+      throw error
+    }
+    query = parse(`${queryOf(read)}${written}${sorted}`)
+  }
+
   const pricing = await readPricing(dataDir)
   const limit = options.limit ?? DEFAULT_LIMIT
   const result = await search(corpora, query, { pricing, limit })
 
   if (options.json) {
-    console.log(JSON.stringify(result, null, 2))
+    console.log(JSON.stringify(read === null ? result : { read, ...result }, null, 2))
     return
   }
 
   const width = Math.max(60, Math.min(process.stdout.columns ?? 100, 120)) - 8
   const projects = corpora.length > 1
+  // What the sentence was read as, before anything it found. The query is the thing to check, so
+  // it is the thing printed — and it is typeable, so a reading that is wrong can be corrected by
+  // hand rather than asked again.
+  if (read !== null) {
+    console.log('')
+    console.log(`  probez read "${clip(read.sentence, 68)}" as`)
+    console.log('')
+    console.log(`    ${print(query)}`)
+    console.log('')
+    if (read.why !== '') {
+      const said = `${read.by}: ${read.why}`
+      for (const line of wrap(said, width - 4)) console.log(`  ${line}`)
+      console.log('')
+    }
+    console.log(
+      ranReader
+        ? '  Run the query above to answer this again without asking.'
+        : `  Held from an earlier ask, ${ago(Date.parse(read.at))}. \`--again\` asks afresh.`,
+    )
+  }
+
   const only = corpora[0]
   if (!projects && only !== undefined) {
     console.log('')
@@ -1971,6 +2068,7 @@ async function main(): Promise<void> {
         in: { type: 'string' },
         sort: { type: 'string' },
         plan: { type: 'boolean', default: false },
+        ask: { type: 'boolean', default: false },
         agent: { type: 'string' },
         errors: { type: 'boolean', default: false },
         limit: { type: 'string' },
@@ -2086,6 +2184,9 @@ async function main(): Promise<void> {
       limit: asCount(values.limit, 'limit'),
       sort: values.sort,
       plan: values.plan === true,
+      ask: values.ask === true,
+      prompt: values.prompt === true,
+      again: values.again === true,
       json: values.json === true,
     })
     return

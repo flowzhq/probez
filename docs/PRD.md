@@ -27,12 +27,21 @@ These are choices, not omissions:
   shipped in v0.2 against a schema that was already stable, and needed no new collection.
 - **Nothing leaves the machine on its own.** No network calls, no telemetry, no account, no upload.
   probez opens no socket, and that is a property of the codebase rather than a setting. There is one
-  way for anything to leave, and it is shaped so that property survives: `probez explain` runs a
-  command *the person wrote into a config file* — their own LLM, hosted or local —
-  and writes one question's calls to its stdin. probez is not the thing making the connection, it
-  never runs unasked, there is no default command to fall back to, and `--prompt` — *copy prompt* in
-  the view — hands over exactly what would be sent while running nothing, so the reading can be had
-  from a chat already open without probez starting anything at all. See CONTRIBUTING § rule 2.
+  way for anything to leave, and it is shaped so that property survives: probez runs a command *the
+  person wrote into a config file* — their own LLM, hosted or local — and writes to its stdin.
+  probez is not the thing making the connection, it never runs unasked, there is no default command
+  to fall back to, and `--prompt` — *copy prompt* in the view — hands over exactly what would be
+  sent while running nothing, so the answer can be had from a chat already open without probez
+  starting anything at all.
+
+  Two things use it, and both send something named and bounded. `probez explain` sends one
+  question's calls and gets a sentence back. `probez find --ask` sends the query language's field
+  table and a sample of the names this store holds, with the person's question, and gets **a query**
+  back — which probez parses, refuses if it does not read, shows, and only then answers by the same
+  deterministic path a typed query takes. That distinction is the whole of why the second one is
+  allowed: a model chooses which rounds to look at, and never what any of them came to. Every
+  number stays derived from the rounds. See CONTRIBUTING § rule 2, which names both callers and
+  says what would have to be argued to add a third.
 - **Claude Code and Cursor.** Other agents follow once the round schema has proven itself against
   these two formats. Cursor transcripts do not record token usage or model names; those rounds are
   collected and classified, and cost stays blank rather than invented.

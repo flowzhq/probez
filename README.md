@@ -69,6 +69,10 @@ matched with the size of the whole session beside them.
   <img src="docs/view-search.png" alt="probez view: a query, its share of the project, and the sessions it is concentrated in" width="900">
 </p>
 
+**Ask** beside the box (or ⌘↵) hands the words to your own LLM as a question instead, and puts the
+query it wrote into the bar to be checked and edited before you rerun it. The result is an ordinary
+search URL, so it is shareable and re-runnable by anyone with no LLM configured.
+
 Clicking a round opens its task with the query still in the URL, so the trace arrives with the
 rounds that matched lit and the rest of the task drawn around them — the point being *where in the
 task* the matches fall, which a filtered list cannot show. The bar starts scoped to whatever page
@@ -174,7 +178,7 @@ project                a directory an agent was started in    its name, or its p
 | `probez trails` · `trail <id>` | Runs of calls that followed one another into the repository |
 | `probez questions` · `question <id>` | What the agent needed to know, and what finding out cost |
 | `probez explain <id>` | Ask your own LLM what one question was, in a sentence |
-| `probez find "<query>"` | One query over everything collected |
+| `probez find "<query>"` | One query over everything collected, or `--ask` a question |
 | `probez analyze` | Where the work went |
 | `probez view` | Open the profiler |
 | `probez collect` | Collect one project, or every project under a folder |
@@ -183,7 +187,7 @@ project                a directory an agent was started in    its name, or its p
 
 Lists take `--limit` and always say how many rows they withheld. `rounds` filters by `--session`,
 `--task`, `--tool`, `--command`, `--kind`, `--category`, `--target`, `--agent` and `--errors`, and
-`sessions` takes `--agent` too. `find` takes `--all`, `--in`, `--sort` and `--plan`.
+`sessions` takes `--agent` too. `find` takes `--all`, `--in`, `--sort`, `--plan`, `--ask`, `--prompt` and `--again`.
 `analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
 `--outcome`. `questions` takes `--kind` and `--min-calls`, and `explain` takes `--again` and `--prompt`.
 `--source` selects Claude Code, Cursor, or
@@ -418,6 +422,44 @@ $ probez find 'cost:> categoy:test' --plan
   sort      newest first
   limit     50
 ```
+
+**Or don't learn the language.** `--ask` hands your question to the LLM you already have and gets
+back a *query* — which probez parses, refuses outright if it does not read, prints, and only then
+answers the same way it answers one you typed:
+
+```console
+$ probez find --ask 'which sessions had the most failing shell commands' probez --limit 5
+
+  probez read "which sessions had the most failing shell commands" as
+
+    tool:Bash is:error in:sessions sort:errors
+
+  claude: "failing shell commands" is rounds whose Bash calls the harness reported as
+  failed, rolled up per session and ranked by that error count
+
+  Run the query above to answer this again without asking.
+
+  probez  ~/Dev/workspace/probez
+
+  62 rounds · $7.66 · 1.1% of rounds · 0.9% of cost · 25 sessions · 62 tool errors · 62% reconstruction
+
+  SESSION      ROUNDS     OF       COST     TIME  LAST
+  59921bd4          8    877      $2.10     1.1m  10 days ago
+  0bf831c7          5    109      $0.45     1.2m  6 days ago
+  3e5a2d62          4    277      $0.65    39.4s  3 hr ago
+  c86d3df9          4    271      $0.46    22.2s  17 hr ago
+  1b9a2b6a          4    133      $0.42    24.4s  10 days ago
+
+  showing 5 of 25 sessions, --limit 0 for all
+```
+
+**A model chooses which rounds to look at, and never what any of them came to.** Every figure above
+is derived from the rounds by the same code that answers a typed query, so the result is re-runnable
+by someone with no LLM configured at all and comes out identical — and the query it wrote is one you
+can correct by hand. What gets sent is the field table, the values each field can take, and a sample
+of the names this store holds; nothing you typed to the agent and nothing any tool returned. It runs
+the command in `<data-dir>/reader.json`, the same one [`explain`](#explain-the-same-question-read-back-by-your-own-llm)
+uses, and `--prompt` prints exactly what would go while running nothing.
 
 `probez --help` lists every field a query can name, with what each one reads. The filters on
 `rounds` are the same language underneath — `--tool Bash` is `tool:Bash`, down to the comparison —

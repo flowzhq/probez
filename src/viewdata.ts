@@ -57,6 +57,7 @@ import {
   writePricing,
 } from './pricing.js'
 import type { Pricing, Rates } from './pricing.js'
+import { compileSentence, MAX_SENTENCE, queryOf, vocabularyOf } from './asking.js'
 import { isEntity, parse, print } from './query.js'
 import { FIELDS } from './query.js'
 import { fromStore, search } from './search.js'
@@ -1016,6 +1017,71 @@ export async function facetsPayload(
     .sort((a, b) => b.rounds - a.rounds || a.value.localeCompare(b.value))
     .slice(0, FACET_LIMIT)
   return { fields, key, values, scanned: { projects: wanted.length, indexed } }
+}
+
+/* Reading a sentence as a query. The one route here that starts a program. ------------------- */
+
+export interface CompilePayload {
+  sentence: string
+  /** The query it was read as, as probez reads it back — which is what the bar is filled with. */
+  query: string
+  why: string
+  by: string
+  at: string
+  /** False when the answer came out of the cache, so the page can say nothing was run. */
+  ran: boolean
+}
+
+/**
+ * Turn a sentence into a query.
+ *
+ * The only path in the view that starts a program, and the second in probez that does at all. What
+ * comes back is a *query*: probez parses it, refuses it if it does not read cleanly, and hands it
+ * back for the person to see and edit. Running it is the ordinary deterministic path, so nothing a
+ * model says reaches a number. See the note at the top of `asking.ts`.
+ *
+ * A POST for the same reason `explain` is one: a URL that spawns something when it is merely
+ * visited is a URL that can be put in an `<img>` tag on any page you happen to open.
+ */
+export async function compileSentenceFor(dataDir: string, body: unknown): Promise<CompilePayload> {
+  const given = (body ?? {}) as { sentence?: unknown; project?: unknown; again?: unknown }
+  const sentence = typeof given.sentence === 'string' ? given.sentence.trim() : ''
+  if (sentence === '') throw new BadRequest('that has no question in it')
+  if (sentence.length > MAX_SENTENCE) {
+    throw new BadRequest(`a question has to be shorter than ${MAX_SENTENCE} characters`)
+  }
+
+  const reader = await readReader(dataDir)
+  if (reader === null) {
+    throw new BadRequest(
+      'There is no reader configured, so there is nothing to ask. Set one under Settings.',
+    )
+  }
+
+  const slug = typeof given.project === 'string' ? given.project : undefined
+  const stored = await listStored(dataDir)
+  const wanted = slug === undefined ? stored : stored.filter((row) => row.slug === slug)
+  const indexes = await Promise.all(wanted.map((row) => SearchIndex.read(row.dir)))
+
+  // A reader that refuses, times out, or answers with a query probez cannot read is something the
+  // person needs the words of — the message quotes what came back — so it is reported rather than
+  // becoming a 500 that says the view failed. The same shape `explain` uses.
+  let compiled
+  try {
+    compiled = await compileSentence(dataDir, reader, sentence, vocabularyOf(indexes), {
+      again: given.again === true,
+    })
+  } catch (error) {
+    throw new BadRequest(error instanceof Error ? error.message : 'the reader failed')
+  }
+  return {
+    sentence: compiled.asked.sentence,
+    query: queryOf(compiled.asked),
+    why: compiled.asked.why,
+    by: compiled.asked.by,
+    at: compiled.asked.at,
+    ran: compiled.ran,
+  }
 }
 
 export async function toolsPayload(dataDir: string, slug: string): Promise<ToolsPayload> {

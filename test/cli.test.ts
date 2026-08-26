@@ -1120,3 +1120,85 @@ test('an index is not read once the rounds it describes have moved', () => {
   // reading anything — so it counting the new round is what proves the stale one was not believed.
   assert.equal(after.scope.rounds, before.scope.rounds + 1)
 })
+
+test('`find --ask --prompt` prints what would be sent and starts nothing', () => {
+  const env = makeSource(1)
+  collect(env)
+  // Deliberately no reader.json: printing the question must not need one, which is what makes
+  // this the supported way to use `--ask` with a chat you already have open.
+  const out = find(env, ['where did the time go', '--ask', '--prompt'])
+  assert.equal(out.status, 0)
+  assert.match(out.stdout, /where did the time go/)
+  assert.match(out.stdout, /Fields:/)
+  assert.match(out.stdout, /tool:/)
+  // What is sent is a schema and a question. Nothing the agent said, and nothing it ran.
+  assert.doesNotMatch(out.stdout, /Caveat: The messages below/)
+  assert.ok(out.stdout.length < 20000, 'the question sent is not bounded')
+})
+
+test('`find --ask` with no reader configured says there is nothing to run', () => {
+  const env = makeSource(1)
+  collect(env)
+  const out = find(env, ['where did the time go', '--ask'])
+  assert.equal(out.status, 2)
+  assert.match(out.stderr, /no reader configured/)
+  assert.match(out.stderr, /--prompt/)
+})
+
+test('a sentence is read as a query, shown, and then answered by the query', () => {
+  const env = makeSource(1)
+  collect(env)
+  writeFileSync(
+    join(env.dataDir, 'reader.json'),
+    JSON.stringify({
+      command: [
+        process.execPath,
+        '-e',
+        'process.stdout.write(JSON.stringify({query:"tool:Bash",why:"shell calls"}))',
+      ],
+    }) + '\n',
+  )
+
+  const out = find(env, ['what did it run', '--ask'])
+  assert.equal(out.status, 0)
+  // The query is shown before anything it found, because the query is the thing to check.
+  assert.match(out.stdout, /probez read "what did it run" as/)
+  assert.match(out.stdout, /tool:Bash/)
+  assert.match(out.stdout, /shell calls/)
+
+  // And the rows under it are the rows that query gives on its own — nothing the reader said
+  // reaches a number.
+  const asked = JSON.parse(find(env, ['what did it run', '--ask', '--json']).stdout)
+  const typed = JSON.parse(find(env, ['tool:Bash', '--json']).stdout)
+  assert.equal(asked.read.query, 'tool:Bash')
+  assert.deepEqual(asked.totals, typed.totals)
+  assert.deepEqual(asked.hits, typed.hits)
+})
+
+test('a reader that answers with a query probez cannot read is refused, not run', () => {
+  const env = makeSource(1)
+  collect(env)
+  writeFileSync(
+    join(env.dataDir, 'reader.json'),
+    JSON.stringify({
+      command: [
+        process.execPath,
+        '-e',
+        'process.stdout.write(JSON.stringify({query:"categoy:test",why:"nope"}))',
+      ],
+    }) + '\n',
+  )
+  const out = find(env, ['what did it run', '--ask'])
+  assert.equal(out.status, 2)
+  assert.match(out.stderr, /cannot read/)
+  assert.match(out.stderr, /categoy:test/)
+  assert.equal(existsSync(join(env.dataDir, 'asked.json')), false, 'a refused answer was kept')
+})
+
+test('--prompt is refused without --ask, since there is nothing to send', () => {
+  const env = makeSource(1)
+  collect(env)
+  const out = find(env, ['tool:Bash', '--prompt'])
+  assert.equal(out.status, 2)
+  assert.match(out.stderr, /--prompt goes with --ask/)
+})

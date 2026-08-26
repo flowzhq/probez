@@ -952,3 +952,81 @@ test('searching needs the token, like everything else the store answers', async 
     await server.close()
   }
 })
+
+test('compiling a sentence is a POST, needs a reader, and hands back a query', async () => {
+  const { dataDir } = makeStore()
+  const server = await serving(dataDir)
+  const compile = (body: unknown): Promise<Response> =>
+    get(server, `/api/compile?t=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  try {
+    // It starts a program, so visiting it must never be enough.
+    assert.equal((await withToken(server, '/api/compile')).status, 405)
+    assert.equal((await get(server, '/api/compile', { method: 'POST' })).status, 403)
+
+    // With no reader there is nothing to run, and it says so rather than falling back.
+    const nothing = await body(compile({ sentence: 'where did the time go' }))
+    assert.match(nothing.error, /no reader configured/)
+
+    writeFileSync(
+      join(dataDir, 'reader.json'),
+      JSON.stringify({
+        command: [
+          process.execPath,
+          '-e',
+          'process.stdout.write(JSON.stringify({query:"tool:Bash is:error",why:"failing calls"}))',
+        ],
+      }) + '\n',
+    )
+
+    const read = await body(compile({ sentence: 'what failed' }))
+    assert.equal(read.query, 'tool:Bash is:error')
+    assert.equal(read.why, 'failing calls')
+    assert.equal(read.ran, true)
+    // Asked once and then held: a question costs somebody's tokens, so asking it twice is a thing
+    // they have to ask for.
+    assert.equal((await body(compile({ sentence: 'what failed' }))).ran, false)
+    assert.equal((await body(compile({ sentence: 'what failed', again: true }))).ran, true)
+
+    // And what it compiled to is answered by the ordinary search path, with the same numbers a
+    // typed query gives. Nothing the reader said reaches a figure.
+    const asked = await body(withToken(server, `/api/search?q=${encodeURIComponent(read.query)}`))
+    const typed = await body(withToken(server, '/api/search?q=tool%3ABash%20is%3Aerror'))
+    assert.deepEqual(asked.totals, typed.totals)
+
+    assert.equal((await body(compile({ sentence: '   ' }))).error, 'that has no question in it')
+  } finally {
+    await server.close()
+  }
+})
+
+test('a reader that answers with an unreadable query is refused rather than run', async () => {
+  const { dataDir } = makeStore()
+  writeFileSync(
+    join(dataDir, 'reader.json'),
+    JSON.stringify({
+      command: [
+        process.execPath,
+        '-e',
+        'process.stdout.write(JSON.stringify({query:"categoy:test"}))',
+      ],
+    }) + '\n',
+  )
+  const server = await serving(dataDir)
+  try {
+    const refused = await body(
+      get(server, `/api/compile?t=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sentence: 'anything' }),
+      }),
+    )
+    assert.match(refused.error, /cannot read/)
+    assert.equal(existsSync(join(dataDir, 'asked.json')), false, 'a refused answer was kept')
+  } finally {
+    await server.close()
+  }
+})

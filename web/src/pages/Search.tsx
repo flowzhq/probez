@@ -25,13 +25,19 @@ export function Search({
   q,
   entity,
   slug,
+  from,
 }: {
   q: string
-  entity: Entity
+  /** What to count, when the URL says so. Null leaves it to the query's own `in:`. */
+  entity: Entity | null
   slug: string | null
+  /** The sentence this query was read from, when one was. A caption; the query is what ran. */
+  from: string | null
 }): ReactElement {
   const { data, error, loading } = useData(
-    () => api.search(q, { slug, entity, limit: 200 }),
+    // `entity` is only sent when the URL named one. Sending a default would override an `in:` the
+    // query itself carries, which is how a compiled query loses its own grouping.
+    () => api.search(q, { slug, ...(entity === null ? {} : { entity }), limit: 200 }),
     [q, entity, slug],
   )
 
@@ -61,6 +67,7 @@ export function Search({
               )}
             </div>
 
+            {from === null ? null : <ReadFrom from={from} q={q} slug={slug} />}
             <Diagnostics data={data} />
 
             {data.totals.rounds === 0 ? (
@@ -72,7 +79,9 @@ export function Search({
             ) : (
               <>
                 <Found data={data} />
-                <Tabs q={q} entity={entity} slug={slug} data={data} />
+                {/* Which tab is on comes from what actually ran, not from what the URL asked for:
+                    a query carrying its own `in:` is grouped that way whether or not the URL says. */}
+                <Tabs q={q} entity={data.entity} slug={slug} data={data} />
                 <Rows data={data} />
                 <Footer data={data} />
               </>
@@ -96,6 +105,26 @@ function Empty(): ReactElement {
         category:reconstruction cost:&gt;0.50 -tool:Read since:7d
       </p>
     </div>
+  )
+}
+
+/**
+ * The sentence a query was read from.
+ *
+ * A caption over the query, not a replacement for it. What ran is the query above — visible,
+ * editable in the bar, and in the URL — so this result is re-runnable by anyone whether or not they
+ * have a reader configured, and every number under it stays derived from the rounds. Which is the
+ * whole reason the model is asked for a query rather than for an answer.
+ */
+function ReadFrom({ from, q, slug }: { from: string; q: string; slug: string | null }): ReactElement {
+  return (
+    <p className="read-from">
+      <span className="read-mark" aria-hidden>
+        ?
+      </span>
+      Read from “{from}”. The query above is what ran, and you can edit it.{' '}
+      <a {...linkProps(href.search(q, { slug }))}>Drop the question</a>
+    </p>
   )
 }
 

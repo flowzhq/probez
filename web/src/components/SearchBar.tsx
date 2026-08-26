@@ -31,6 +31,9 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
   const [open, setOpen] = useState(false)
   const [at, setAt] = useState(0)
   const [facets, setFacets] = useState<FacetPayload | null>(null)
+  /** Set while the reader is being asked, and to whatever it refused with. */
+  const [asking, setAsking] = useState(false)
+  const [refused, setRefused] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const box = useRef<HTMLDivElement>(null)
 
@@ -110,8 +113,34 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
     const asked = value.trim()
     if (asked === '') return
     setOpen(false)
+    setRefused(null)
     input.current?.blur()
     go(href.search(asked, { slug }))
+  }
+
+  /**
+   * Hand the sentence to the reader, and go to what it read.
+   *
+   * What comes back is a *query*, so what this navigates to is an ordinary result URL that anyone
+   * can re-run without a reader. The sentence travels beside it as a caption. Nothing the model
+   * says reaches a number — every figure on the page is still derived from the rounds.
+   */
+  const ask = (value: string): void => {
+    const question = value.trim()
+    if (question === '' || asking) return
+    setOpen(false)
+    setRefused(null)
+    setAsking(true)
+    api
+      .compile(question, slug)
+      .then((read) => {
+        setAsking(false)
+        go(href.search(read.query, { slug, from: read.sentence }))
+      })
+      .catch((problem: Error) => {
+        setAsking(false)
+        setRefused(problem.message)
+      })
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
@@ -145,6 +174,13 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
         return
       }
     }
+    // ⌘↵ asks; ↵ searches. Two keys rather than one control that changes meaning, because the
+    // difference between them is what is about to happen to your tokens.
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault()
+      ask(text)
+      return
+    }
     if (event.key === 'Enter') submit(text)
   }
 
@@ -171,6 +207,25 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
         onKeyDown={onKeyDown}
       />
       {text === '' ? <kbd className="find-key">/</kbd> : null}
+      {/* Only once there is something to ask about. A question is a different act from a query —
+          it spends tokens on somebody else's program — so it is a button you press rather than
+          something that happens when a box stops looking like a query. */}
+      {text.trim() === '' ? null : (
+        <button
+          type="button"
+          className="find-ask"
+          disabled={asking}
+          title="Read this as a question (⌘↵)"
+          onClick={() => ask(text)}
+        >
+          {asking ? '…' : 'Ask'}
+        </button>
+      )}
+      {refused === null ? null : (
+        <p className="find-refused" role="alert">
+          {refused}
+        </p>
+      )}
       {open && options.length > 0 ? (
         <ul className="find-menu" role="listbox">
           {options.map((option, index) => (
