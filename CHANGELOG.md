@@ -80,6 +80,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   mean the same thing — read the rounds — and `find` says in its footer how many projects had to be.
   `find` itself never writes one.
 
+- **A query bar in `probez view`, on every page.** `/` or ⌘K focuses it. Fields complete from the
+  same table the parser validates against, and their values from what the store actually holds —
+  `tool:` offers the eleven tools this project has really called, each with the rounds it is in,
+  because a list of tools in general is a list you still have to know the answer to use. The counts
+  are a pass over an index column, so offering them costs nothing.
+
+  The results page leads with the share, not the rows: the totals, what fraction of the searched
+  projects they are, where they are concentrated, and the distribution of the matched work drawn by
+  the same bar every other page uses. Tabs say what the matched rounds are counted as — rounds,
+  tasks, sessions, projects, questions or trails — and a grouped row shows what matched with the
+  size of the whole group beside it.
+
+  The query is the URL, so a result is a link. Clicking a round opens its task with the query still
+  attached, and **the trace arrives with the matching rounds lit and the rest of the task drawn
+  around them**: what is worth seeing is where in the task the matches fall, which a filtered list
+  cannot show. A note above the trace says how many matched and offers the way back out.
+
+  A half-typed query is shown the same way at the command line and in the browser: what could not be
+  read is quoted with what it was nearly, and the rest of the query still runs.
+
+  Two new endpoints, both `GET` and both refusing `POST`, because answering a query writes nothing —
+  not even the index, which `Sync` builds beside the analysis cache: `/api/search` and `/api/facets`.
+
 ### Changed
 
 - **Free text matches a word or the start of one, rather than any substring anywhere.** `tok` finds

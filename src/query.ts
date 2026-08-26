@@ -262,6 +262,13 @@ export interface Query {
   /** The query as it was written, so a result can say what produced it. */
   text: string
   node: Node
+  /**
+   * What the matched rounds are counted as.
+   *
+   * Written into the query as `in:sessions`, or set afterwards by a caller that carries it
+   * separately — the view keeps it in the URL beside the query, because a tab on the results page
+   * must not rewrite the words somebody typed into the bar.
+   */
   entity: Entity
   sort: { key: string; desc: boolean } | null
   limit: number | null

@@ -9,6 +9,7 @@ import {
   BadRequest,
   explainOne,
   exportProject,
+  facetsPayload,
   importExport,
   NotFound,
   pricingPayload,
@@ -20,6 +21,7 @@ import {
   resultPayload,
   roundPayload,
   savePricing,
+  searchPayload,
   sessionPayload,
   syncProject,
   taskPayload,
@@ -305,6 +307,8 @@ async function serveApi(
   url: URL,
 ): Promise<void> {
   const method = req.method ?? 'GET'
+  // /api/search?q=&project=&in=&limit=
+  // /api/facets?key=&project=
   // /api/projects
   // /api/projects/<slug>
   // /api/projects/<slug>/tools
@@ -333,6 +337,34 @@ async function serveApi(
       return
     }
     sendJson(res, 200, await importExport(dataDir, body))
+    return
+  }
+
+  // Searching and the values a search can name. Both are reads, so both are GET and neither
+  // writes anything — not even the index, which `sync` builds beside the analysis cache.
+  if (group === 'search' && slug === undefined) {
+    sendJson(
+      res,
+      200,
+      await searchPayload(dataDir, {
+        q: url.searchParams.get('q') ?? '',
+        slug: url.searchParams.get('project') ?? undefined,
+        entity: url.searchParams.get('in') ?? undefined,
+        limit: asIndex(url.searchParams.get('limit')),
+      }),
+    )
+    return
+  }
+
+  if (group === 'facets' && slug === undefined) {
+    sendJson(
+      res,
+      200,
+      await facetsPayload(dataDir, {
+        key: url.searchParams.get('key') ?? undefined,
+        slug: url.searchParams.get('project') ?? undefined,
+      }),
+    )
     return
   }
 

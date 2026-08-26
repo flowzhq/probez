@@ -29,6 +29,7 @@ export function Session({ slug, session }: { slug: string; session: string }): R
           { label: data?.project.project ?? slug, to: href.project(slug) },
           { label: `Session ${shortId(session)}` },
         ]}
+        search={{ slug }}
       />
       <main className="page">
         {error !== null && data === null ? (

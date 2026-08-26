@@ -57,7 +57,11 @@ import {
   writePricing,
 } from './pricing.js'
 import type { Pricing, Rates } from './pricing.js'
-import { buildIndex } from './searchindex.js'
+import { isEntity, parse, print } from './query.js'
+import { FIELDS } from './query.js'
+import { fromStore, search } from './search.js'
+import type { SearchResult, Source } from './search.js'
+import { buildIndex, isFacet, SearchIndex } from './searchindex.js'
 import { contextShare } from './models.js'
 import type { Round, ToolCall } from './types.js'
 
@@ -878,6 +882,140 @@ export async function explainOne(
     asked: read.asked,
     stale: read.stale,
   }
+}
+
+/* Searching: one query over the store, and the values a query can name. --------------------- */
+
+export interface SearchPayload extends SearchResult {
+  /** Which project the query was scoped to, or null when it ran over the whole store. */
+  scope_slug: string | null
+  /** The query as probez read it back, which is what the bar shows when it compiles one. */
+  read_as: string
+  /**
+   * The matched slice's distribution, as the shares the bar is drawn from.
+   *
+   * The same shape the project rows carry, so one component draws both. `categories` beside it is
+   * the unrounded tally, for anything that wants the counts rather than the picture.
+   */
+  mix: CategoryShare[]
+}
+
+/**
+ * Answer a query.
+ *
+ * A read, and so a GET: nothing here writes, not even the index, which is built by `sync` along
+ * with the analysis cache. A project with no current index is read in full and `scanned` says so,
+ * exactly as it does at the command line.
+ */
+export async function searchPayload(
+  dataDir: string,
+  options: { q: string; slug?: string; entity?: string; limit?: number; offset?: number },
+): Promise<SearchPayload> {
+  const text = options.q ?? ''
+  if (text.trim() === '') throw new BadRequest('that search has nothing to look for in it')
+  if (options.entity !== undefined && !isEntity(options.entity)) {
+    throw new BadRequest(`there is no \`${options.entity}\` to count`)
+  }
+
+  // The entity is set on the parsed query rather than appended to the text, so what the page shows
+  // back is what was typed. Appending `in:rounds` to every query would put a directive nobody wrote
+  // into the title of every result.
+  const query = parse(text)
+  if (options.entity !== undefined) query.entity = options.entity
+  const stored = await listStored(dataDir)
+  const wanted = options.slug === undefined ? stored : stored.filter((row) => row.slug === options.slug)
+  if (options.slug !== undefined && wanted.length === 0) {
+    throw new NotFound(`no project ${options.slug} in this store`)
+  }
+
+  const sources: Source[] = []
+  for (const row of wanted) {
+    sources.push(await fromStore(row.dir, row.project, { slug: row.slug, root: row.path ?? '' }))
+  }
+
+  const result = await search(sources, query, {
+    pricing: await readPricing(dataDir),
+    limit: options.limit ?? SEARCH_LIMIT,
+  })
+  const classified = result.categories.reduce((sum, row) => sum + row.rounds, 0)
+  return {
+    ...result,
+    scope_slug: options.slug ?? null,
+    read_as: print(query),
+    mix:
+      classified === 0
+        ? []
+        : result.categories.map((row) => ({
+            category: row.name,
+            label: row.label,
+            share: row.rounds / classified,
+          })),
+  }
+}
+
+/** Rows the typeahead offers before anything has been typed after the colon. */
+export const SEARCH_LIMIT = 50
+/** Values offered for one field. Past this it is a list nobody scrolls. */
+const FACET_LIMIT = 40
+
+export interface FacetPayload {
+  /** Every key a query can name, with what it reads, so the bar can offer them before the colon. */
+  fields: Array<{ key: string; says: string; kind: string; group: string; values: string[] }>
+  /** The values of one field, most used first, when one was asked about. */
+  key: string | null
+  values: Array<{ value: string; rounds: number }>
+  /** How many projects could answer. A project with no index contributes no values, and says so. */
+  scanned: { projects: number; indexed: number }
+}
+
+/**
+ * What a query can name, and what the store actually holds for it.
+ *
+ * The field list is the same table the help prints and the parser validates against, so a key that
+ * exists is a key the typeahead offers. The values come from the index, which is what makes them
+ * worth offering: `tool:` completing to the eleven tools this project has actually called, with
+ * the count beside each, is a different thing from a list of tools in general.
+ */
+export async function facetsPayload(
+  dataDir: string,
+  options: { key?: string; slug?: string },
+): Promise<FacetPayload> {
+  const fields = FIELDS.map((field) => ({
+    key: field.key,
+    says: field.says,
+    kind: field.kind,
+    group: field.group,
+    values: field.values ?? [],
+  }))
+
+  const key = options.key ?? null
+  if (key === null) {
+    return { fields, key: null, values: [], scanned: { projects: 0, indexed: 0 } }
+  }
+
+  const stored = await listStored(dataDir)
+  const wanted = options.slug === undefined ? stored : stored.filter((row) => row.slug === options.slug)
+  const counts = new Map<string, number>()
+  let indexed = 0
+  for (const row of wanted) {
+    const index = await SearchIndex.read(row.dir)
+    if (index === null) continue
+    indexed += 1
+    if (key === 'project') {
+      counts.set(row.project, (counts.get(row.project) ?? 0) + row.rounds)
+      continue
+    }
+    if (!isFacet(key)) continue
+    for (const one of index.facets(key)) {
+      counts.set(one.value, (counts.get(one.value) ?? 0) + one.rounds)
+    }
+  }
+
+  const values = [...counts.entries()]
+    .map(([value, rounds]) => ({ value, rounds }))
+    .sort((a, b) => b.rounds - a.rounds || a.value.localeCompare(b.value))
+    .slice(0, FACET_LIMIT)
+  return { fields, key, values, scanned: { projects: wanted.length, indexed } }
 }
 
 export async function toolsPayload(dataDir: string, slug: string): Promise<ToolsPayload> {

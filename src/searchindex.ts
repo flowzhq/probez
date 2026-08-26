@@ -113,6 +113,18 @@ type DictName = keyof Dicts
 /** The fields a round can hold several of at once, which are counted a column at a time. */
 const MULTI = ['tool', 'command', 'kind', 'category', 'target'] as const
 
+/** Whether a field is one the index counts values for, which is what a typeahead can offer. */
+export function isFacet(key: string): key is DictName {
+  return (
+    MULTI.includes(key as (typeof MULTI)[number]) ||
+    key === 'session' ||
+    key === 'model' ||
+    key === 'skill' ||
+    key === 'mcp' ||
+    key === 'commit'
+  )
+}
+
 /** One slot per round. Nulls are kept: a round with no usage recorded is not a round that used none. */
 interface Columns {
   session: number[]

@@ -58,6 +58,22 @@ Both are below: [the view](#the-view) first, [the CLI](#the-cli) after.
 `probez view` opens a local profiler in your browser: every project, then a session, then a task,
 down to a single tool call. It listens on `127.0.0.1` with a token that is new on every run.
 
+**Search** — one query bar, on every page. `/` or ⌘K focuses it; it completes fields from the same
+table the parser validates against, and their values from what the store actually holds, with the
+count beside each. What comes back leads with the share rather than the row count: 56 rounds is a
+number, 8.1% of what this project cost is a finding. The tabs say what the matched rounds are then
+counted as — a session matches when a round inside it does, and the row reports the rounds that
+matched with the size of the whole session beside them.
+
+<p align="center">
+  <img src="docs/view-search.png" alt="probez view: a query, its share of the project, and the sessions it is concentrated in" width="900">
+</p>
+
+Clicking a round opens its task with the query still in the URL, so the trace arrives with the
+rounds that matched lit and the rest of the task drawn around them — the point being *where in the
+task* the matches fall, which a filtered list cannot show. The bar starts scoped to whatever page
+you were on; the chip beside the query is what widens it to the whole store.
+
 **A project** — where its work went, what each kind of work cost, and the sessions it happened in.
 The list under it is three tabs: *sessions*, each row carrying the whole spread of its work as a bar
 rather than the name of its largest slice; *trails*, every trail the project made through itself; and

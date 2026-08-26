@@ -414,6 +414,11 @@ The view
   --port <n>                   Which port to listen on (default ${DEFAULT_PORT})
   --no-open                    Print the URL instead of opening a browser
 
+  There is a query bar in the header, on every page: \`/\` or ⌘K focuses it, it completes fields
+  and their values from what the store holds, and it takes the same language \`probez find\` does.
+  Opening a round from a result lights the rounds that matched inside its trace, with the rest of
+  the task still drawn around them.
+
   From there each project has a ⋮ menu: Sync, which is collect then analyze on that one;
   Rename, which sets a label this CLI answers to and moves nothing; Export, which hands its
   rounds to your browser to save wherever you point it; and Delete, which asks first and then

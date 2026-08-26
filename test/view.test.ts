@@ -658,6 +658,10 @@ test('browsing a store leaves it exactly as it was', async () => {
       `/api/projects/${slug}/export?format=json`,
       `/api/projects/${slug}/readings`,
       '/api/reader',
+      '/api/search?q=tool:Bash',
+      `/api/search?q=is:error&project=${slug}`,
+      '/api/facets',
+      `/api/facets?key=tool&project=${slug}`,
     ]) {
       assert.equal((await withToken(server, path)).status, 200, path)
     }
@@ -856,5 +860,95 @@ test('the page it serves loads nothing from anywhere else', () => {
     // A URL in a comment or a source map name is not a fetch, so only look for one being loaded.
     const remote = /(?:fetch|src|href)\s*[=(]\s*['"`]https?:\/\//.exec(body)
     assert.equal(remote, null, `${name.name} loads ${remote?.[0] ?? ''}`)
+  }
+})
+
+test('a query is answered over the store, and over one project when named', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const all = await body(withToken(server, '/api/search?q=tool:Bash'))
+    assert.equal(all.entity, 'rounds')
+    assert.ok(all.totals.rounds > 0)
+    // The share is the point of the payload: the matched rounds against what was searched.
+    assert.ok(all.scope.rounds >= all.totals.rounds)
+    assert.equal(all.share.rounds, all.totals.rounds / all.scope.rounds)
+    assert.equal(all.scope_slug, null)
+
+    const one = await body(withToken(server, `/api/search?q=tool:Bash&project=${slug}`))
+    assert.equal(one.scope_slug, slug)
+    assert.equal(one.totals.rounds, all.totals.rounds)
+
+    // The entity is carried beside the query rather than written into it, so what the page shows
+    // back is what was typed.
+    const grouped = await body(withToken(server, '/api/search?q=tool:Bash&in=sessions'))
+    assert.equal(grouped.entity, 'sessions')
+    assert.equal(grouped.query, 'tool:Bash')
+    assert.ok(grouped.hits.every((hit: { of: number; rounds: number }) => hit.of >= hit.rounds))
+  } finally {
+    await server.close()
+  }
+})
+
+test('a query that cannot be read entirely still answers, and says what it could not read', async () => {
+  const { dataDir } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const found = await body(withToken(server, '/api/search?q=categoy:test%20cost:%3E'))
+    assert.equal(found.diagnostics.length, 2)
+    assert.match(found.diagnostics[0].hint, /category/)
+    // Spans point into the query as it was typed, which is what lets the page underline them.
+    assert.equal(found.query.slice(found.diagnostics[0].at.from, found.diagnostics[0].at.to), 'categoy:test')
+
+    const empty = await body(withToken(server, '/api/search?q='))
+    assert.match(empty.error, /nothing to look for/)
+    assert.equal((await withToken(server, '/api/search?q=x&in=widgets')).status, 400)
+  } finally {
+    await server.close()
+  }
+})
+
+test('the facets are what a query can name, and what this store holds for it', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const fields = await body(withToken(server, '/api/facets'))
+    // The same table the parser validates against, so a key offered is a key that exists.
+    assert.ok(fields.fields.length > 20)
+    assert.ok(fields.fields.some((one: { key: string }) => one.key === 'tool'))
+    assert.deepEqual(fields.values, [])
+
+    const tools = await body(withToken(server, `/api/facets?key=tool&project=${slug}`))
+    assert.ok(tools.values.length > 0)
+    assert.ok(tools.values.every((one: { rounds: number }) => one.rounds > 0))
+    // Most used first, which is the order that makes a list of them worth reading.
+    const counts = tools.values.map((one: { rounds: number }) => one.rounds)
+    assert.deepEqual(counts, [...counts].sort((a: number, b: number) => b - a))
+  } finally {
+    await server.close()
+  }
+})
+
+test('searching and its facets refuse a POST, like every other route that only reads', async () => {
+  const { dataDir } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    for (const path of ['/api/search?q=tool:Bash', '/api/facets?key=tool']) {
+      const refused = await get(server, `${path}&t=${server.token}`, { method: 'POST' })
+      assert.equal(refused.status, 405, path)
+    }
+  } finally {
+    await server.close()
+  }
+})
+
+test('searching needs the token, like everything else the store answers', async () => {
+  const { dataDir } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    assert.equal((await get(server, '/api/search?q=tool:Bash')).status, 403)
+    assert.equal((await get(server, '/api/facets?key=tool')).status, 403)
+  } finally {
+    await server.close()
   }
 })

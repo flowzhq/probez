@@ -5,6 +5,7 @@ import { Defs } from './components/Defs'
 import { Chrome, Problem } from './components/Chrome'
 import { Project } from './pages/Project'
 import { Projects } from './pages/Projects'
+import { Search } from './pages/Search'
 import { Session } from './pages/Session'
 import { Settings } from './pages/Settings'
 import { Task } from './pages/Task'
@@ -22,6 +23,13 @@ function App(): ReactElement {
         <Projects />
       ) : route.name === 'settings' ? (
         <Settings />
+      ) : route.name === 'search' ? (
+        <Search
+          key={`${route.q}/${route.entity}/${route.slug ?? ''}`}
+          q={route.q}
+          entity={route.entity}
+          slug={route.slug}
+        />
       ) : route.name === 'project' ? (
         <Project key={route.slug} slug={route.slug} />
       ) : route.name === 'session' ? (
@@ -35,6 +43,7 @@ function App(): ReactElement {
           round={route.round}
           trail={route.trail}
           question={route.question}
+          q={route.q}
         />
       ) : (
         <>

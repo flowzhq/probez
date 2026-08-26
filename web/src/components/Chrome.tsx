@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 
 import { linkProps } from '../router'
+import { SearchBar } from './SearchBar'
 import { Tip, useTip } from './Tip'
 
 export interface Crumb {
@@ -9,7 +10,23 @@ export interface Crumb {
   to?: string
 }
 
-export function Chrome({ crumbs, right }: { crumbs: Crumb[]; right?: ReactNode }): ReactElement {
+/**
+ * The header, on every page.
+ *
+ * The query bar sits in it rather than on a page of its own, because a search is something you do
+ * *from* wherever you are: on a project it starts scoped to that project, and the chip on the
+ * results page is what widens it to the whole store.
+ */
+export function Chrome({
+  crumbs,
+  right,
+  search,
+}: {
+  crumbs: Crumb[]
+  right?: ReactNode
+  /** Present on every page that knows what it would be searching. Omit only where nothing is. */
+  search?: { slug?: string | null; initial?: string }
+}): ReactElement {
   return (
     <header className="top">
       <div className="top-in">
@@ -35,6 +52,9 @@ export function Chrome({ crumbs, right }: { crumbs: Crumb[]; right?: ReactNode }
         </nav>
         <span className="spacer" />
         {right}
+        {search === undefined ? null : (
+          <SearchBar slug={search.slug} initial={search.initial} />
+        )}
         <a
           className="gear"
           {...linkProps('/settings')}

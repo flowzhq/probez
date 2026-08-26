@@ -111,7 +111,7 @@ export function Settings(): ReactElement {
 
   return (
     <>
-      <Chrome crumbs={[{ label: 'Projects', to: href.projects() }, { label: 'Settings' }]} />
+      <Chrome crumbs={[{ label: 'Projects', to: href.projects() }, { label: 'Settings' }]} search={{}} />
       <main className="page">
         {error !== null && data === null ? (
           <Problem message={error} />
