@@ -27,12 +27,21 @@ These are choices, not omissions:
   shipped in v0.2 against a schema that was already stable, and needed no new collection.
 - **Nothing leaves the machine on its own.** No network calls, no telemetry, no account, no upload.
   probez opens no socket, and that is a property of the codebase rather than a setting. There is one
-  way for anything to leave, and it is shaped so that property survives: `probez explain` runs a
-  command *the person wrote into a config file* — their own LLM, hosted or local —
-  and writes one question's calls to its stdin. probez is not the thing making the connection, it
-  never runs unasked, there is no default command to fall back to, and `--prompt` — *copy prompt* in
-  the view — hands over exactly what would be sent while running nothing, so the reading can be had
-  from a chat already open without probez starting anything at all. See CONTRIBUTING § rule 2.
+  way for anything to leave, and it is shaped so that property survives: probez runs a command *the
+  person wrote into a config file* — their own LLM, hosted or local — and writes to its stdin.
+  probez is not the thing making the connection, it never runs unasked, there is no default command
+  to fall back to, and `--prompt` — *copy prompt* in the view — hands over exactly what would be
+  sent while running nothing, so the answer can be had from a chat already open without probez
+  starting anything at all.
+
+  Two things use it, and both send something named and bounded. `probez explain` sends one
+  question's calls and gets a sentence back. `probez find --ask` sends the query language's field
+  table and a sample of the names this store holds, with the person's question, and gets **a query**
+  back — which probez parses, refuses if it does not read, shows, and only then answers by the same
+  deterministic path a typed query takes. That distinction is the whole of why the second one is
+  allowed: a model chooses which rounds to look at, and never what any of them came to. Every
+  number stays derived from the rounds. See CONTRIBUTING § rule 2, which names both callers and
+  says what would have to be argued to add a third.
 - **Claude Code and Cursor.** Other agents follow once the round schema has proven itself against
   these two formats. Cursor transcripts do not record token usage or model names; those rounds are
   collected and classified, and cost stays blank rather than invented.
@@ -488,3 +497,53 @@ zero cost: a wrong number is worse than a missing project.
 `analyze` leaves behind as a side effect of being run. And it invents no categories: the sketch this
 was designed from showed `SPEC` and `DEBUG` bands, and neither is a thing the analyzer can produce,
 so neither is drawn.
+
+## v0.3.9 · search
+
+**One query over the whole record.** Every read command before this addressed the round stream
+through a fixed hole — one flag per field, no way to combine two of them, and nothing at all for
+what a prompt said or what a command ran. `probez find` is a language instead: bare words are free
+text, `key:value` filters, `-` negates, adjacency means and, `OR` is the other one. Thirty-one
+fields, one table, and the flags on `rounds` compile to the same tree so there is one filter engine
+rather than two that can drift.
+
+Three decisions in it are worth recording, because each had an alternative:
+
+- **A result is a re-scoped profile, not a list of rows.** What comes back leads with the share:
+  *56 rounds · $67.60 · 8.1% of cost · 14 sessions · 94% reconstruction*. Four rounds is a count;
+  a fourteenth of what a project cost is a finding. The idea is pprof's `-focus`, which does not
+  filter a listing but recomputes the profile over what survived, and it costs nothing here because
+  the same `categoryTally` and `sessionRows` every page is built from are what run over the matches.
+  `--in` re-counts those matches as tasks, sessions, projects, questions or trails, and a grouped
+  row carries the size of the whole group beside what matched in it — six rounds of a seventy-one
+  round task reads as six.
+
+- **Parsing never fails.** A search box is typed into one character at a time, so the parser spends
+  most of its life looking at `cost:>`, `"unclosed` and `categor`. None of those is an error: each
+  yields a tree plus a diagnostic carrying the span it is about, and an atom too incomplete to mean
+  anything is *neutral* rather than empty, so a list narrows as a query is completed instead of
+  blanking halfway through a word. That property is what makes the language usable from a box, and
+  it is a constraint on `query.ts` rather than a feature of it.
+
+- **Free text matches a word or the start of one**, not any substring anywhere. `tok` finds
+  `tokens`; `oken` does not. That boundary is not a nicety — it is the only rule an index can
+  answer, and without an index every keystroke reads every round.
+
+**The index is what makes it a box rather than a command.** `search.jsonl` sits beside
+`analysis.jsonl`, written from the same labels: a column per field a query can name, an inverted
+index over the words, and byte offsets so a query that matched four hundred of fifty thousand rounds
+reads four hundred rounds' worth of bytes. It is about a fifth the size of the rounds it describes.
+Cost is deliberately not in it — rates are a setting, so a price is worked out at query time and a
+corrected rate cannot leave a stale figure behind. Questions and trails are not in it either,
+because both read a run of calls across a whole project and neither can be answered from the part
+that matched. It is derived data in the strict sense: missing, stale, from an unknown version and
+half-written all mean the same thing, which is read the rounds, and the result says how many
+projects had to.
+
+**And a way in that does not require learning it.** `--ask`, and *ask* mode in the view, hand your
+question to the reader and get back **a query** — parsed by probez, refused outright if it does not
+read, shown, and only then answered by the deterministic path. A model chooses which rounds to look
+at and never what any of them came to, which is the whole of why this is allowed under the
+no-outbound-network rule and why a result read from a question is reproducible by someone with no
+reader configured. This is the second thing in probez that starts a program; CONTRIBUTING § rule 2
+names both callers and what would have to be argued to add a third.

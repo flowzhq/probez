@@ -6,6 +6,168 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [0.3.9] - 2026-08-26
+
+### Added
+
+- **`probez find`: one query over everything that has been collected.** Every read command until
+  now addressed the round stream through a fixed hole — one flag per field, no way to combine two
+  of them with an `or`, and nothing at all for the things no flag names: what a prompt said, what a
+  command ran, what a round cost, when it happened. `probez find` is one grammar over the whole
+  record instead. Bare words are free text over the prompts, the prose, the commands and the paths;
+  `key:value` filters; `-` negates; one atom after another means and, `OR` is the other one, and
+  brackets regroup.
+
+  ```
+  probez find 'category:reconstruction cost:>0.50 -tool:Read since:7d'
+  probez find '(tool:Edit OR tool:Write) added:>200 in:tasks sort:cost'
+  ```
+
+  Thirty-one fields, listed under `probez help` with what each one reads: where a round sits
+  (`project` `session` `task` `round` `commit` `model` `agent` `skill` `mcp`), what it did (`tool`
+  `command` `kind` `category` `target`), what it came to (`cost` `ms` `gen` `wait` `input` `output`
+  `cached` `thinking` `calls` `errors` `files` `added` `removed`), when it happened (`since`
+  `before`), and the plain properties (`is:error` `is:quiet` `is:compacted` `is:sub` `has:patch` …).
+  Magnitudes are read against the field they were written for, so `input:>2m` is two million tokens
+  and `gen:>2m` is two minutes.
+
+- **A result is a re-scoped profile, not a list of rows.** What comes back first is the share:
+  *4 rounds · $2.32 · 2.8% of cost · 3 sessions · 81% reconstruction*. Four rounds is a count; 2.8%
+  of what a project cost is a finding. The idea is pprof's `-focus`, which does not filter a listing
+  but recomputes the profile over what survived, and it costs nothing here because the same
+  `categoryTally`, `sessionRows` and `taskRows` every other page is built from are what run over the
+  matches. `--json` carries all of it — totals, scope, share, distribution and rows.
+
+  `--in` says what the matched rounds are then counted as: `rounds` (the default), `tasks`,
+  `sessions`, `projects`, `questions` or `trails`. A session matches when a round inside it does,
+  and the row reports the rounds that matched with the size of the whole session beside them, so a
+  task that spent six of its seventy-one rounds on what was asked for reads as six rather than
+  seventy-one. A task is still named by the prompt that opened it even when that round is not one of
+  the ones that matched.
+
+  `--all` searches every project in the store. `--sort` puts the big end of a magnitude first;
+  `sort:`, `limit:` and `in:` can be written into the query instead.
+
+- **A half-typed query is read the same way a finished one is.** A search box is typed into one
+  character at a time, so the parser spends most of its life looking at `cost:>`, `"unclosed` and
+  `categor`. None of those is an error: each yields a tree plus a diagnostic carrying the span it is
+  about, printed under the part of the query it refers to, and everything else still runs. A value
+  that is merely missing is neutral rather than empty, so a list narrows as a query is completed
+  instead of blanking out halfway through a word. A key that is nearly a field says which one it was
+  nearly (`did you mean category:?`); a value a field cannot take names the near miss and matches
+  nothing, because a finished wrong thought is not the same as an unfinished one. `--plan` prints
+  that reading on its own and touches no store at all.
+
+- **A search index, so a query does not have to read the rounds.** `collect` and `analyze` now
+  write `search.jsonl` beside `analysis.jsonl` in each project's store: one column per field a
+  query can name, one slot per round, plus an inverted index over the words of every prompt, every
+  command and every path. A query is answered from those columns, and `rounds.jsonl` is opened only
+  for the rounds that actually matched — by byte offset, so a search that matched four hundred of
+  fifty thousand rounds reads four hundred rounds' worth of bytes rather than the whole file.
+
+  It is about a fifth the size of the rounds it describes and takes a few hundred milliseconds to
+  build. On a 93 MB store of 48,000 rounds across 307 projects, `find --all` went from 1.4 s to
+  300 ms, and a single project from 260 ms to 60 ms.
+
+  Two things are deliberately not in it. **Cost** is not, because rates are a setting: what is
+  stored is the five token counts and a model, and a price is worked out at query time, so a
+  corrected rate cannot leave a stale figure behind. **Questions and trails** are not, because both
+  read a run of calls across a whole project and neither can be answered from the part of it that
+  matched — `in:questions` and `in:trails` read the rounds and the result says so.
+
+  The index is derived data in the strict sense: deleting it costs speed and nothing else. A
+  missing one, a stale one, one from a version this probez does not know, and a half-written one all
+  mean the same thing — read the rounds — and `find` says in its footer how many projects had to be.
+  `find` itself never writes one.
+
+- **A query bar in `probez view`, on every page.** `/` or ⌘K focuses it. Fields complete from the
+  same table the parser validates against, and their values from what the store actually holds —
+  `tool:` offers the eleven tools this project has really called, each with the rounds it is in,
+  because a list of tools in general is a list you still have to know the answer to use. The counts
+  are a pass over an index column, so offering them costs nothing.
+
+  The results page leads with the share, not the rows: the totals, what fraction of the searched
+  projects they are, where they are concentrated, and the distribution of the matched work drawn by
+  the same bar every other page uses. Tabs say what the matched rounds are counted as — rounds,
+  tasks, sessions, projects, questions or trails — and a grouped row shows what matched with the
+  size of the whole group beside it.
+
+  The query is the URL, so a result is a link. Clicking a round opens its task with the query still
+  attached, and **the trace arrives with the matching rounds lit and the rest of the task drawn
+  around them**: what is worth seeing is where in the task the matches fall, which a filtered list
+  cannot show. A note above the trace says how many matched and offers the way back out.
+
+  A half-typed query is shown the same way at the command line and in the browser: what could not be
+  read is quoted with what it was nearly, and the rest of the query still runs.
+
+  Two new endpoints, both `GET` and both refusing `POST`, because answering a query writes nothing —
+  not even the index, which `Sync` builds beside the analysis cache: `/api/search` and `/api/facets`.
+
+- **`probez find --ask`, and an *ask* mode in the view: a question instead of a query.** Hands
+  what you typed to the command in `<data-dir>/reader.json` — the same one `explain` uses, your own
+  LLM, hosted or local — and gets back **a query**, not an answer. probez parses it, refuses it
+  outright if it does not read cleanly, shows it, and only then answers it by exactly the path a
+  typed query takes.
+
+  ```
+  $ probez find --ask "which sessions had the most failing shell commands"
+
+    probez read "which sessions had the most failing shell commands" as
+
+      tool:Bash is:error in:sessions sort:errors
+  ```
+
+  That distinction is the whole of why this is allowed under the no-outbound-network rule: **a model
+  chooses which rounds to look at and never what any of them came to.** Every total, share and row
+  stays derived from the rounds, so a result compiled from a sentence is re-runnable by someone with
+  no reader configured and comes out identical — and the query is one you can correct by hand.
+
+  What is sent is the field table, the values each field can take, and a sample of the names this
+  store holds (tool names, command names, model names), with your question. About five kilobytes,
+  and it does not grow with the store. **Nothing you typed to the agent and nothing any tool
+  returned, ever.** `--prompt` prints exactly what would go and runs nothing, which is also how to
+  use this with a chat already open. With no `reader.json` there is nothing probez can run and every
+  caller says so. Answers are held in `<data-dir>/asked.json` and keyed by the store they were asked
+  of, so the same question is not paid for twice; `--again` asks afresh.
+
+  In the view the box has two modes, shown as two controls at its head, so what Enter is about to do
+  is readable without pressing it — one of the two spends tokens on somebody else's program. What
+  comes back lands in the bar to be checked and edited, and the URL is an ordinary search URL with
+  the question carried alongside as a caption. Landing on a result puts the box back in query mode,
+  because a result is a query.
+
+  This is the second thing in probez that starts a program, and CONTRIBUTING § rule 2 now names both
+  callers of `src/reader.ts` and what would have to be argued to add a third.
+
+### Changed
+
+- **Free text matches a word or the start of one, rather than any substring anywhere.** `tok` finds
+  `tokens`; `oken` no longer does, and `"npm test"` no longer finds `pnpm test`. This is the rule
+  every search box uses, and it is also the only rule an index can answer — matching arbitrary
+  substrings would mean every query read every round, which is the thing the index exists to stop.
+  Both paths apply it, and `test/searchindex.test.ts` asserts they agree query for query.
+
+- **The filters on `rounds` are the query language underneath.** `--tool Bash` compiles to
+  `tool:Bash` and reaches the same comparison, so there is one filter engine rather than two that
+  can come to disagree about what a tool name is or how `git` comes to name `git commit`. Nothing
+  about the flags changed: the same three matching rules they always had — a tool by its whole name,
+  a command by its name or its name and a subcommand, a session by a prefix that does not cross a
+  `/` — are now written down in the field table and tested from both directions.
+
+  `subCommands` moved to `bash.ts`, beside the parser it calls, and is re-exported from `inspect.ts`.
+  `RoundFilter` moved to `query.ts`, beside the compiler that reads it, and is re-exported the same
+  way.
+
+### Fixed
+
+- **A search URL with no `in=` no longer overrode a query's own `in:`.** The view defaulted the
+  entity to `rounds` when the URL did not name one, which silently discarded the grouping of any
+  query carrying its own — including every query `--ask` compiles. Absent now means "whatever the
+  query says", and the tabs write it explicitly.
+
+- **`/api/compile` refuses `GET`**, like every other route that writes or starts a program. It was
+  reachable as a GET and answered with a 400 rather than a 405.
+
 ## [0.3.8] - 2026-08-25
 
 ### Added
@@ -946,6 +1108,7 @@ First release.
   duration, so every command in a multi-command call is charged the whole of it.
 
 [Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.8...HEAD
+[0.3.9]: https://github.com/flowzhq/probez/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/flowzhq/probez/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/flowzhq/probez/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/flowzhq/probez/compare/v0.3.5...v0.3.6

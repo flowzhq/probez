@@ -3,6 +3,16 @@ import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
+import {
+  AskingError,
+  compileSentence,
+  // `reading.ts` exports a `promptFor` too, and cli.ts uses both: one prints what `explain` would
+  // send about a question, this one what `find --ask` would send about a sentence.
+  promptFor as askPromptFor,
+  queryOf,
+  vocabularyOf,
+} from './asking.js'
+import type { Asked } from './asking.js'
 import { COMMAND_KINDS } from './bash.js'
 import { CATEGORIES, classifyCall, isCategory, isTarget, TARGETS } from './classify.js'
 import {
@@ -49,8 +59,20 @@ import type {
   TrailShare,
 } from './inspect.js'
 import { ASK_MEANING, ASKS, isAsk, questionsOf } from './question.js'
+import {
+  ENTITIES,
+  FIELD_GROUPS,
+  FIELDS,
+  fieldsUsed,
+  isEntity,
+  parse,
+  print,
+  PROPERTY_MEANING,
+  SORTABLE,
+} from './query.js'
+import type { Query } from './query.js'
 import type { Question } from './question.js'
-import { readerFile, readReader } from './reader.js'
+import { readerFile, ReaderError, readReader } from './reader.js'
 import {
   explainQuestion,
   isStale,
@@ -65,6 +87,18 @@ import { idsToRead } from './trail.js'
 import { CONTROL, ImportError, parseExport } from './import.js'
 import { openInBrowser } from './open.js'
 import { readPricing } from './pricing.js'
+import { categoryLabel, fromStore, search } from './search.js'
+import { buildIndex } from './searchindex.js'
+import type {
+  ProjectHit,
+  QuestionHit,
+  RoundHit,
+  SearchResult,
+  SessionHit,
+  Source,
+  TaskHit,
+  TrailHit,
+} from './search.js'
 import { DEFAULT_PORT, startServer } from './serve.js'
 import {
   analysisFile,
@@ -76,6 +110,7 @@ import {
   projectDir,
   readResults,
   readRounds,
+  readRoundsIn,
   slugFor,
   writeAnalysis,
 } from './store.js'
@@ -99,6 +134,7 @@ const COMMANDS = new Set([
   'questions',
   'question',
   'explain',
+  'find',
   'tools',
   'analyze',
   'view',
@@ -146,6 +182,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   questions: ['limit', 'session', 'task', 'kind', 'min-calls'],
   question: ['session'],
   explain: ['session', 'again', 'prompt'],
+  find: ['limit', 'in', 'sort', 'plan', 'ask', 'prompt', 'again'],
   tools: ['limit', 'kinds'],
   analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified', 'deep'],
   view: ['port', 'no-open'],
@@ -165,6 +202,31 @@ const DEFAULT_LIMIT = 50
 /** Commands listed under a tool before `--limit` has to withhold any. */
 const DEFAULT_SUB_LIMIT = 8
 
+/**
+ * The query language's fields, as the help prints them.
+ *
+ * Built from `FIELDS` rather than written out beside it, because a reference list that is a second
+ * copy of a table is a list that goes stale the first time the table grows. `is:` and `has:` print
+ * their values underneath, since a single word like `quiet` explains nothing on its own.
+ */
+function fieldHelp(): string {
+  const lines: string[] = []
+  for (const group of FIELD_GROUPS) {
+    const fields = FIELDS.filter((field) => field.group === group.id)
+    if (fields.length === 0) continue
+    lines.push(`    ${group.title}`)
+    for (const field of fields) {
+      lines.push(`      ${pad(`${field.key}:`, 11)}${field.says}`)
+      if (field.key !== 'is' && field.key !== 'has') continue
+      for (const value of field.values ?? []) {
+        lines.push(`        ${pad(`${field.key}:${value}`, 17)}${PROPERTY_MEANING[value] ?? ''}`)
+      }
+    }
+    lines.push('')
+  }
+  return lines.join('\n').trimEnd()
+}
+
 const HELP = `probez: see what your coding agents actually did.
 
 What is recorded, and what names it
@@ -182,6 +244,70 @@ one above it and no two kinds of id can be mistaken for each other.
 Usage
   probez [project]             Summary for a project, picking up anything new first
   probez projects              Every project on this machine
+
+Search
+  probez find "<query>" [project]
+                               One query over everything that has been collected
+  --all                        Every project in the store, not just this one
+  --in <what>                  What to count: ${ENTITIES.slice(0, 3).join(' · ')}
+                               ${ENTITIES.slice(3).join(' · ')}
+  --sort <field>               Biggest first. \`+field\` for the other end:
+                               ${SORTABLE.slice(0, 8).join(' · ')}
+                               ${SORTABLE.slice(8).join(' · ')}
+  --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT}, 0 for all)
+  --plan                       Print what probez made of the query and run nothing
+  --json                       The whole result: totals, share, distribution, rows
+  --ask                        Read the words as a question and let your own LLM write the
+                               query. See below
+  --prompt                     With --ask: print what would be sent and run nothing
+  --again                      With --ask: ask again rather than using the answer already held
+
+  Bare words are free text, over the prompts, the prose, the commands and the paths. A
+  \`key:value\` filters, \`-\` negates, one after another means and, \`OR\` is the other one,
+  brackets regroup, and a quoted run is searched for as written:
+
+    probez find 'category:reconstruction cost:>0.50 -tool:Read since:7d'
+    probez find '(tool:Edit OR tool:Write) added:>200 in:tasks sort:cost'
+    probez find '"npm test" is:error --all'
+
+  What comes back first is a share, not a count. 412 rounds is a number; 18% of what this
+  project cost, in three of its sessions, nine tenths of it reconstruction, is a finding —
+  so a query re-scopes the profile rather than filtering a listing. \`--in\` says what the
+  matched rounds are then counted as: a session matches when a round inside it does, and
+  the row reports the rounds that matched with the size of the whole session beside them.
+
+  A query is read the same way half-typed as finished: what cannot be read yet is said, under
+  the part of the query it is about, and everything else still runs. \`--plan\` prints that
+  reading on its own, which is a way to find out what probez made of a query without it going
+  near a store.
+
+  The flags on \`rounds\` are the same language underneath — \`--tool Bash\` is \`tool:Bash\` —
+  so the two cannot come to disagree about what a tool name is.
+
+  \`--ask\` is the other way in, for when you would rather not learn the language:
+
+    probez find --ask "which sessions had the most failing shell commands"
+
+  probez writes the field table, the values each field can take, and a sample of the names this
+  store holds — tool names, command names, model names — with your question, to the command in
+  \`<data-dir>/reader.json\`, the same one \`explain\` uses. What comes back is a **query**, not
+  an answer: probez parses it, refuses it outright if it does not read, prints it, and then
+  answers it the way it answers one you typed. So a model chooses which rounds to look at and
+  never what any of them came to — every number stays derived from the rounds, and the query it
+  wrote is one you can correct by hand and run again without asking.
+
+  Nothing you typed to the agent and nothing any tool returned is ever sent. \`--prompt\` prints
+  exactly what would go and runs nothing, which is also how to use this with a chat you already
+  have open. With no reader configured there is nothing probez can run, and it says so.
+
+  Free text matches a word or the start of one, so \`tok\` finds \`tokens\` and \`oken\` does not,
+  and \`"npm test"\` does not find \`pnpm test\`. That boundary is what lets a search index exist:
+  \`collect\` and \`analyze\` write one beside the rounds, and a query is answered from it while
+  only the rounds that matched are read. A project with no current index is read in full and the
+  footer says how many were, since that is the only way to tell a quick search from a slow one.
+
+  Fields
+${fieldHelp()}
 
 Sessions
   probez sessions [project]    One row per session
@@ -317,6 +443,11 @@ The view
                                then a session, then a task as a timeline of its rounds
   --port <n>                   Which port to listen on (default ${DEFAULT_PORT})
   --no-open                    Print the URL instead of opening a browser
+
+  There is a query bar in the header, on every page: \`/\` or ⌘K focuses it, it completes fields
+  and their values from what the store holds, and it takes the same language \`probez find\` does.
+  Opening a round from a result lights the rounds that matched inside its trace, with the rest of
+  the task still drawn around them.
 
   From there each project has a ⋮ menu: Sync, which is collect then analyze on that one;
   Rename, which sets a label this CLI answers to and moves nothing; Export, which hands its
@@ -1418,6 +1549,385 @@ function printUnclassified(analysis: Analysis, limit: number): void {
   console.log('')
 }
 
+/* ---------------------------------------------------------------------------------------------
+   Searching
+   --------------------------------------------------------------------------------------------- */
+
+/**
+ * The projects a search runs over.
+ *
+ * The store, not the agent's directory: a search reads what has been collected, so an imported
+ * project is searchable and one that has never been collected is not — which is the same rule
+ * `view` follows and for the same reason. `--all` is the whole store; a name, path or slug is one
+ * project; nothing at all is the project you are standing in.
+ */
+async function corporaFor(
+  dataDir: string,
+  target: string | undefined,
+  all: boolean,
+): Promise<Source[]> {
+  const stored = await listStored(dataDir)
+  let wanted: StoredProject[]
+  if (all) {
+    wanted = stored
+  } else {
+    const named = target ?? process.cwd()
+    const path = resolve(named)
+    const lower = named.toLowerCase()
+    // Exact first, and only then loosened, which is the rule every other way of naming a project
+    // here follows. Without it `flowz-mcp` also means `3d03b59_flowz-mcp_10`, and a search reports
+    // a share of three projects under the name of one.
+    const exact = stored.filter(
+      (row) => row.slug === named || row.path === path || row.project.toLowerCase() === lower,
+    )
+    wanted =
+      exact.length > 0 || target === undefined
+        ? exact
+        : stored.filter((row) => row.project.toLowerCase().includes(lower))
+  }
+
+  const corpora: Source[] = []
+  for (const row of wanted) {
+    corpora.push(
+      await fromStore(row.dir, row.project, { slug: row.slug, root: row.path ?? '' }),
+    )
+  }
+  return corpora
+}
+
+/**
+ * The query as it was typed, with each diagnostic underlined beneath the part it is about.
+ *
+ * The spans point into the original text, so that text has to be on screen for a caret to mean
+ * anything — printing the query probez made of it instead would put the carets under the wrong
+ * characters. Nothing here stops a query running: a diagnostic says what could not be read, and
+ * the rest of the query is still answered.
+ */
+function printDiagnostics(query: Query): void {
+  if (query.diagnostics.length === 0) return
+  console.log('')
+  console.log(`  ${query.text}`)
+  for (const problem of query.diagnostics) {
+    const width = Math.max(1, problem.at.to - problem.at.from)
+    console.log(`  ${' '.repeat(problem.at.from)}${'^'.repeat(width)}`)
+    console.log(`  ${problem.message}${problem.hint === undefined ? '' : ` — ${problem.hint}`}`)
+  }
+  console.log('')
+}
+
+/**
+ * What the query came to, before any row of it.
+ *
+ * This line is the feature. A search that answers with rows is a text box; the share is what makes
+ * it a reading of the profile — 412 rounds is a count, 18% of what this project cost is a finding.
+ */
+function printFound(result: SearchResult): void {
+  const parts = [
+    `${result.totals.rounds} round${result.totals.rounds === 1 ? '' : 's'}`,
+    result.totals.unpriced === result.totals.rounds ? '—' : `${money(result.totals.cost)}${result.totals.unpriced > 0 ? '+' : ''}`,
+  ]
+  if (result.scope.rounds > result.totals.rounds) {
+    parts.push(`${percent(result.totals.rounds, result.scope.rounds)} of rounds`)
+    if (result.scope.cost > 0) parts.push(`${percent(result.totals.cost, result.scope.cost)} of cost`)
+  }
+  parts.push(`${result.totals.sessions} session${result.totals.sessions === 1 ? '' : 's'}`)
+  if (result.totals.projects > 1) parts.push(`${result.totals.projects} projects`)
+  // Named where there are any, because a query about failures has no column for them in most of
+  // these tables and the count is the thing it was asking about.
+  if (result.totals.errors > 0) parts.push(`${result.totals.errors} tool errors`)
+  // A share of the work that carried a label, not of every matched round: rounds of pure prose
+  // carry none, and counting them in the denominator would understate every category at once.
+  if (result.top !== null) {
+    parts.push(`${(result.top.share * 100).toFixed(0)}% ${result.top.label.toLowerCase()}`)
+  }
+  console.log('')
+  console.log(`  ${parts.join(' · ')}`)
+  console.log('')
+}
+
+function printRoundHits(hits: RoundHit[], projects: boolean, sessions: boolean): void {
+  const idWidth = idColumn(16, hits.map((hit) => `${shortSession(hit.session)}#${hit.task}.${hit.round}`))
+  const nameWidth = projects ? idColumn(10, hits.map((hit) => hit.project)) : 0
+  console.log(
+    `  ${projects ? pad('PROJECT', nameWidth) : ''}${pad('ROUND', idWidth)}${pad('WORK', 16)}${padStart('COST', 8)}  ${padStart('TIME', 7)}  ${padStart('WHEN', 11)}  SAYS`,
+  )
+  for (const hit of hits) {
+    const id = sessions || projects
+      ? `${shortSession(hit.session)}#${hit.task}.${hit.round}`
+      : `${hit.task}.${hit.round}`
+    const when = hit.ts === null ? '—' : ago(Date.parse(hit.ts))
+    const work = hit.category === null ? '·' : categoryLabel(hit.category)
+    const errors = hit.errors > 0 ? ` ✗${hit.errors}` : ''
+    const line = hit.says === '' ? clip(hit.tools, 40) : clip(hit.says, 40)
+    console.log(
+      `  ${projects ? pad(hit.project, nameWidth) : ''}${pad(id, idWidth)}${pad(work, 16)}${padStart(hit.cost === null ? '—' : money(hit.cost), 8)}  ${padStart(duration(hit.ms), 7)}  ${padStart(when, 11)}  ${line}${errors}`,
+    )
+  }
+}
+
+function printSessionHits(hits: SessionHit[], projects: boolean): void {
+  const idWidth = idColumn(11, hits.map((hit) => shortSession(hit.session)))
+  const nameWidth = projects ? idColumn(10, hits.map((hit) => hit.project)) : 0
+  console.log(
+    `  ${projects ? pad('PROJECT', nameWidth) : ''}${pad('SESSION', idWidth)}${padStart('ROUNDS', 8)}  ${padStart('OF', 5)}  ${padStart('COST', 9)}  ${padStart('TIME', 7)}  LAST`,
+  )
+  for (const hit of hits) {
+    const cost = hit.unpriced === hit.rounds ? '—' : `${money(hit.cost)}${hit.unpriced > 0 ? '+' : ''}`
+    const last = hit.last_ts === null ? '—' : ago(Date.parse(hit.last_ts))
+    console.log(
+      `  ${projects ? pad(hit.project, nameWidth) : ''}${pad(shortSession(hit.session), idWidth)}${padStart(String(hit.rounds), 8)}  ${padStart(String(hit.of), 5)}  ${padStart(cost, 9)}  ${padStart(duration(hit.gen_ms), 7)}  ${last}`,
+    )
+  }
+}
+
+function printTaskHits(hits: TaskHit[], projects: boolean, width: number): void {
+  const idWidth = idColumn(13, hits.map((hit) => `${shortSession(hit.session)}#${hit.task}`))
+  const nameWidth = projects ? idColumn(10, hits.map((hit) => hit.project)) : 0
+  console.log(
+    `  ${projects ? pad('PROJECT', nameWidth) : ''}${pad('TASK', idWidth)}${padStart('ROUNDS', 6)}  ${padStart('OF', 4)}  ${padStart('COST', 9)}  ASKED`,
+  )
+  for (const hit of hits) {
+    const cost = hit.cost === 0 ? '—' : money(hit.cost)
+    console.log(
+      `  ${projects ? pad(hit.project, nameWidth) : ''}${pad(`${shortSession(hit.session)}#${hit.task}`, idWidth)}${padStart(String(hit.rounds), 6)}  ${padStart(String(hit.of), 4)}  ${padStart(cost, 9)}  ${clip(hit.asked, Math.max(20, width - idWidth - nameWidth - 26))}`,
+    )
+  }
+}
+
+function printProjectHits(hits: ProjectHit[]): void {
+  const nameWidth = idColumn(14, hits.map((hit) => hit.project))
+  console.log(
+    `  ${pad('PROJECT', nameWidth)}${padStart('ROUNDS', 8)}  ${padStart('OF', 7)}  ${padStart('SESSIONS', 8)}  ${padStart('COST', 9)}  LAST`,
+  )
+  for (const hit of hits) {
+    const cost = hit.unpriced === hit.rounds ? '—' : `${money(hit.cost)}${hit.unpriced > 0 ? '+' : ''}`
+    const last = hit.last_ts === null ? '—' : ago(Date.parse(hit.last_ts))
+    console.log(
+      `  ${pad(hit.project, nameWidth)}${padStart(String(hit.rounds), 8)}  ${padStart(String(hit.of), 7)}  ${padStart(String(hit.sessions), 8)}  ${padStart(cost, 9)}  ${last}`,
+    )
+  }
+}
+
+function printQuestionHits(hits: QuestionHit[], projects: boolean, width: number): void {
+  const idWidth = idColumn(14, hits.map((hit) => `${shortSession(hit.session)}#${hit.ref}`))
+  const nameWidth = projects ? idColumn(10, hits.map((hit) => hit.project)) : 0
+  console.log(
+    `  ${projects ? pad('PROJECT', nameWidth) : ''}${pad('QUESTION', idWidth)}${pad('KIND', 9)}${padStart('CALLS', 5)}  ${padStart('AGAIN', 5)}  ASKED ABOUT`,
+  )
+  for (const hit of hits) {
+    console.log(
+      `  ${projects ? pad(hit.project, nameWidth) : ''}${pad(`${shortSession(hit.session)}#${hit.ref}`, idWidth)}${pad(hit.kind, 9)}${padStart(String(hit.calls), 5)}  ${padStart(String(hit.repeats), 5)}  ${clip(hit.terms.join(' '), Math.max(20, width - idWidth - nameWidth - 30))}`,
+    )
+  }
+}
+
+function printTrailHits(hits: TrailHit[], projects: boolean): void {
+  const idWidth = idColumn(14, hits.map((hit) => `${shortSession(hit.session)}#${hit.ref}`))
+  const nameWidth = projects ? idColumn(10, hits.map((hit) => hit.project)) : 0
+  console.log(
+    `  ${projects ? pad('PROJECT', nameWidth) : ''}${pad('TRAIL', idWidth)}${padStart('DEPTH', 5)}  ${padStart('WIDE', 4)}  ${padStart('STEPS', 5)}  ${pad('OUTCOME', 11)}${padStart('TIME', 7)}`,
+  )
+  for (const hit of hits) {
+    console.log(
+      `  ${projects ? pad(hit.project, nameWidth) : ''}${pad(`${shortSession(hit.session)}#${hit.ref}`, idWidth)}${padStart(String(hit.depth), 5)}  ${padStart(String(hit.breadth), 4)}  ${padStart(String(hit.steps), 5)}  ${pad(hit.outcome, 11)}${padStart(duration(hit.ms), 7)}`,
+    )
+  }
+}
+
+/**
+ * `probez find`: one grammar over everything that has been collected.
+ *
+ * Reads the store and nothing else, so it runs before the agent's directory is required to exist,
+ * the same as `view`.
+ */
+async function runFind(
+  dataDir: string,
+  text: string | undefined,
+  target: string | undefined,
+  options: {
+    all: boolean
+    entity: string | undefined
+    limit: number | undefined
+    sort: string | undefined
+    plan: boolean
+    ask: boolean
+    prompt: boolean
+    again: boolean
+    json: boolean
+  },
+): Promise<void> {
+  if (text === undefined || text.trim() === '') {
+    fail(
+      options.ask
+        ? 'find --ask needs a question, as `probez find --ask "where did last week go"`'
+        : 'find needs something to look for, as `probez find "tool:Bash is:error"`. `probez help` lists the fields',
+    )
+  }
+  if (!options.ask && options.prompt) {
+    fail('--prompt goes with --ask: it prints the question probez would send, and sends nothing')
+  }
+
+  if (options.entity !== undefined && !isEntity(options.entity)) {
+    fail(`--in takes one of ${ENTITIES.join(', ')}, got "${options.entity}"`)
+  }
+
+  // `--in` and `--sort` are the flag spellings of `in:` and `sort:`, appended rather than applied
+  // so that there is one reader of both. A directive typed into the query itself comes last and
+  // therefore wins, which is the right way round: it is the more specific of the two, and it is the
+  // one that survives being copied out of a shell and into a URL.
+  const written = options.entity === undefined ? '' : ` in:${options.entity}`
+  const sorted = options.sort === undefined ? '' : ` sort:${options.sort}`
+  // A sentence is not a query, so it is not parsed as one; `--ask` replaces this below.
+  let query = options.ask ? parse('') : parse(`${text}${written}${sorted}`)
+
+  if (options.plan) {
+    // What was read, and nothing run. The counterpart of `explain --prompt`: a way to find out what
+    // probez made of a query without it going anywhere near a store.
+    printDiagnostics(query)
+    console.log('')
+    console.log(`  read as   ${print(query) === '' ? 'everything' : print(query)}`)
+    console.log(`  counting  ${query.entity}`)
+    console.log(`  fields    ${[...fieldsUsed(query.node)].sort().join(' · ') || '·'}`)
+    console.log(`  sort      ${query.sort === null ? 'newest first' : `${query.sort.key}, ${query.sort.desc ? 'most' : 'least'} first`}`)
+    console.log(`  limit     ${query.limit ?? options.limit ?? DEFAULT_LIMIT}`)
+    console.log('')
+    return
+  }
+
+  const corpora = await corporaFor(dataDir, target, options.all)
+  if (corpora.length === 0) {
+    fail(
+      options.all
+        ? 'nothing has been collected yet. Run `probez collect --all` first'
+        : `no collected project matched "${target ?? shorten(process.cwd())}". Run \`probez projects\` for the list`,
+    )
+  }
+
+  // A sentence becomes a query here and then stops being special: what runs below is the query,
+  // through the same evaluator a typed one goes through, and every number under it is derived from
+  // the rounds. See `asking.ts` for why that is the whole of the arrangement.
+  let read: Asked | null = null
+  let ranReader = false
+  if (options.ask) {
+    const vocabulary = vocabularyOf(corpora.map((one) => one.index))
+    if (options.prompt) {
+      console.log(askPromptFor(text!, vocabulary))
+      return
+    }
+    const reader = await readReader(dataDir)
+    if (reader === null) {
+      fail(
+        'there is no reader configured, so there is nothing to ask. Write one into ' +
+          `${shorten(readerFile(dataDir))} — {"command": ["claude", "-p"]} — or use ` +
+          '`--prompt` to print the question and answer it yourself',
+      )
+    }
+    try {
+      const compiled = await compileSentence(dataDir, reader, text!, vocabulary, {
+        again: options.again,
+      })
+      read = compiled.asked
+      ranReader = compiled.ran
+    } catch (error) {
+      if (error instanceof AskingError || error instanceof ReaderError) fail(error.message)
+      throw error
+    }
+    query = parse(`${queryOf(read)}${written}${sorted}`)
+  }
+
+  const pricing = await readPricing(dataDir)
+  const limit = options.limit ?? DEFAULT_LIMIT
+  const result = await search(corpora, query, { pricing, limit })
+
+  if (options.json) {
+    console.log(JSON.stringify(read === null ? result : { read, ...result }, null, 2))
+    return
+  }
+
+  const width = Math.max(60, Math.min(process.stdout.columns ?? 100, 120)) - 8
+  const projects = corpora.length > 1
+  // What the sentence was read as, before anything it found. The query is the thing to check, so
+  // it is the thing printed — and it is typeable, so a reading that is wrong can be corrected by
+  // hand rather than asked again.
+  if (read !== null) {
+    console.log('')
+    console.log(`  probez read "${clip(read.sentence, 68)}" as`)
+    console.log('')
+    console.log(`    ${print(query)}`)
+    console.log('')
+    if (read.why !== '') {
+      const said = `${read.by}: ${read.why}`
+      for (const line of wrap(said, width - 4)) console.log(`  ${line}`)
+      console.log('')
+    }
+    console.log(
+      ranReader
+        ? '  Run the query above to answer this again without asking.'
+        : `  Held from an earlier ask, ${ago(Date.parse(read.at))}. \`--again\` asks afresh.`,
+    )
+  }
+
+  const only = corpora[0]
+  if (!projects && only !== undefined) {
+    console.log('')
+    const where = only.root === undefined || only.root === '' ? '(imported)' : shorten(only.root)
+    console.log(`  ${only.project}  ${where}`)
+  }
+  printDiagnostics(query)
+
+  if (result.totals.rounds === 0) {
+    console.log('')
+    console.log(`  nothing matched \`${print(query)}\``)
+    console.log('')
+    console.log('  `probez help` lists every field a query can name.')
+    console.log('')
+    return
+  }
+
+  printFound(result)
+
+  const hits = result.hits
+  const sessionsShown = projects || result.totals.sessions > 1
+  switch (result.entity) {
+    case 'sessions':
+      printSessionHits(hits as SessionHit[], projects)
+      break
+    case 'tasks':
+      printTaskHits(hits as TaskHit[], projects, width)
+      break
+    case 'projects':
+      printProjectHits(hits as ProjectHit[])
+      break
+    case 'questions':
+      printQuestionHits(hits as QuestionHit[], projects, width)
+      break
+    case 'trails':
+      printTrailHits(hits as TrailHit[], projects)
+      break
+    default:
+      printRoundHits(hits as RoundHit[], projects, sessionsShown)
+  }
+
+  console.log('')
+  console.log(
+    `  ${counted(hits.length, result.found, result.entity.replace(/s$/, ''))}${more(hits.length, result.found)}`,
+  )
+  if (result.totals.unpriced > 0) {
+    console.log(
+      `  + ${result.totals.unpriced} round${result.totals.unpriced === 1 ? '' : 's'} have no rate for their model and are outside COST. Set one in \`probez view\` → Settings`,
+    )
+  }
+  // Said rather than hidden: the same query is an order of magnitude quicker against a project
+  // with a current index, and the only way to tell which you got is to be told.
+  if (result.scanned.read > 0) {
+    const many = result.scanned.read === 1 ? 'project was' : 'projects were'
+    console.log(
+      `  ${result.scanned.read} ${many} read in full for want of a current search index. \`probez collect\` builds one.`,
+    )
+  }
+  console.log('')
+}
+
 function fail(message: string): never {
   console.error(`probez: ${message}`)
   process.exit(2)
@@ -1555,6 +2065,10 @@ async function main(): Promise<void> {
         again: { type: 'boolean', default: false },
         prompt: { type: 'boolean', default: false },
         outcome: { type: 'string' },
+        in: { type: 'string' },
+        sort: { type: 'string' },
+        plan: { type: 'boolean', default: false },
+        ask: { type: 'boolean', default: false },
         agent: { type: 'string' },
         errors: { type: 'boolean', default: false },
         limit: { type: 'string' },
@@ -1580,6 +2094,14 @@ async function main(): Promise<void> {
   const command = isCommand ? first : 'collect'
   let target = isCommand ? positionals[1] : first
   let selector: string | undefined
+
+  // `find` is the one command whose first positional is not a project: the query is what it is
+  // about, and the project is the optional narrowing after it.
+  let queryText: string | undefined
+  if (command === 'find') {
+    queryText = positionals[1]
+    target = positionals[2]
+  }
 
   // The detail commands name something inside a project, so they take an id as well as a project
   // and either one may be omitted. Two positionals are `<project> <id>`; one is the id alone,
@@ -1650,6 +2172,23 @@ async function main(): Promise<void> {
   // Export reads the store and writes a file of its own; the agent's directory has no part in it.
   if (command === 'export') {
     await runExport(dataDir, target, values.bundle === true, values.out)
+    return
+  }
+
+  // Search reads the store, for the same reason `view` does: what has been collected stays
+  // findable whether or not the sessions it came from are still on this machine.
+  if (command === 'find') {
+    await runFind(dataDir, queryText, target, {
+      all: values.all === true,
+      entity: values.in,
+      limit: asCount(values.limit, 'limit'),
+      sort: values.sort,
+      plan: values.plan === true,
+      ask: values.ask === true,
+      prompt: values.prompt === true,
+      again: values.again === true,
+      json: values.json === true,
+    })
     return
   }
 
@@ -1927,6 +2466,9 @@ async function main(): Promise<void> {
           { rounds: rounds.length, toolless: whole.coverage.toolless },
           analysisRecords(rounds),
         )
+        // The search index is the same derivation of the same rounds, so it is rebuilt wherever the
+        // labels cache is. `find` never writes one: reading writes nothing, here as everywhere.
+        await buildIndex(projectDir(dataDir, project))
 
         if (values.json) {
           const shaped = analyses.map((entry) => ({
@@ -2237,7 +2779,11 @@ async function main(): Promise<void> {
 
   const results: CollectResult[] = []
   for (const project of matched) {
-    results.push(await collectProject(project, dataDir, { full: values.full }))
+    const collected = await collectProject(project, dataDir, { full: values.full })
+    results.push(collected)
+    // A project that has just been collected is searchable at once rather than on the next
+    // `analyze`, which is what makes `probez find` fast on a store nobody has analyzed.
+    await buildIndex(projectDir(dataDir, project))
   }
 
   if (values.json) {

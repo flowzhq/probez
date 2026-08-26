@@ -7,8 +7,10 @@ import { extname, join, resolve, sep } from 'node:path'
 
 import {
   BadRequest,
+  compileSentenceFor,
   explainOne,
   exportProject,
+  facetsPayload,
   importExport,
   NotFound,
   pricingPayload,
@@ -20,6 +22,7 @@ import {
   resultPayload,
   roundPayload,
   savePricing,
+  searchPayload,
   sessionPayload,
   syncProject,
   taskPayload,
@@ -241,6 +244,17 @@ function isReaderPath(parts: string[]): boolean {
   return parts.length === 1 && parts[0] === 'reader'
 }
 
+/**
+ * Reading a sentence as a query. POST only, because it starts a program.
+ *
+ * The second thing in probez that spawns anything, after `explain`, and it is a POST for the same
+ * reason: a URL that runs something when it is merely visited is a URL that can be put in an
+ * `<img>` tag on any page you happen to open. See CONTRIBUTING § rule 2.
+ */
+function isCompilePath(parts: string[]): boolean {
+  return parts.length === 1 && parts[0] === 'compile'
+}
+
 /** Taking in an exported project. POST only: it writes. */
 function isImportPath(parts: string[]): boolean {
   return parts.length === 1 && parts[0] === 'import'
@@ -252,6 +266,7 @@ function isWritePath(parts: string[]): boolean {
     isProjectWritePath(parts) ||
     isPricingPath(parts) ||
     isReaderPath(parts) ||
+    isCompilePath(parts) ||
     isImportPath(parts)
   )
 }
@@ -305,6 +320,9 @@ async function serveApi(
   url: URL,
 ): Promise<void> {
   const method = req.method ?? 'GET'
+  // /api/compile                                              POST
+  // /api/search?q=&project=&in=&limit=
+  // /api/facets?key=&project=
   // /api/projects
   // /api/projects/<slug>
   // /api/projects/<slug>/tools
@@ -333,6 +351,47 @@ async function serveApi(
       return
     }
     sendJson(res, 200, await importExport(dataDir, body))
+    return
+  }
+
+  // Searching and the values a search can name. Both are reads, so both are GET and neither
+  // writes anything — not even the index, which `sync` builds beside the analysis cache.
+  if (group === 'search' && slug === undefined) {
+    sendJson(
+      res,
+      200,
+      await searchPayload(dataDir, {
+        q: url.searchParams.get('q') ?? '',
+        slug: url.searchParams.get('project') ?? undefined,
+        entity: url.searchParams.get('in') ?? undefined,
+        limit: asIndex(url.searchParams.get('limit')),
+      }),
+    )
+    return
+  }
+
+  if (group === 'facets' && slug === undefined) {
+    sendJson(
+      res,
+      200,
+      await facetsPayload(dataDir, {
+        key: url.searchParams.get('key') ?? undefined,
+        slug: url.searchParams.get('project') ?? undefined,
+      }),
+    )
+    return
+  }
+
+  if (group === 'compile' && slug === undefined) {
+    // Reachable only as POST; the method check upstream has already refused a GET here.
+    let body: unknown
+    try {
+      body = await readJsonBody(req)
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+      return
+    }
+    sendJson(res, 200, await compileSentenceFor(dataDir, body))
     return
   }
 
@@ -547,10 +606,14 @@ export async function startServer(options: ServeOptions): Promise<Serving> {
       res.end()
       return
     }
-    // Collecting, renaming and removing are writes, and one of them destroys data. None of them may
-    // be reachable by a GET: a URL that does any of it when merely visited can be put in an <img>
-    // tag on a page you did not write.
-    if (wanted === 'GET' && isApi && (isProjectWritePath(parts) || isImportPath(parts))) {
+    // Collecting, renaming and removing are writes, one of them destroys data, and compiling a
+    // sentence starts a program. None of them may be reachable by a GET: a URL that does any of it
+    // when merely visited can be put in an <img> tag on a page you did not write.
+    if (
+      wanted === 'GET' &&
+      isApi &&
+      (isProjectWritePath(parts) || isImportPath(parts) || isCompilePath(parts))
+    ) {
       res.writeHead(405, { allow: 'POST', 'content-length': 0 })
       res.end()
       return

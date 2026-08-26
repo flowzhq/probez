@@ -15,7 +15,7 @@ import {
 import { TrailPanel } from '../components/TrailPanel'
 import { WorkBars } from '../components/WorkBars'
 import { duration, money, percent, shortCommit, shortId, tokens, when } from '../format'
-import { go, href } from '../router'
+import { go, href, linkProps } from '../router'
 import { useData } from '../useData'
 import type { Question, Reading } from '../api'
 import type { ReactElement } from 'react'
@@ -38,6 +38,7 @@ export function Task({
   round,
   trail: trailRef,
   question: questionRef,
+  q,
 }: {
   slug: string
   session: string
@@ -47,8 +48,27 @@ export function Task({
   trail: string | null
   /** The question being read, by its `at`, from the URL. */
   question: number | null
+  /** A query whose matching rounds are lit in the trace, when one brought you here. */
+  q: string | null
 }): ReactElement {
   const { data, error } = useData(() => api.task(slug, session, task), [slug, session, task])
+
+  /**
+   * The rounds of this task a query matched, for lighting the trace.
+   *
+   * Narrowed to this session and task in the query itself rather than fetched whole and filtered
+   * here, so what comes back is the handful of rounds on this page instead of every round in the
+   * project that matched. Only fetched at all when a query is in the URL.
+   */
+  const { data: lit } = useData(
+    () =>
+      q === null
+        ? Promise.resolve(null)
+        : api.search(`${q} session:${session} task:${task}`, { slug, limit: 0 }),
+    [q, slug, session, task],
+  )
+  const matched =
+    q === null || lit === null ? null : new Set(lit.hits.map((hit) => hit.round ?? -1))
   const trail = (data?.trails ?? []).find((one) => one.ref === trailRef) ?? null
   const question = (data?.questions ?? []).find((one) => one.at === questionRef) ?? null
 
@@ -119,6 +139,7 @@ export function Task({
           { label: `Session ${shortId(session)}`, to: href.session(slug, session) },
           { label: `Task ${task}` },
         ]}
+        search={{ slug }}
       />
       <main className="page">
         {error !== null && data === null ? (
@@ -186,6 +207,23 @@ export function Task({
 
             <section>
               <h2>Trace</h2>
+              {/* A dimmed strip has to say why it is dimmed, or it reads as a rendering fault
+                  rather than as an answer. It also has to be undoable from here: the query came
+                  from somewhere else, and there is otherwise no way to put the trace back. */}
+              {q === null ? null : (
+                <p className="lit">
+                  <span className="lit-mark" aria-hidden />
+                  {matched === null
+                    ? 'Finding the rounds that matched…'
+                    : `${matched.size} of these rounds matched `}
+                  <code className="mono">{q}</code>.{' '}
+                  <a {...linkProps(href.task(slug, session, task, round ?? undefined, trailRef, questionRef))}>
+                    Show the whole task
+                  </a>
+                  {' · '}
+                  <a {...linkProps(href.search(q, { slug }))}>Back to the results</a>
+                </p>
+              )}
               <Trace
                 trace={data.trace}
                 trails={data.trails}
@@ -193,6 +231,7 @@ export function Task({
                 selectedTrail={trailRef}
                 questions={data.questions}
                 selectedQuestion={questionRef}
+                matched={matched}
                 onSelect={(picked) => select(picked.round)}
                 onSelectTrail={(picked) =>
                   // Picking a trail also opens the round it starts at, the way the lane always has.

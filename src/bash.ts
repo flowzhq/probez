@@ -10,6 +10,8 @@
  * guess, since a wrong bucket is worse than a missing one.
  */
 
+import type { ToolCall } from './types.js'
+
 /** The kind of work a command does. `other` means "not in the table", not "unclassifiable". */
 export type CommandKind =
   | 'search'
@@ -419,4 +421,22 @@ export function parseCommands(command: unknown): Command[] {
 export function commandOf(input: unknown): unknown {
   if (input === null || typeof input !== 'object') return null
   return (input as Record<string, unknown>).command
+}
+
+/**
+ * Tools whose calls decompose one level further, and how. `Bash` is the only member: every other
+ * tool's name already is its operation. The registry is what keeps adding another. An MCP server's
+ * tools or a `Task`'s subagent type get an entry rather than a second design.
+ */
+const SUB_LABELS: Record<string, (input: unknown) => Command[]> = {
+  Bash: (input) => parseCommands(commandOf(input)),
+}
+
+/** What one call decomposes into, or an empty list when the tool has no finer level. */
+export function subCommands(tool: ToolCall): Command[] {
+  const label = tool.name === null ? undefined : SUB_LABELS[tool.name]
+  if (label === undefined) return []
+  const found = label(tool.input)
+  // A call that ran *something* always counts as one row, or the sub-table quietly under-reports.
+  return found.length > 0 ? found : [{ name: UNPARSED, kind: 'other' }]
 }

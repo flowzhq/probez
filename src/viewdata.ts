@@ -57,6 +57,12 @@ import {
   writePricing,
 } from './pricing.js'
 import type { Pricing, Rates } from './pricing.js'
+import { compileSentence, MAX_SENTENCE, queryOf, vocabularyOf } from './asking.js'
+import { isEntity, parse, print } from './query.js'
+import { FIELDS } from './query.js'
+import { fromStore, search } from './search.js'
+import type { SearchResult, Source } from './search.js'
+import { buildIndex, isFacet, SearchIndex } from './searchindex.js'
 import { contextShare } from './models.js'
 import type { Round, ToolCall } from './types.js'
 
@@ -879,6 +885,205 @@ export async function explainOne(
   }
 }
 
+/* Searching: one query over the store, and the values a query can name. --------------------- */
+
+export interface SearchPayload extends SearchResult {
+  /** Which project the query was scoped to, or null when it ran over the whole store. */
+  scope_slug: string | null
+  /** The query as probez read it back, which is what the bar shows when it compiles one. */
+  read_as: string
+  /**
+   * The matched slice's distribution, as the shares the bar is drawn from.
+   *
+   * The same shape the project rows carry, so one component draws both. `categories` beside it is
+   * the unrounded tally, for anything that wants the counts rather than the picture.
+   */
+  mix: CategoryShare[]
+}
+
+/**
+ * Answer a query.
+ *
+ * A read, and so a GET: nothing here writes, not even the index, which is built by `sync` along
+ * with the analysis cache. A project with no current index is read in full and `scanned` says so,
+ * exactly as it does at the command line.
+ */
+export async function searchPayload(
+  dataDir: string,
+  options: { q: string; slug?: string; entity?: string; limit?: number; offset?: number },
+): Promise<SearchPayload> {
+  const text = options.q ?? ''
+  if (text.trim() === '') throw new BadRequest('that search has nothing to look for in it')
+  if (options.entity !== undefined && !isEntity(options.entity)) {
+    throw new BadRequest(`there is no \`${options.entity}\` to count`)
+  }
+
+  // The entity is set on the parsed query rather than appended to the text, so what the page shows
+  // back is what was typed. Appending `in:rounds` to every query would put a directive nobody wrote
+  // into the title of every result.
+  const query = parse(text)
+  if (options.entity !== undefined) query.entity = options.entity
+  const stored = await listStored(dataDir)
+  const wanted = options.slug === undefined ? stored : stored.filter((row) => row.slug === options.slug)
+  if (options.slug !== undefined && wanted.length === 0) {
+    throw new NotFound(`no project ${options.slug} in this store`)
+  }
+
+  const sources: Source[] = []
+  for (const row of wanted) {
+    sources.push(await fromStore(row.dir, row.project, { slug: row.slug, root: row.path ?? '' }))
+  }
+
+  const result = await search(sources, query, {
+    pricing: await readPricing(dataDir),
+    limit: options.limit ?? SEARCH_LIMIT,
+  })
+  const classified = result.categories.reduce((sum, row) => sum + row.rounds, 0)
+  return {
+    ...result,
+    scope_slug: options.slug ?? null,
+    read_as: print(query),
+    mix:
+      classified === 0
+        ? []
+        : result.categories.map((row) => ({
+            category: row.name,
+            label: row.label,
+            share: row.rounds / classified,
+          })),
+  }
+}
+
+/** Rows the typeahead offers before anything has been typed after the colon. */
+export const SEARCH_LIMIT = 50
+/** Values offered for one field. Past this it is a list nobody scrolls. */
+const FACET_LIMIT = 40
+
+export interface FacetPayload {
+  /** Every key a query can name, with what it reads, so the bar can offer them before the colon. */
+  fields: Array<{ key: string; says: string; kind: string; group: string; values: string[] }>
+  /** The values of one field, most used first, when one was asked about. */
+  key: string | null
+  values: Array<{ value: string; rounds: number }>
+  /** How many projects could answer. A project with no index contributes no values, and says so. */
+  scanned: { projects: number; indexed: number }
+}
+
+/**
+ * What a query can name, and what the store actually holds for it.
+ *
+ * The field list is the same table the help prints and the parser validates against, so a key that
+ * exists is a key the typeahead offers. The values come from the index, which is what makes them
+ * worth offering: `tool:` completing to the eleven tools this project has actually called, with
+ * the count beside each, is a different thing from a list of tools in general.
+ */
+export async function facetsPayload(
+  dataDir: string,
+  options: { key?: string; slug?: string },
+): Promise<FacetPayload> {
+  const fields = FIELDS.map((field) => ({
+    key: field.key,
+    says: field.says,
+    kind: field.kind,
+    group: field.group,
+    values: field.values ?? [],
+  }))
+
+  const key = options.key ?? null
+  if (key === null) {
+    return { fields, key: null, values: [], scanned: { projects: 0, indexed: 0 } }
+  }
+
+  const stored = await listStored(dataDir)
+  const wanted = options.slug === undefined ? stored : stored.filter((row) => row.slug === options.slug)
+  const counts = new Map<string, number>()
+  let indexed = 0
+  for (const row of wanted) {
+    const index = await SearchIndex.read(row.dir)
+    if (index === null) continue
+    indexed += 1
+    if (key === 'project') {
+      counts.set(row.project, (counts.get(row.project) ?? 0) + row.rounds)
+      continue
+    }
+    if (!isFacet(key)) continue
+    for (const one of index.facets(key)) {
+      counts.set(one.value, (counts.get(one.value) ?? 0) + one.rounds)
+    }
+  }
+
+  const values = [...counts.entries()]
+    .map(([value, rounds]) => ({ value, rounds }))
+    .sort((a, b) => b.rounds - a.rounds || a.value.localeCompare(b.value))
+    .slice(0, FACET_LIMIT)
+  return { fields, key, values, scanned: { projects: wanted.length, indexed } }
+}
+
+/* Reading a sentence as a query. The one route here that starts a program. ------------------- */
+
+export interface CompilePayload {
+  sentence: string
+  /** The query it was read as, as probez reads it back — which is what the bar is filled with. */
+  query: string
+  why: string
+  by: string
+  at: string
+  /** False when the answer came out of the cache, so the page can say nothing was run. */
+  ran: boolean
+}
+
+/**
+ * Turn a sentence into a query.
+ *
+ * The only path in the view that starts a program, and the second in probez that does at all. What
+ * comes back is a *query*: probez parses it, refuses it if it does not read cleanly, and hands it
+ * back for the person to see and edit. Running it is the ordinary deterministic path, so nothing a
+ * model says reaches a number. See the note at the top of `asking.ts`.
+ *
+ * A POST for the same reason `explain` is one: a URL that spawns something when it is merely
+ * visited is a URL that can be put in an `<img>` tag on any page you happen to open.
+ */
+export async function compileSentenceFor(dataDir: string, body: unknown): Promise<CompilePayload> {
+  const given = (body ?? {}) as { sentence?: unknown; project?: unknown; again?: unknown }
+  const sentence = typeof given.sentence === 'string' ? given.sentence.trim() : ''
+  if (sentence === '') throw new BadRequest('that has no question in it')
+  if (sentence.length > MAX_SENTENCE) {
+    throw new BadRequest(`a question has to be shorter than ${MAX_SENTENCE} characters`)
+  }
+
+  const reader = await readReader(dataDir)
+  if (reader === null) {
+    throw new BadRequest(
+      'There is no reader configured, so there is nothing to ask. Set one under Settings.',
+    )
+  }
+
+  const slug = typeof given.project === 'string' ? given.project : undefined
+  const stored = await listStored(dataDir)
+  const wanted = slug === undefined ? stored : stored.filter((row) => row.slug === slug)
+  const indexes = await Promise.all(wanted.map((row) => SearchIndex.read(row.dir)))
+
+  // A reader that refuses, times out, or answers with a query probez cannot read is something the
+  // person needs the words of — the message quotes what came back — so it is reported rather than
+  // becoming a 500 that says the view failed. The same shape `explain` uses.
+  let compiled
+  try {
+    compiled = await compileSentence(dataDir, reader, sentence, vocabularyOf(indexes), {
+      again: given.again === true,
+    })
+  } catch (error) {
+    throw new BadRequest(error instanceof Error ? error.message : 'the reader failed')
+  }
+  return {
+    sentence: compiled.asked.sentence,
+    query: queryOf(compiled.asked),
+    why: compiled.asked.why,
+    by: compiled.asked.by,
+    at: compiled.asked.at,
+    ran: compiled.ran,
+  }
+}
+
 export async function toolsPayload(dataDir: string, slug: string): Promise<ToolsPayload> {
   const { stored, rounds, pricing } = await open(dataDir, slug)
   return { project: shown(stored), tools: toolTally(rounds, 'command'), kinds: toolTally(rounds, 'kind') }
@@ -950,6 +1155,9 @@ export async function syncProject(
       { rounds: rounds.length, toolless: analysis.coverage.toolless },
       analysisRecords(rounds),
     )
+    // Written beside the labels cache, from the same rounds, for the same reason: both are
+    // derivations of `rounds.jsonl`, and a sync is the one place that rebuilds them.
+    await buildIndex(stored.dir)
 
     const after = (await findStored(dataDir, slug)) ?? stored
     return {

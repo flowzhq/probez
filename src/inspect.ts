@@ -1,15 +1,22 @@
 import { isSubagent, sessionSegments } from './agents/paths.js'
-import { commandOf, parseCommands, UNPARSED } from './bash.js'
-import type { Command } from './bash.js'
+import { subCommands } from './bash.js'
 import { CATEGORIES, categoryInfo, classifyCall } from './classify.js'
 import type { Category, Label } from './classify.js'
 import { shortSession } from './format.js'
 import { costOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
 import type { Question } from './question.js'
+import { fieldsUsed, matches, queryFromFilter, subjectOf } from './query.js'
+import type { Query, RoundFilter } from './query.js'
 import { isFinding, trailsOf } from './trail.js'
 import type { Trail, TrailOptions } from './trail.js'
 import type { Round, ToolCall } from './types.js'
+
+/** Moved to `bash.ts`, beside the parser it calls; re-exported so callers need not care. */
+export { subCommands } from './bash.js'
+
+/** The flag set moved to `query.ts`, beside the compiler that turns it into a tree. */
+export type { RoundFilter } from './query.js'
 
 /**
  * What a span of rounds cost and changed, beyond the round count.
@@ -127,18 +134,6 @@ function addTotals(row: Totals, round: Round, pricing: Pricing): void {
   }
 }
 
-export interface RoundFilter {
-  session?: string
-  task?: number
-  tool?: string
-  command?: string
-  kind?: string
-  category?: string
-  target?: string
-  agent?: 'main' | 'sub'
-  errorsOnly?: boolean
-}
-
 /** One category, or one sub-kind under it. `rounds` is fractional: a round splits across its work. */
 export interface CategoryRow {
   name: string
@@ -192,24 +187,6 @@ export interface Analysis {
   unknown: { name: string; weight: number }[]
   /** Models with no rate, most rounds first, so that hole can be named too. */
   unpriced: { model: string; rounds: number }[]
-}
-
-/**
- * Tools whose calls decompose one level further, and how. `Bash` is the only member: every other
- * tool's name already is its operation. The registry is what keeps adding another. An MCP server's
- * tools or a `Task`'s subagent type get an entry rather than a second design.
- */
-const SUB_LABELS: Record<string, (input: unknown) => Command[]> = {
-  Bash: (input) => parseCommands(commandOf(input)),
-}
-
-/** What one call decomposes into, or an empty list when the tool has no finer level. */
-export function subCommands(tool: ToolCall): Command[] {
-  const label = tool.name === null ? undefined : SUB_LABELS[tool.name]
-  if (label === undefined) return []
-  const found = label(tool.input)
-  // A call that ran *something* always counts as one row, or the sub-table quietly under-reports.
-  return found.length > 0 ? found : [{ name: UNPARSED, kind: 'other' }]
 }
 
 /**
@@ -921,56 +898,45 @@ function categoryOrder(id: string): number {
   return CATEGORY_ORDER.get(id) ?? CATEGORIES.length
 }
 
-/** `git` names `git commit` as well as itself, since that is how the sub-rows read. */
-function namesCommand(name: string, wanted: string): boolean {
-  const found = name.toLowerCase()
-  return found === wanted || found.startsWith(`${wanted} `)
+/**
+ * The rounds a query keeps.
+ *
+ * One evaluation, whether the query was typed or compiled from flags — `--tool Bash` arrives here
+ * as `tool:Bash`, so there is no second filter engine underneath either of them.
+ *
+ * Labelling is done in one pass up front and only when the query actually asks about a label,
+ * because it is much the most expensive thing answering a query can require and most queries do not
+ * need it. `labelRounds` labels each round on its own, so doing it before the filter rather than
+ * after changes nothing about the answer; it is done here because this is where the whole set is.
+ */
+export function matchRounds(
+  rounds: Round[],
+  query: Query,
+  context: { pricing?: Pricing; project?: string } = {},
+): Round[] {
+  const asked = fieldsUsed(query.node)
+  const labelled = asked.has('category') || asked.has('target') ? labelRounds(rounds) : null
+  return rounds.filter((round) =>
+    matches(
+      query.node,
+      subjectOf(round, {
+        pricing: context.pricing,
+        project: context.project,
+        labels: labelled?.get(round) ?? [],
+      }),
+    ),
+  )
 }
 
+/**
+ * The flags, answered by the language.
+ *
+ * Kept as its own function because every read command calls it and none of them has a query, but
+ * there is no second filter engine underneath any more: `--tool Bash` compiles to `tool:Bash` and
+ * the two reach the same comparison. Cost is not among the flags, so no rates are needed here.
+ */
 export function filterRounds(rounds: Round[], filter: RoundFilter): Round[] {
-  // Labels depend on what came before in the task, so they are worked out over the whole set once,
-  // before anything is dropped. Filtering first would change what the survivors mean.
-  const labelled =
-    filter.category !== undefined || filter.target !== undefined ? labelRounds(rounds) : null
-
-  return rounds.filter((round) => {
-    if (labelled !== null) {
-      const labels = labelled.get(round) ?? []
-      if (filter.category !== undefined) {
-        const wanted = filter.category.toLowerCase()
-        if (!labels.some((label) => label.category === wanted)) return false
-      }
-      if (filter.target !== undefined) {
-        const wanted = filter.target.toLowerCase()
-        if (!labels.some((label) => label.target === wanted)) return false
-      }
-    }
-    if (filter.session !== undefined && round.session !== filter.session) return false
-    if (filter.task !== undefined && round.task !== filter.task) return false
-    if (filter.agent !== undefined && round.agent !== filter.agent) return false
-    if (filter.tool !== undefined) {
-      const wanted = filter.tool.toLowerCase()
-      if (!(round.tools ?? []).some((tool) => tool.name?.toLowerCase() === wanted)) return false
-    }
-    if (filter.command !== undefined) {
-      const wanted = filter.command.toLowerCase()
-      const hit = (round.tools ?? []).some((tool) =>
-        subCommands(tool).some((command) => namesCommand(command.name, wanted)),
-      )
-      if (!hit) return false
-    }
-    if (filter.kind !== undefined) {
-      const wanted = filter.kind.toLowerCase()
-      const hit = (round.tools ?? []).some((tool) =>
-        subCommands(tool).some((command) => command.kind === wanted),
-      )
-      if (!hit) return false
-    }
-    if (filter.errorsOnly === true) {
-      if (!(round.tools ?? []).some((tool) => tool.is_error === true)) return false
-    }
-    return true
-  })
+  return matchRounds(rounds, queryFromFilter(filter))
 }
 
 /** Tool counts for one round, as `Bash 2 · Edit 1 ✗1`. */

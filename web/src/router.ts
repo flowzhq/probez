@@ -11,6 +11,27 @@ import type { MouseEvent } from 'react'
 export type Route =
   | { name: 'projects' }
   | { name: 'settings' }
+  /**
+   * A query, and what it is counted as.
+   *
+   * A page rather than a selection, because a search is a place you can be sent to: the query is
+   * in the URL, so a result is a link. `slug` scopes it to one project and is dropped to widen it
+   * to the whole store.
+   */
+  | {
+      name: 'search'
+      q: string
+      /** What to count, when the URL says. Null leaves it to the query's own `in:`. */
+      entity: Entity | null
+      slug: string | null
+      /**
+       * The sentence this query was read from, when one was.
+       *
+       * Only ever a caption. The query is what ran and what a link carries, so a result compiled
+       * from a sentence is re-runnable by anyone, with or without a reader configured.
+       */
+      from: string | null
+    }
   | { name: 'project'; slug: string }
   | { name: 'session'; slug: string; session: string }
   | {
@@ -29,6 +50,14 @@ export type Route =
        * call.
        */
       question: number | null
+      /**
+       * A query whose matching rounds are lit in the trace.
+       *
+       * A selection like `round`, not a filter: every round of the task is still drawn, and the
+       * ones the query did not match are dimmed. A trace with rounds missing from it would be a
+       * different and much less useful picture than a trace with rounds greyed out.
+       */
+      q: string | null
     }
   | { name: 'missing'; path: string }
 
@@ -41,10 +70,37 @@ function decodeSegment(part: string): string {
   }
 }
 
+/** What a search counts. Mirrors `Entity` in `src/query.ts`; the server refuses anything else. */
+export type Entity = 'rounds' | 'tasks' | 'sessions' | 'projects' | 'questions' | 'trails'
+
+const ENTITIES: Entity[] = ['rounds', 'tasks', 'sessions', 'projects', 'questions', 'trails']
+
+/**
+ * The entity the URL names, or null when it names none.
+ *
+ * Null rather than defaulting to `rounds`, because a query can carry its own `in:` and a default
+ * here would silently override it — which is exactly what happened to the first query a sentence
+ * ever compiled to. Absent means "whatever the query says", and the tabs write it explicitly.
+ */
+function asEntity(value: string | null): Entity | null {
+  return value !== null && (ENTITIES as string[]).includes(value) ? (value as Entity) : null
+}
+
 export function parse(pathname: string, search: string): Route {
   const parts = pathname.split('/').filter((part) => part !== '')
   if (parts.length === 0) return { name: 'projects' }
   if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
+  if (parts.length === 1 && parts[0] === 'search') {
+    const query = new URLSearchParams(search)
+    const from = query.get('from')
+    return {
+      name: 'search',
+      q: query.get('q') ?? '',
+      entity: asEntity(query.get('in')),
+      slug: query.get('project'),
+      from: from === null || from === '' ? null : from,
+    }
+  }
 
   const [p, slug, s, encoded, t, task] = parts
   // A subagent's session id is a path, so it travels percent-encoded in a single segment.
@@ -63,6 +119,7 @@ export function parse(pathname: string, search: string): Route {
   const trail = query.get('trail')
   const asked = query.get('question')
   const question = asked === null || asked === '' ? null : Number(asked)
+  const lit = query.get('q')
   return {
     name: 'task',
     slug,
@@ -71,12 +128,23 @@ export function parse(pathname: string, search: string): Route {
     round: round === null || Number.isNaN(round) ? null : round,
     trail: trail === null || trail === '' ? null : trail,
     question: question === null || Number.isNaN(question) ? null : question,
+    q: lit === null || lit === '' ? null : lit,
   }
 }
 
 export const href = {
   projects: () => '/',
   settings: () => '/settings',
+  search: (
+    q: string,
+    options: { entity?: Entity | null; slug?: string | null; from?: string | null } = {},
+  ) => {
+    const query = new URLSearchParams({ q })
+    if (options.entity !== undefined && options.entity !== null) query.set('in', options.entity)
+    if (options.slug !== undefined && options.slug !== null) query.set('project', options.slug)
+    if (options.from !== undefined && options.from !== null) query.set('from', options.from)
+    return `/search?${query.toString()}`
+  },
   project: (slug: string) => `/p/${slug}`,
   session: (slug: string, session: string) => `/p/${slug}/s/${encodeURIComponent(session)}`,
   task: (
@@ -86,11 +154,13 @@ export const href = {
     round?: number,
     trail?: string | null,
     question?: number | null,
+    q?: string | null,
   ) => {
     const query = new URLSearchParams()
     if (round !== undefined) query.set('r', String(round))
     if (trail !== undefined && trail !== null) query.set('trail', trail)
     if (question !== undefined && question !== null) query.set('question', String(question))
+    if (q !== undefined && q !== null && q !== '') query.set('q', q)
     const search = query.toString()
     return `/p/${slug}/s/${encodeURIComponent(session)}/t/${task}${search === '' ? '' : `?${search}`}`
   },

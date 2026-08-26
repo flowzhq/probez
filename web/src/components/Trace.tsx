@@ -65,6 +65,7 @@ export function Trace({
   selectedTrail,
   questions,
   selectedQuestion,
+  matched,
   onSelect,
   onSelectTrail,
   onSelectQuestion,
@@ -80,6 +81,14 @@ export function Trace({
   questions?: Question[]
   /** The `at` of the question being looked at. See `Question.at`: a ref names two of them. */
   selectedQuestion?: number | null
+  /**
+   * Rounds a search matched, which are lit while the rest are dimmed.
+   *
+   * Null when no query is in play, which is the ordinary case. Every round is still drawn either
+   * way: a trace with the unmatched rounds removed would be a different picture of a different
+   * task, and the thing worth seeing is *where in the task* the matches fall.
+   */
+  matched?: Set<number> | null
   onSelect: (round: TraceRound) => void
   onSelectTrail?: (trail: Trail | null) => void
   onSelectQuestion?: (question: Question | null) => void
@@ -347,7 +356,10 @@ export function Trace({
                   width={place.w(at)}
                   height={STRIP_H}
                   selected={selected === round.round}
-                  faded={inTrail !== null && !inTrail.has(round.round)}
+                  faded={
+                    (inTrail !== null && !inTrail.has(round.round)) ||
+                    (matched !== null && matched !== undefined && !matched.has(round.round))
+                  }
                   onSelect={onSelect}
                   onOpenTask={onOpenTask}
                   show={show}

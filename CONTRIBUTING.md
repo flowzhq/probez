@@ -61,10 +61,18 @@ Three constraints are not up for negotiation in a PR, because they are the produ
    rather than a quiet one to a grep.
 
    There is one place probez *starts a program*, and it is named here so it stays a decision rather
-   than a precedent: `src/reader.ts`, which is how `probez explain` hands one question to a model
-   the person already has. It is the answer to the request this rule would otherwise refuse — read
-   these eleven greps back to me in a sentence — and it is arranged so that the refusal still holds
-   everywhere it matters:
+   than a precedent: `src/reader.ts`. **Two** things call it, and both are named below, because the
+   number is the point — a list of callers that grows without anyone noticing is how a fence becomes
+   a suggestion. Adding a third means editing this paragraph and arguing for it.
+
+   - `src/reading.ts`, which is how `probez explain` hands one question's calls to a model the
+     person already has, and gets a sentence back. The request this rule would otherwise refuse:
+     read these eleven greps back to me in English.
+   - `src/asking.ts`, which is how `probez find --ask` hands one *sentence* to the same model and
+     gets a **query** back. The request: I do not want to learn a query language to ask what last
+     week cost.
+
+   Both are arranged so that the refusal still holds everywhere it matters:
 
    - probez opens no socket. It writes to the stdin of a command *the person wrote into
      `<data-dir>/reader.json`* and reads its stdout. Whatever that command talks to, it talks to
@@ -72,16 +80,31 @@ Three constraints are not up for negotiation in a PR, because they are the produ
      key and has nowhere to put one.
    - The command is argv and is spawned with `shell: false`. A `;`, a `|` or a `$(…)` in it is an
      argument. Nothing read out of a session, a path or a project name can reach the argv.
-   - It runs only from `probez explain` and from the `explain` POST — one question, when a person
-     asks for that question. Collecting, analyzing, browsing and every `GET` run nothing.
-   - What is written to it is the question's own calls: the verb, the scope, the words searched for,
-     the paths named, and the command as it ran. No prompts, no tool output. `probez explain <id>
-     --prompt` prints exactly what would go and spawns nothing, which is also the supported way to
-     use this without probez running anything at all.
+   - It runs only from `probez explain`, `probez find --ask`, and the `explain` and `compile` POSTs
+     — one question, when a person asks for that question. Collecting, analyzing, browsing, and
+     every `GET` in the view run nothing. Both POSTs refuse `GET` for the same reason `delete` does.
+   - What is written to it is bounded and named. For `explain`, the question's own calls: the verb,
+     the scope, the words searched for, the paths named, and the command as it ran. For `--ask`,
+     the field table, the values each field can take, and a sample of the names this store holds —
+     tool names, command names, model names — with the person's sentence. **No prompts, no tool
+     output, no file contents, either way.** `--prompt` on both prints exactly what would go and
+     spawns nothing, which is also the supported way to use either without probez running anything.
    - There is no default command. With no `reader.json` there is nothing to run, and every caller
      says so rather than falling back to something.
-   - Nothing that comes back enters a share, a tally or a filter. A reading sits beside the measured
-     `kind` and never replaces it, so every number probez prints stays re-derivable from the rounds.
+   - **Nothing that comes back is a number, and nothing that comes back is believed.** A reading
+     sits beside the measured `kind` and never replaces it. A compiled query is parsed by probez,
+     refused outright if it does not read cleanly, shown before it runs, and editable — and it
+     selects *which rounds* rather than producing a figure about them. Every total, share and row
+     stays derived from the rounds, so a result compiled from a sentence is re-runnable by someone
+     with no reader configured at all and comes out identical.
+
+   One thing `--ask` does that `explain` does not, named because it is the weakest part: the sample
+   of names in its prompt is text read out of session logs, and an imported project's logs were
+   written on a machine that is not yours. They are stripped of control characters, bounded in
+   length and in count, and labelled in the prompt as values to choose between. That is a mitigation
+   and not a proof. What makes it acceptable is the bullet above — the only thing the answer can be
+   is a query probez parses, which can filter rows and do nothing else. There is no path from what
+   comes back to a command, a file, or a byte leaving this machine.
 
    CI greps for `child_process` outside `src/open.ts` and `src/reader.ts`, and for `shell: true` and
    `exec` inside them, so a second spawn anywhere fails the build the way a second reflog reader
@@ -96,10 +119,11 @@ Three constraints are not up for negotiation in a PR, because they are the produ
    installed. CI greps for it, so a second reader anywhere else fails the build rather than
    arriving quietly, and a PR that wants one needs to argue for it the way this paragraph does.
 
-   The view's routes that write are all `POST`, and there are seven: `.../sync` writes what `collect`
+   The view's routes that write are all `POST`, and there are eight: `.../sync` writes what `collect`
    and `analyze` write, `.../rename` sets one field of a manifest, `.../delete` removes one project's
-   directory, `.../explain` keeps what a reader said about one question, `/import` writes a project
-   that arrived as a file, `/pricing` stores rates, and `/reader` stores the command `explain` runs.
+   directory, `.../explain` keeps what a reader said about one question, `/compile` keeps what one
+   said about one sentence, `/import` writes a project
+   that arrived as a file, `/pricing` stores rates, and `/reader` stores the command they run.
    Every
    other route is `GET`, and each of these refuses `GET` so that visiting a URL can never collect,
    rename, delete, or start a program. Export is not an exception to the rule: the server hands bytes to the browser
@@ -150,6 +174,24 @@ output in `dist/test/`, which is why `npm test` builds first.
   a shell, that a reader which fails, hangs, vanishes or answers in prose comes back as a message,
   that a `kind` outside the table becomes a named hole rather than a guess, and that a reading is
   kept, reused without running anything, and re-asked only when asked for.
+- `test/query.test.ts` covers the query language: precedence and negation, that printing a query
+  and parsing it back gives the same tree, that every prefix of a real query parses without
+  throwing, that an unfinished atom is neutral while a finished wrong one matches nothing, and that
+  the flags on `rounds` compile to the tree a typed query produces — which is what keeps there from
+  being two filter engines.
+- `test/search.test.ts` covers what a query comes to: the share against the scope it was matched
+  in, the grouped rows carrying the size of the whole group beside what matched, and that a task
+  keeps its name when the round that named it is not among the matches.
+- `test/searchindex.test.ts` is mostly one property, asserted query by query over every kind of
+  field: the index and the rounds answer identically. Beside it, the cases that all mean "read the
+  rounds instead" — no index, a stale one, one from a version this probez does not know, and a
+  half-written one — and that a torn line keeps its place and matches nothing.
+- `test/asking.test.ts` covers reading a sentence as a query. The refusals are the point: a query
+  probez cannot read is quoted and thrown rather than run, an answer with no query in it says what
+  the reader actually said, and a refused answer leaves nothing behind. Beside them, that the prompt
+  carries the schema and the question and nothing else, that it is bounded, and that a query with no
+  *filter* in it is kept — `in:sessions sort:cost limit:1` is the right answer to "what is the most
+  expensive session", and refusing it was a real bug.
 - `test/view.test.ts` runs the local server in-process against a temporary store. The refusals are
   the reason it exists: no token, wrong `Host`, and the method rules — every write path refuses
   `GET` and every read path refuses everything but it. Beside them sit the assertion that the store
@@ -158,6 +200,9 @@ output in `dist/test/`, which is why `npm test` builds first.
   lists, and a delete additionally has to be shown unable to point outside `<data-dir>/projects/`.
   `explain` is in them too, plus its own: that it refuses without the token, that it says so rather
   than falling back when no reader is configured, and that every refusal leaves the store untouched.
+  So is `compile`, which is the other route that starts a program, on the same terms. Searching and
+  its facets are on the read side of all of it, including the byte-identical assertion — answering a
+  query writes nothing, not even the index it is answered from.
 
 If you hit a real session that probez parses incorrectly, the most useful contribution is a minimal
 fixture reproducing it. Please strip anything private before attaching it.

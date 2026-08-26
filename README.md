@@ -58,6 +58,28 @@ Both are below: [the view](#the-view) first, [the CLI](#the-cli) after.
 `probez view` opens a local profiler in your browser: every project, then a session, then a task,
 down to a single tool call. It listens on `127.0.0.1` with a token that is new on every run.
 
+**Search** — one query bar, on every page. `/` or ⌘K focuses it; it completes fields from the same
+table the parser validates against, and their values from what the store actually holds, with the
+count beside each. What comes back leads with the share rather than the row count: 56 rounds is a
+number, 8.1% of what this project cost is a finding. The tabs say what the matched rounds are then
+counted as — a session matches when a round inside it does, and the row reports the rounds that
+matched with the size of the whole session beside them.
+
+<p align="center">
+  <img src="docs/view-search.png" alt="probez view: a query, its share of the project, and the sessions it is concentrated in" width="900">
+</p>
+
+The box has two modes, shown at its head: **search**, which takes a query, and **ask**, which hands
+what you typed to your own LLM as a question and puts the query it wrote into the bar to be checked
+and edited. Two controls rather than one that changes meaning, because one of them spends tokens on
+somebody else's program. The result is an ordinary search URL either way, so it is shareable and
+re-runnable by anyone with no LLM configured.
+
+Clicking a round opens its task with the query still in the URL, so the trace arrives with the
+rounds that matched lit and the rest of the task drawn around them — the point being *where in the
+task* the matches fall, which a filtered list cannot show. The bar starts scoped to whatever page
+you were on; the chip beside the query is what widens it to the whole store.
+
 **A project** — where its work went, what each kind of work cost, and the sessions it happened in.
 The list under it is three tabs: *sessions*, each row carrying the whole spread of its work as a bar
 rather than the name of its largest slice; *trails*, every trail the project made through itself; and
@@ -158,6 +180,7 @@ project                a directory an agent was started in    its name, or its p
 | `probez trails` · `trail <id>` | Runs of calls that followed one another into the repository |
 | `probez questions` · `question <id>` | What the agent needed to know, and what finding out cost |
 | `probez explain <id>` | Ask your own LLM what one question was, in a sentence |
+| `probez find "<query>"` | One query over everything collected, or `--ask` a question |
 | `probez analyze` | Where the work went |
 | `probez view` | Open the profiler |
 | `probez collect` | Collect one project, or every project under a folder |
@@ -166,7 +189,7 @@ project                a directory an agent was started in    its name, or its p
 
 Lists take `--limit` and always say how many rows they withheld. `rounds` filters by `--session`,
 `--task`, `--tool`, `--command`, `--kind`, `--category`, `--target`, `--agent` and `--errors`, and
-`sessions` takes `--agent` too.
+`sessions` takes `--agent` too. `find` takes `--all`, `--in`, `--sort`, `--plan`, `--ask`, `--prompt` and `--again`.
 `analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
 `--outcome`. `questions` takes `--kind` and `--min-calls`, and `explain` takes `--again` and `--prompt`.
 `--source` selects Claude Code, Cursor, or
@@ -183,7 +206,7 @@ probez  flowz-mcp  ~/Dev/workspace/flowz-mcp
   span       Aug 11 – Aug 18, 2026
   top tools  Bash 292 · Edit 125 · Write 91 · Read 84 · mcp__codebase-memory-mcp__query_graph 12
 
-  +652 rounds, 9 sessions read
+  up to date, 9 sessions unchanged
   → ~/.probez/projects/flowz-mcp-75ad21ac/rounds.jsonl
 ```
 
@@ -195,12 +218,12 @@ $ probez sessions flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   SESSION    ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   14 days ago
-  0b2cc149       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   14 days ago
+  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   15 days ago
+  0b2cc149       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   15 days ago
   51cced08      134      4  131          24.3M   138.1K     $22.57  Impl 39%   14 days ago
   be254122       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  14 days ago
   bfd594d9       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  14 days ago
-  6ffef9bc       33      4  30            2.2M    17.5K      $2.19  Recon 52%  9 days ago
+  6ffef9bc       33      4  30            2.2M    17.5K      $2.19  Recon 52%  10 days ago
   c21c7448      146      2  145 ✗5       22.8M   112.6K     $18.83  Recon 43%  9 days ago
   069d8593       31      1  30 ✗3         1.9M    11.3K      $1.76  Recon 72%  8 days ago
 
@@ -218,12 +241,12 @@ $ probez sessions flowz-agentic-sdlc --limit 6
   flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
   SESSION            AGENT ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  6b45d8d7/a5420a73  sub        7      1  17          182.4K     5.8K      $0.84  Recon 83%  25 days ago
-  6b45d8d7/ab80aaad  sub        8      1  16          197.9K     5.4K      $0.86  Recon 86%  25 days ago
-  6b45d8d7           main     122      8  234 ✗3       58.6M   139.5K     $76.13  Docs 29%   25 days ago
-  15ac167d/a29da1c6  sub        7      1  19          135.0K     9.1K      $0.94  Recon 93%  25 days ago
-  15ac167d/ad108a22  sub       18      1  38          515.5K    17.7K      $1.99  Plan 65%   25 days ago
-  15ac167d           main     150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   25 days ago
+  6b45d8d7/a5420a73  sub        7      1  17          182.4K     5.8K      $0.84  Recon 83%  26 days ago
+  6b45d8d7/ab80aaad  sub        8      1  16          197.9K     5.4K      $0.86  Recon 86%  26 days ago
+  6b45d8d7           main     122      8  234 ✗3       58.6M   139.5K     $76.13  Docs 29%   26 days ago
+  15ac167d/a29da1c6  sub        7      1  19          135.0K     9.1K      $0.94  Recon 93%  26 days ago
+  15ac167d/ad108a22  sub       18      1  38          515.5K    17.7K      $1.99  Plan 65%   26 days ago
+  15ac167d           main     150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   26 days ago
 
   showing 6 of 23 sessions · 3744 rounds · $941.53, --limit 0 for all
   `probez session <id>` shows one of them, task by task.
@@ -324,6 +347,140 @@ $ probez analyze flowz-mcp
 much of the bill. Cost is worked out per round from its own model's rates, then split across that
 round's work. The last lines are part of the answer: rounds of pure prose and tools with no entry in
 the table sit outside the shares, and are reported rather than guessed at.
+
+### Search: one query over everything
+
+Every table above answers one question through a fixed hole — one flag per field, and no way to
+combine two of them. `probez find` is the other direction: one grammar over the whole record, so a
+question that crosses two levels can be written down.
+
+Bare words are free text, over the prompts, the prose, the commands and the paths. A `key:value`
+filters, `-` negates, one after another means and, `OR` is the other one, and brackets regroup.
+
+```console
+$ probez find 'category:reconstruction cost:>0.30 -tool:Read' flowz-mcp
+
+  flowz-mcp  ~/Dev/workspace/flowz-mcp
+
+  4 rounds · $2.32 · 0.6% of rounds · 2.8% of cost · 3 sessions · 81% reconstruction
+
+  ROUND           WORK                COST     TIME         WHEN  SAYS
+  c21c7448#2.64   Environment        $1.16    842ms   9 days ago  Bash 1
+  c21c7448#1.0    Reconstruction     $0.39     1.5s  10 days ago  implement next task
+  bfd594d9#2.24   Reconstruction     $0.42    866ms  14 days ago  Bash 1
+  0b2cc149#1.0    Reconstruction     $0.36    794ms  15 days ago  did we implemented T001?
+
+  4 rounds
+```
+
+**The first line is a share, not a count.** Four rounds is a number; 2.8% of what this project cost
+is a finding. A query does not filter a listing, it re-scopes the profile — the same idea as pprof's
+`-focus`, and the reason the totals, the concentration and the distribution come before any row of
+it.
+
+`--in` says what the matched rounds are then counted as. A session, task or project matches when a
+round inside it does, and the row reports the rounds that matched with the size of the whole thing
+beside them, so a task that spent six of its seventy-one rounds on what was asked for reads as six:
+
+```console
+$ probez find '(tool:Edit OR tool:Write) added:>200 in:tasks sort:cost' flowz-agentic-sdlc --limit 5
+
+  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
+
+  29 rounds · $11.87 · 0.8% of rounds · 1.3% of cost · 8 sessions · 86% implementation
+
+  TASK         ROUNDS    OF       COST  ASKED
+  6b45d8d7#3        6    71      $4.10  <task-notification> <task-id>a5420a731e4ed3f58</task…
+  5366f0e4#2        6   164      $2.36  Base directory for this skill: /private/tmp/claude-5…
+  f77c95fe#1        4   182      $1.32  implement PRD13
+  5366f0e4#22       3    35      $0.73  2 - this is not yet to be enforced - i have free tei…
+  ea20e02d#3        1     9      $0.50  do it
+
+  showing 5 of 14 tasks, --limit 0 for all
+```
+
+`--all` searches every project in the store rather than one. `sort:` puts the big end of a magnitude
+first, `limit:` and `in:` can be written into the query instead of passed as flags, and `--json`
+carries the whole result — totals, share, distribution and rows.
+
+**A half-typed query is read the same way a finished one is.** What cannot be read yet is said,
+under the part of the query it is about, and everything else still runs; a value that is merely
+missing narrows nothing rather than blanking the list. `--plan` prints that reading on its own,
+which is a way to find out what probez made of a query without it going near a store:
+
+```console
+$ probez find 'cost:> categoy:test' --plan
+
+  cost:> categoy:test
+  ^^^^^^
+  `cost:` needs a value
+         ^^^^^^^^^^^^
+  there is no `categoy:` field, so this is being searched for as text — did you mean category:?
+
+
+  read as   categoy:test
+  counting  rounds
+  fields    ·
+  sort      newest first
+  limit     50
+```
+
+**Or don't learn the language.** `--ask` hands your question to the LLM you already have and gets
+back a *query* — which probez parses, refuses outright if it does not read, prints, and only then
+answers the same way it answers one you typed:
+
+```console
+$ probez find --ask 'which sessions had the most failing shell commands' flowz-mcp
+
+  probez read "which sessions had the most failing shell commands" as
+
+    tool:Bash is:error in:sessions sort:errors
+
+  claude: "failing shell commands" is a round whose Bash call the harness reported as
+  failed, and "which sessions had the most" is a count per session ranked by that error
+  count
+
+  Run the query above to answer this again without asking.
+
+  flowz-mcp  ~/Dev/workspace/flowz-mcp
+
+  8 rounds · $0.70 · 1.2% of rounds · 0.8% of cost · 6 sessions · 8 tool errors · 40% reconstruction
+
+  SESSION      ROUNDS     OF       COST     TIME  LAST
+  069d8593          3     31      $0.18    29.4s  8 days ago
+  0bfa7fe3          1    127      $0.21    26.5s  15 days ago
+  bfd594d9          1     73      $0.11     4.6s  14 days ago
+  c21c7448          1    146      $0.10    23.8s  10 days ago
+  be254122          1     21      $0.05     2.2s  14 days ago
+  0b2cc149          1     87      $0.04     8.2s  15 days ago
+
+  6 sessions
+```
+
+**A model chooses which rounds to look at, and never what any of them came to.** Every figure above
+is derived from the rounds by the same code that answers a typed query, so the result is re-runnable
+by someone with no LLM configured at all and comes out identical — and the query it wrote is one you
+can correct by hand. What gets sent is the field table, the values each field can take, and a sample
+of the names this store holds; nothing you typed to the agent and nothing any tool returned. It runs
+the command in `<data-dir>/reader.json`, the same one [`explain`](#explain-the-same-question-read-back-by-your-own-llm)
+uses, and `--prompt` prints exactly what would go while running nothing.
+
+`probez --help` lists every field a query can name, with what each one reads. The filters on
+`rounds` are the same language underneath — `--tool Bash` is `tool:Bash`, down to the comparison —
+so the two cannot come to disagree about what a tool name is or how a command is matched.
+
+**Free text matches a word, or the start of one.** `tok` finds `tokens`; `oken` does not, and
+`"npm test"` does not find `pnpm test`. That boundary is what makes the search fast enough to be
+worth having: `collect` and `analyze` write a compact index beside the rounds — about a fifth of
+their size — holding every field a query can name, so a query is answered from its columns and only
+the rounds that actually matched are ever read off disk. On a 93 MB store of 48,000 rounds that is
+the difference between 300 ms and 1.4 s across every project at once, and between 60 ms and 260 ms
+within one.
+
+The index is derived data in the strict sense: deleting it costs speed and nothing else. A project
+that has not been collected since it existed, or whose rounds have moved underneath it, is read in
+full and the footer says how many were — since being told is the only way to tell a quick search
+from a slow one. `find` itself never writes one; reading writes nothing, here as everywhere.
 
 ### Trails: how the agent found its way around
 
@@ -454,6 +611,12 @@ $ probez question flowz-mcp 0b2cc149#1.2
 
   question 0b2cc149#1.2 → 1.4 · 3 calls · refs — where is this used
   asked about enqueuer, status
+  read as  Where does the Enqueuer exist in this codebase — which internal packages
+           reference it, and what do the task docs say about its status?
+           touches, not refs · the same concept word "Enqueuer" is swept across all Go
+           sources under internal/, plus directory listings of indexer/ and githubapp/ and a
+           grep of Status lines in docs/tasks/*.md, gathering code and prose artifacts alike
+           rather than a single symbol's callers · claude
   1 place · 1 re-asked · 116.1K in · 508 out · 2.2s
 
   ROUND   REACHED ASKED                     CALL

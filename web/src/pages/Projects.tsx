@@ -26,7 +26,7 @@ export function Projects(): ReactElement {
 
   return (
     <>
-      <Chrome crumbs={[]} />
+      <Chrome crumbs={[]} search={{}} />
       <main className="page">
         {error !== null && data === null ? (
           <Problem message={error} />

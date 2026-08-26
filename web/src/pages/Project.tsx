@@ -28,7 +28,7 @@ export function Project({ slug }: { slug: string }): ReactElement {
 
   return (
     <>
-      <Chrome crumbs={[{ label: data?.project.project ?? slug }]} />
+      <Chrome crumbs={[{ label: data?.project.project ?? slug }]} search={{ slug }} />
       <main className="page">
         {error !== null && data === null ? (
           <Problem message={error} />

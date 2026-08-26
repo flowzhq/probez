@@ -40,15 +40,17 @@ ways:
   DNS rebinding, where a page you visit resolves its own domain to `127.0.0.1` and talks to the
   server from inside your browser. The token alone would not stop that, because the browser would
   send it.
-- `GET` is the only method with an implementation, apart from seven: `POST .../sync`, which runs a
+- `GET` is the only method with an implementation, apart from eight: `POST .../sync`, which runs a
   collection on that project, `POST .../rename`, which sets the name a project is shown under,
   `POST .../delete`, which removes a project from the store, `POST .../explain`, which runs the
-  reader on one question, `POST /api/pricing`, which saves the token rates, `POST /api/reader`,
-  which sets the command `explain` runs, and `POST /api/import`, which takes in a project someone
-  sent you. Nothing else accepts anything but `GET`, and all seven refuse `GET` themselves — a URL
+  reader on one question, `POST /api/compile`, which runs the reader on one question you typed into
+  the search box, `POST /api/pricing`, which saves the token rates, `POST /api/reader`,
+  which sets the command those two run, and `POST /api/import`, which takes in a project someone
+  sent you. Nothing else accepts anything but `GET`, and all eight refuse `GET` themselves — a URL
   that collects, renames, deletes, imports or starts a program when it is merely visited is a URL
   that can be put in an `<img>` tag on any page you happen to open. Pricing and the reader are
-  readable with `GET` because reading a setting changes nothing.
+  readable with `GET` because reading a setting changes nothing. **Searching is a `GET`** — it
+  writes nothing, not even the index it is answered from.
 - The page it serves may load only from its own origin, enforced by a content-security-policy on
   every response, and there is nothing off-origin in it to load.
 
@@ -57,8 +59,9 @@ leaves the store byte-identical, and there is a test that asserts exactly that. 
 writes, because that is what it is for: it runs `collect` and then rebuilds the analysis cache, the
 same two things the commands of those names do. **Rename** rewrites one field of one manifest.
 **Delete** removes one project's directory. Saving under **Settings** writes the rate table and the
-reader, **Explain** writes what a reader answered about one question, and **Import** writes a new
-project. Those seven are the only writes the view can make.
+reader, **Explain** writes what a reader answered about one question, **ask** writes what one
+answered about a question you typed, and **Import** writes a new project. Those eight are the only
+writes the view can make.
 
 Those buttons change what the token protects. Before them, the token and the `Host` check stood
 between a page you did not open and *reading* your prompts; now they also stand between it and
@@ -127,30 +130,60 @@ round record leaves out, and it is the larger part of the store by far. "Charact
 describes `rounds.jsonl`, not `~/.probez`. Note also that agents prune their own old sessions while
 these copies are permanent.
 
-**The reader: the one thing probez can run, and the one thing it can send.** `probez explain <id>`
-takes a single question — one thing the agent needed to know, and the calls it spent finding out —
-and asks a model what it was. The model is one you already have. You write the command in
-`<data-dir>/reader.json`, as `{"command": ["claude", "-p"]}` or `{"command": ["ollama", "run",
-"llama3"]}`, or set it under **Settings**; probez writes a prompt to that command's stdin and reads
-its stdout. Six things bound it:
+**And two derived files beside them.** `analysis.jsonl` holds what each round was counted as, which
+is labels and numbers and no text. `search.jsonl` is the index `probez find` is answered from, and
+it is worth naming here because of what is in it: alongside a column per field, it holds an inverted
+index of the *words* of every prompt, every assistant message, every shell command and every path —
+each word once, with the rounds it appears in. It is not the text back again, and it cannot be read
+back as sentences, but anyone holding it can tell which words you and the agent used. It is written
+under the same owner-only mode as the rest of the store, it goes when the project goes, and deleting
+it costs nothing but speed — every command that reads it can also do without it.
+
+**The reader: the one thing probez can run, and the one thing it can send.** The model is one you
+already have. You write the command in `<data-dir>/reader.json`, as `{"command": ["claude", "-p"]}`
+or `{"command": ["ollama", "run", "llama3"]}`, or set it under **Settings**; probez writes a prompt
+to that command's stdin and reads its stdout. Two things use it, and no more — the number is checked
+in review, because a list of callers that grows quietly is how this stops being one decision:
+
+- `probez explain <id>`, or the **explain** button, takes a single question — one thing the agent
+  needed to know, and the calls it spent finding out — and asks a model what it was, in a sentence.
+- `probez find --ask "…"`, or **ask** mode in the search box, takes a question you typed and asks a
+  model to write it as a probez **query**. What comes back is not an answer and is not believed:
+  probez parses it, refuses it outright if it does not read, shows it to you, and only then answers
+  it with the same code that answers a query you typed by hand. A model chooses which rounds to
+  look at and never what any of them came to, so every figure stays derived from the rounds and a
+  result read from a question is reproducible by someone with no reader configured at all.
+
+Eight things bound both:
 
 - probez still opens no socket. Whatever the command talks to, it talks to as you, under your
   account and your credentials, exactly as if you had typed it. probez holds no API key and has
   nowhere to put one.
 - The command is argv and is run with no shell. A `;`, a `|` or a `$(…)` in it is an argument, not a
   second command, and nothing read out of a session can reach the argv — only the config file can.
-- It runs when you ask, on the question you asked about: `probez explain <id>`, or the **explain**
-  button on one question. Collecting, analyzing, browsing and every `GET` run nothing.
-- What is sent is that question's calls, and only those: the verb, how wide it reached, the words it
-  searched for, the paths it named, and the command as it ran. No prompts you typed, no assistant
-  text, no tool output. `probez explain <id> --prompt` prints exactly what would be sent and runs
-  nothing — which is also how to use this with no reader configured at all.
-- Those calls are still your data. A shell command in them can contain a path, a hostname, or a
-  secret you typed, and sending them to a hosted model sends them off this machine. A local model
-  keeps them on it. That choice is the command you write in the file.
+- It runs when you ask, on the thing you asked about. Collecting, analyzing, browsing and every
+  `GET` run nothing, and both routes that reach it refuse `GET`.
+- What `explain` sends is that question's calls, and only those: the verb, how wide it reached, the
+  words it searched for, the paths it named, and the command as it ran. No prompts you typed, no
+  assistant text, no tool output.
+- What `--ask` sends is the query language's field table, the values each field can take, a sample
+  of the names this store holds — tool names, command names, model names — and your question. About
+  five kilobytes, and it does not grow with the store. No prompts you typed, no assistant text, no
+  tool output, no file contents.
+- `--prompt` on either prints exactly what would be sent and runs nothing — which is also how to
+  use this with no reader configured at all.
+- What is sent is still your data. A shell command in a question's calls can contain a path, a
+  hostname, or a secret you typed; a tool or command name in the `--ask` sample is a name out of a
+  session log, and if that log came from an *imported* project it was written on somebody else's
+  machine. Names are stripped of control characters and bounded in length and number, and what
+  bounds the risk is what the answer can be: a query probez parses, which selects rows and does
+  nothing else. Either way, sending to a hosted model sends it off this machine and a local model
+  keeps it on. That choice is the command you write in the file.
 - With no `reader.json` there is nothing probez can run, and it says so rather than falling back to
-  anything. What a reader answers is kept in `readings.json` beside that project's rounds, goes when
-  the project goes, and is shown beside probez's own measurement rather than replacing it.
+  anything. What a reader answers about a question is kept in `readings.json` beside that project's
+  rounds and goes when the project goes; what it answers about a sentence is kept in `asked.json`
+  beside `pricing.json`, keyed by the store it was asked of, so the same question is not paid for
+  twice. Neither is ever shown in place of probez's own measurement.
 
 **One more file, and one more write.** `pricing.json` sits beside `projects/` and holds the token
 rates the analysis uses. It is written owner-only like everything else, contains no personal data,

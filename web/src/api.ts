@@ -668,6 +668,113 @@ export async function exportProject(
   return { filename, bytes: blob.size, saved: 'downloaded' }
 }
 
+/* Searching ---------------------------------------------------------------------------------- */
+
+/** Where in the query text something is, so a diagnostic can be underlined rather than described. */
+export interface Span {
+  from: number
+  to: number
+}
+
+export interface Diagnostic {
+  message: string
+  at: Span
+  hint?: string
+}
+
+export type Entity = 'rounds' | 'tasks' | 'sessions' | 'projects' | 'questions' | 'trails'
+
+export interface Totalled {
+  rounds: number
+  tasks: number
+  sessions: number
+  projects: number
+  cost: number
+  unpriced: number
+  ms: number
+  input: number
+  output: number
+  errors: number
+  first_ts: string | null
+  last_ts: string | null
+}
+
+export interface SearchHit {
+  project: string
+  slug?: string
+  session?: string
+  task?: number
+  round?: number
+  ts?: string | null
+  model?: string | null
+  agent?: 'main' | 'sub'
+  ms?: number | null
+  cost?: number | null
+  in_tokens?: number | null
+  out_tokens?: number | null
+  category?: string | null
+  errors?: number
+  tools?: string
+  says?: string
+  /** On a grouped row: rounds in the whole group, of which `rounds` matched. */
+  of?: number
+  rounds?: number
+  sessions?: number
+  unpriced?: number
+  asked?: string
+  commit?: string | null
+  first_ts?: string | null
+  last_ts?: string | null
+  gen_ms?: number
+  ref?: string
+  /** A question's position among the calls of its task, which is what addresses it exactly. */
+  at?: number
+  kind?: string
+  calls?: number
+  repeats?: number
+  terms?: string[]
+  depth?: number
+  breadth?: number
+  outcome?: string
+  steps?: number
+}
+
+export interface SearchPayload {
+  query: string
+  read_as: string
+  diagnostics: Diagnostic[]
+  entity: Entity
+  totals: Totalled
+  scope: Totalled
+  share: { rounds: number; cost: number }
+  /** The matched slice's distribution, drawn by the same bar the project rows use. */
+  mix: Array<{ category: string; label: string; share: number }>
+  /** The same tally with its counts, for anything that wants the numbers rather than the picture. */
+  categories: Array<{ name: string; label: string; rounds: number; cost: number; errors: number }>
+  top: { name: string; label: string; share: number } | null
+  sessions: SearchHit[]
+  scanned: { projects: number; indexed: number; read: number }
+  found: number
+  hits: SearchHit[]
+  scope_slug: string | null
+}
+
+export interface CompilePayload {
+  sentence: string
+  query: string
+  why: string
+  by: string
+  at: string
+  ran: boolean
+}
+
+export interface FacetPayload {
+  fields: Array<{ key: string; says: string; kind: string; group: string; values: string[] }>
+  key: string | null
+  values: Array<{ value: string; rounds: number }>
+  scanned: { projects: number; indexed: number }
+}
+
 export const api = {
   sync: (slug: string) => post<SyncResult>(`/projects/${slug}/sync`),
   rename: (slug: string, name: string) =>
@@ -711,4 +818,29 @@ export const api = {
     post<ReaderPayload>('/reader', { command, timeout_ms: timeoutMs }),
   savePricing: (models: Record<string, Rates>) => post<PricingPayload>('/pricing', { models }),
   import: (text: string, from: string) => post<ImportResult>('/import', { text, from }),
+  // A read, so a GET: answering a query writes nothing, not even the index it is answered from.
+  search: (q: string, options: { slug?: string | null; entity?: Entity; limit?: number } = {}) => {
+    const query = new URLSearchParams({ q })
+    if (options.slug !== undefined && options.slug !== null) query.set('project', options.slug)
+    if (options.entity !== undefined) query.set('in', options.entity)
+    if (options.limit !== undefined) query.set('limit', String(options.limit))
+    return get<SearchPayload>(`/search?${query.toString()}`)
+  },
+  // The one call in the view that turns a sentence into a query. A POST, because it starts the
+  // program in `reader.json` — and what comes back is a query, which probez then runs itself.
+  compile: (sentence: string, slug?: string | null, again = false) =>
+    post<CompilePayload>('/compile', {
+      sentence,
+      ...(slug === undefined || slug === null ? {} : { project: slug }),
+      again,
+    }),
+  // What a query can name, and what this store actually holds for it. Values come with their
+  // counts, because `tool:` completing to the eleven tools a project has really called is a
+  // different thing from a list of tools in general.
+  facets: (key?: string, slug?: string | null) => {
+    const query = new URLSearchParams()
+    if (key !== undefined) query.set('key', key)
+    if (slug !== undefined && slug !== null) query.set('project', slug)
+    return get<FacetPayload>(`/facets?${query.toString()}`)
+  },
 }
