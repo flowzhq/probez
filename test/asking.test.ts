@@ -147,8 +147,21 @@ test('a query probez cannot read is refused and quoted, never run', () => {
   assert.throws(() => parseAsked('{"query":"in:widgets"}', 'x', 'claude', 'abc'), AskingError)
 })
 
-test('a query that asks nothing is refused, because it is not an answer to a question', () => {
-  assert.throws(() => parseAsked('{"query":"in:sessions"}', 'x', 'claude', 'abc'), AskingError)
+test('a query with no filter in it is kept, because that is often the right answer', () => {
+  // "what is the most expensive session" filters nothing: it is the whole store, grouped, ranked
+  // and cut to one. Refusing this was a real bug that threw away a correct answer.
+  const asked = parseAsked(
+    '{"query":"in:sessions sort:cost limit:1","why":"the whole store, ranked by cost"}',
+    'what is the most expensive session',
+    'claude',
+    'abc',
+  )
+  assert.equal(asked.query, 'in:sessions sort:cost limit:1')
+})
+
+test('a query with nothing in it at all is refused, since that is a reader not answering', () => {
+  assert.throws(() => parseAsked('{"query":"  "}', 'x', 'claude', 'abc'), AskingError)
+  assert.throws(() => parseAsked('{"query":"\\""}', 'x', 'claude', 'abc'), AskingError)
 })
 
 test('an answer with no query in it says what the reader actually said', () => {

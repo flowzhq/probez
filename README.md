@@ -69,9 +69,11 @@ matched with the size of the whole session beside them.
   <img src="docs/view-search.png" alt="probez view: a query, its share of the project, and the sessions it is concentrated in" width="900">
 </p>
 
-**Ask** beside the box (or ⌘↵) hands the words to your own LLM as a question instead, and puts the
-query it wrote into the bar to be checked and edited before you rerun it. The result is an ordinary
-search URL, so it is shareable and re-runnable by anyone with no LLM configured.
+The box has two modes, shown at its head: **search**, which takes a query, and **ask**, which hands
+what you typed to your own LLM as a question and puts the query it wrote into the bar to be checked
+and edited. Two controls rather than one that changes meaning, because one of them spends tokens on
+somebody else's program. The result is an ordinary search URL either way, so it is shareable and
+re-runnable by anyone with no LLM configured.
 
 Clicking a round opens its task with the query still in the URL, so the trace arrives with the
 rounds that matched lit and the rest of the task drawn around them — the point being *where in the

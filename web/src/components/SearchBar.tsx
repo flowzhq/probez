@@ -26,7 +26,29 @@ import type { Entity } from '../router'
  * a keystroke that can take a second, and a list that reorders under your hands while you are still
  * describing what you want is worse than one that waits to be asked.
  */
+/**
+ * Query or question. Two ways of using one box, so the box says which one it is in.
+ *
+ * A mode rather than a second button beside the input: the two do different things to what you
+ * typed, one of them spends tokens on somebody else's program, and a control that only appears
+ * once there is text is a control you find by accident. Held in `localStorage` like the theme,
+ * because the bar is re-mounted on every page and a mode that reset on every navigation would be
+ * a mode nobody could stay in.
+ */
+type Mode = 'query' | 'ask'
+
+const MODE_KEY = 'probez.find.mode'
+
+function heldMode(): Mode {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'ask' ? 'ask' : 'query'
+  } catch {
+    return 'query'
+  }
+}
+
 export function SearchBar({ slug, initial }: { slug?: string | null; initial?: string }): ReactElement {
+  const [mode, setMode] = useState<Mode>(heldMode)
   const [text, setText] = useState(initial ?? '')
   const [open, setOpen] = useState(false)
   const [at, setAt] = useState(0)
@@ -38,8 +60,24 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
   const box = useRef<HTMLDivElement>(null)
 
   // The query in the address bar is the query in the box: arriving at a result by link, or by the
-  // back button, has to leave the bar saying what produced what is on screen.
-  useEffect(() => setText(initial ?? ''), [initial])
+  // back button, has to leave the bar saying what produced what is on screen. Arriving at one is
+  // also arriving at a query, so the box goes back to reading as one.
+  useEffect(() => {
+    setText(initial ?? '')
+    if (initial !== undefined && initial !== '') flip('query')
+    // `flip` is stable enough for this; the initial query is the real key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial])
+
+  const flip = (next: Mode): void => {
+    setMode(next)
+    try {
+      localStorage.setItem(MODE_KEY, next)
+    } catch {
+      // A browser with storage turned off still gets the mode, just not across pages.
+    }
+    setRefused(null)
+  }
 
   // `/` and ⌘K are the two shortcuts people already try. `/` only outside a field, or it would
   // steal the key from anything else on the page that takes text.
@@ -95,7 +133,7 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
     }
   }, [key, slug])
 
-  const options = suggest(facets, key, typed)
+  const options = mode === 'ask' ? [] : suggest(facets, key, typed)
   useEffect(() => setAt(0), [word.text])
 
   const put = (value: string): void => {
@@ -174,22 +212,46 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
         return
       }
     }
-    // ⌘↵ asks; ↵ searches. Two keys rather than one control that changes meaning, because the
-    // difference between them is what is about to happen to your tokens.
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault()
-      ask(text)
-      return
+    // One key. What it does is what the mode beside it says it does, which is the whole reason
+    // the mode is a visible control rather than a modifier you have to know about.
+    if (event.key === 'Enter') {
+      if (mode === 'ask') ask(text)
+      else submit(text)
     }
-    if (event.key === 'Enter') submit(text)
   }
 
   return (
-    <div className="find" ref={box}>
-      <svg className="find-mark" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
-        <circle cx="7" cy="7" r="4.5" />
-        <path d="M10.4 10.4 L14 14" strokeLinecap="round" />
-      </svg>
+    <div className={mode === 'ask' ? 'find find-asking' : 'find'} ref={box}>
+      {/* The mode, at the head of the box, so what Enter is about to do is readable without
+          pressing it. Two states shown as two controls rather than one that cycles — the same
+          arrangement the theme switch uses two controls along. */}
+      <div className="find-mode" role="group" aria-label="What the box does">
+        <button
+          type="button"
+          aria-pressed={mode === 'query'}
+          title="Search with a query"
+          onClick={() => {
+            flip('query')
+            input.current?.focus()
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+            <circle cx="7" cy="7" r="4.5" />
+            <path d="M10.4 10.4 L14 14" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          aria-pressed={mode === 'ask'}
+          title="Ask a question and let your own LLM write the query"
+          onClick={() => {
+            flip('ask')
+            input.current?.focus()
+          }}
+        >
+          ask
+        </button>
+      </div>
       <input
         ref={input}
         type="search"
@@ -197,8 +259,14 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
         value={text}
         spellCheck={false}
         autoComplete="off"
-        placeholder={slug === undefined || slug === null ? 'Search every project' : 'Search this project'}
-        aria-label="Search"
+        placeholder={
+          mode === 'ask'
+            ? 'Ask a question'
+            : slug === undefined || slug === null
+              ? 'Search every project'
+              : 'Search this project'
+        }
+        aria-label={mode === 'ask' ? 'Ask a question' : 'Search'}
         onChange={(event) => {
           setText(event.target.value)
           setOpen(true)
@@ -206,21 +274,8 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
       />
-      {text === '' ? <kbd className="find-key">/</kbd> : null}
-      {/* Only once there is something to ask about. A question is a different act from a query —
-          it spends tokens on somebody else's program — so it is a button you press rather than
-          something that happens when a box stops looking like a query. */}
-      {text.trim() === '' ? null : (
-        <button
-          type="button"
-          className="find-ask"
-          disabled={asking}
-          title="Read this as a question (⌘↵)"
-          onClick={() => ask(text)}
-        >
-          {asking ? '…' : 'Ask'}
-        </button>
-      )}
+      {asking ? <span className="find-busy">asking…</span> : null}
+      {text === '' && !asking ? <kbd className="find-key">/</kbd> : null}
       {refused === null ? null : (
         <p className="find-refused" role="alert">
           {refused}

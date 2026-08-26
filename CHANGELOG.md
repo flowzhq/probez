@@ -103,7 +103,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   Two new endpoints, both `GET` and both refusing `POST`, because answering a query writes nothing —
   not even the index, which `Sync` builds beside the analysis cache: `/api/search` and `/api/facets`.
 
-- **`probez find --ask`, and an Ask button in the view: a question instead of a query.** Hands
+- **`probez find --ask`, and an *ask* mode in the view: a question instead of a query.** Hands
   what you typed to the command in `<data-dir>/reader.json` — the same one `explain` uses, your own
   LLM, hosted or local — and gets back **a query**, not an answer. probez parses it, refuses it
   outright if it does not read cleanly, shows it, and only then answers it by exactly the path a
@@ -130,8 +130,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   caller says so. Answers are held in `<data-dir>/asked.json` and keyed by the store they were asked
   of, so the same question is not paid for twice; `--again` asks afresh.
 
-  In the view: **Ask** beside the query box, or ⌘↵. What comes back lands in the bar to be checked
-  and edited, and the URL is an ordinary search URL with the question carried alongside as a caption.
+  In the view the box has two modes, shown as two controls at its head, so what Enter is about to do
+  is readable without pressing it — one of the two spends tokens on somebody else's program. What
+  comes back lands in the bar to be checked and edited, and the URL is an ordinary search URL with
+  the question carried alongside as a caption. Landing on a result puts the box back in query mode,
+  because a result is a query.
 
   This is the second thing in probez that starts a program, and CONTRIBUTING § rule 2 now names both
   callers of `src/reader.ts` and what would have to be argued to add a third.

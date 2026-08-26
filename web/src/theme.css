@@ -1433,22 +1433,46 @@ button:disabled {
 }
 
 /* Asking: a sentence handed to the reader, and what it was read as. */
-.find-ask {
+
+/* The mode, at the head of the box. Two controls rather than one that cycles, so which one is on
+   is readable without pressing anything — the arrangement the theme switch uses. */
+.find-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
   flex: 0 0 auto;
-  padding: 1px 7px;
-  border: 1px solid var(--rule);
+  margin-left: -3px;
+}
+
+.find-mode button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  min-width: 20px;
+  padding: 0 4px;
   border-radius: 3px;
   font-size: 11px;
+  color: var(--ink-3);
+}
+
+.find-mode button:hover {
   color: var(--ink-2);
-  background: var(--raised);
 }
 
-.find-ask:hover:not(:disabled) {
-  border-color: var(--axis);
+.find-mode button[aria-pressed='true'] {
   color: var(--ink);
+  background: var(--wash);
 }
 
-.find-ask:disabled {
+/* A question is a different act from a query, so the box says so while it is one. */
+.find-asking {
+  border-color: var(--accent);
+}
+
+.find-busy {
+  flex: 0 0 auto;
+  font-size: 11px;
   color: var(--ink-3);
 }
 

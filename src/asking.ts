@@ -261,9 +261,23 @@ export function parseAsked(
   )
 }
 
-/** A query that would match everything, which is not an answer to a question. */
+/**
+ * A query with nothing in it at all.
+ *
+ * Not the same as one with no *filter* in it. `in:sessions sort:cost limit:1` filters nothing and
+ * is exactly the right answer to "what is the most expensive session" — the whole store, grouped,
+ * ranked, and cut to one. Refusing that on the grounds that its predicate is empty was this
+ * function's first bug, and it refused a correct answer. What is worth refusing is an answer with
+ * no query in it whatsoever: no filter, no grouping, no order and no limit, which is a reader that
+ * did not answer rather than one that answered "all of it".
+ */
 function isNothing(query: Query): boolean {
-  return query.node.kind === 'all'
+  return (
+    query.node.kind === 'all' &&
+    query.entity === 'rounds' &&
+    query.sort === null &&
+    query.limit === null
+  )
 }
 
 // ---------------------------------------------------------------------------------------------
