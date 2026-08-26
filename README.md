@@ -158,6 +158,7 @@ project                a directory an agent was started in    its name, or its p
 | `probez trails` · `trail <id>` | Runs of calls that followed one another into the repository |
 | `probez questions` · `question <id>` | What the agent needed to know, and what finding out cost |
 | `probez explain <id>` | Ask your own LLM what one question was, in a sentence |
+| `probez find "<query>"` | One query over everything collected |
 | `probez analyze` | Where the work went |
 | `probez view` | Open the profiler |
 | `probez collect` | Collect one project, or every project under a folder |
@@ -166,7 +167,7 @@ project                a directory an agent was started in    its name, or its p
 
 Lists take `--limit` and always say how many rows they withheld. `rounds` filters by `--session`,
 `--task`, `--tool`, `--command`, `--kind`, `--category`, `--target`, `--agent` and `--errors`, and
-`sessions` takes `--agent` too.
+`sessions` takes `--agent` too. `find` takes `--all`, `--in`, `--sort` and `--plan`.
 `analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
 `--outcome`. `questions` takes `--kind` and `--min-calls`, and `explain` takes `--again` and `--prompt`.
 `--source` selects Claude Code, Cursor, or
@@ -324,6 +325,100 @@ $ probez analyze flowz-mcp
 much of the bill. Cost is worked out per round from its own model's rates, then split across that
 round's work. The last lines are part of the answer: rounds of pure prose and tools with no entry in
 the table sit outside the shares, and are reported rather than guessed at.
+
+### Search: one query over everything
+
+Every table above answers one question through a fixed hole — one flag per field, and no way to
+combine two of them. `probez find` is the other direction: one grammar over the whole record, so a
+question that crosses two levels can be written down.
+
+Bare words are free text, over the prompts, the prose, the commands and the paths. A `key:value`
+filters, `-` negates, one after another means and, `OR` is the other one, and brackets regroup.
+
+```console
+$ probez find 'category:reconstruction cost:>0.30 -tool:Read' flowz-mcp
+
+  flowz-mcp  ~/Dev/workspace/flowz-mcp
+
+  4 rounds · $2.32 · 0.6% of rounds · 2.8% of cost · 3 sessions · 81% reconstruction
+
+  ROUND           WORK                COST     TIME         WHEN  SAYS
+  c21c7448#2.64   Environment        $1.16    842ms   9 days ago  Bash 1
+  c21c7448#1.0    Reconstruction     $0.39     1.5s  10 days ago  implement next task
+  bfd594d9#2.24   Reconstruction     $0.42    866ms  14 days ago  Bash 1
+  0b2cc149#1.0    Reconstruction     $0.36    794ms  15 days ago  did we implemented T001?
+
+  4 rounds
+```
+
+**The first line is a share, not a count.** Four rounds is a number; 2.8% of what this project cost
+is a finding. A query does not filter a listing, it re-scopes the profile — the same idea as pprof's
+`-focus`, and the reason the totals, the concentration and the distribution come before any row of
+it.
+
+`--in` says what the matched rounds are then counted as. A session, task or project matches when a
+round inside it does, and the row reports the rounds that matched with the size of the whole thing
+beside them, so a task that spent six of its seventy-one rounds on what was asked for reads as six:
+
+```console
+$ probez find '(tool:Edit OR tool:Write) added:>200 in:tasks sort:cost' flowz-agentic-sdlc --limit 5
+
+  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
+
+  29 rounds · $11.87 · 0.8% of rounds · 1.3% of cost · 8 sessions · 86% implementation
+
+  TASK         ROUNDS    OF       COST  ASKED
+  6b45d8d7#3        6    71      $4.10  <task-notification> <task-id>a5420a731e4ed3f58</task…
+  5366f0e4#2        6   164      $2.36  Base directory for this skill: /private/tmp/claude-5…
+  f77c95fe#1        4   182      $1.32  implement PRD13
+  5366f0e4#22       3    35      $0.73  2 - this is not yet to be enforced - i have free tei…
+  ea20e02d#3        1     9      $0.50  do it
+
+  showing 5 of 14 tasks, --limit 0 for all
+```
+
+`--all` searches every project in the store rather than one. `sort:` puts the big end of a magnitude
+first, `limit:` and `in:` can be written into the query instead of passed as flags, and `--json`
+carries the whole result — totals, share, distribution and rows.
+
+**A half-typed query is read the same way a finished one is.** What cannot be read yet is said,
+under the part of the query it is about, and everything else still runs; a value that is merely
+missing narrows nothing rather than blanking the list. `--plan` prints that reading on its own,
+which is a way to find out what probez made of a query without it going near a store:
+
+```console
+$ probez find 'cost:> categoy:test' --plan
+
+  cost:> categoy:test
+  ^^^^^^
+  `cost:` needs a value
+         ^^^^^^^^^^^^
+  there is no `categoy:` field, so this is being searched for as text — did you mean category:?
+
+
+  read as   categoy:test
+  counting  rounds
+  fields    ·
+  sort      newest first
+  limit     50
+```
+
+`probez --help` lists every field a query can name, with what each one reads. The filters on
+`rounds` are the same language underneath — `--tool Bash` is `tool:Bash`, down to the comparison —
+so the two cannot come to disagree about what a tool name is or how a command is matched.
+
+**Free text matches a word, or the start of one.** `tok` finds `tokens`; `oken` does not, and
+`"npm test"` does not find `pnpm test`. That boundary is what makes the search fast enough to be
+worth having: `collect` and `analyze` write a compact index beside the rounds — about a fifth of
+their size — holding every field a query can name, so a query is answered from its columns and only
+the rounds that actually matched are ever read off disk. On a 93 MB store of 48,000 rounds that is
+the difference between 300 ms and 1.4 s across every project at once, and between 60 ms and 260 ms
+within one.
+
+The index is derived data in the strict sense: deleting it costs speed and nothing else. A project
+that has not been collected since it existed, or whose rounds have moved underneath it, is read in
+full and the footer says how many were — since being told is the only way to tell a quick search
+from a slow one. `find` itself never writes one; reading writes nothing, here as everywhere.
 
 ### Trails: how the agent found its way around
 

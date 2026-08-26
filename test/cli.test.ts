@@ -949,3 +949,174 @@ test('analyze says how much of the finding happened inside a walk', () => {
   assert.match(out.stdout, /of the finding was inside 1 trail/)
   assert.match(out.stdout, /The deepest went \d+ hops from a listing/)
 })
+
+/** `find <query> [project] [flags]` — the query comes first, unlike every other command. */
+function find(env: ReturnType<typeof makeSource>, args: string[]): Run {
+  const [query, ...rest] = args
+  return run([
+    'find',
+    query!,
+    env.project,
+    ...rest,
+    '--data-dir',
+    env.dataDir,
+    '--claude-dir',
+    env.claudeDir,
+    '--cursor-dir',
+    env.cursorDir,
+  ])
+}
+
+test('`find` answers with a share of the profile, not just a list of rows', () => {
+  const env = makeSource(1)
+  collect(env)
+  const out = find(env, ['tool:Bash'])
+  assert.equal(out.status, 0)
+  // The share is the point: a count alone says nothing about how much of the work this was.
+  assert.match(out.stdout, /\d+ rounds? · .*of rounds/)
+  assert.match(out.stdout, /ROUND\s+WORK/)
+})
+
+test('`find` takes the query first and the project second', () => {
+  const env = makeSource(1)
+  collect(env)
+  const named = find(env, ['tool:Bash'])
+  const everywhere = run([
+    'find',
+    'tool:Bash',
+    '--all',
+    '--data-dir',
+    env.dataDir,
+    '--claude-dir',
+    env.claudeDir,
+    '--cursor-dir',
+    env.cursorDir,
+  ])
+  assert.equal(everywhere.status, 0)
+  // One project in this store, so naming it and searching all of it find the same rounds.
+  const count = (text: string): string | undefined => /(\d+) rounds? ·/.exec(text)?.[1]
+  assert.equal(count(named.stdout), count(everywhere.stdout))
+})
+
+test('`find --json` carries the totals, the share and the rows', () => {
+  const env = makeSource(1)
+  collect(env)
+  const out = find(env, ['tool:Bash', '--json'])
+  assert.equal(out.status, 0)
+  const result = JSON.parse(out.stdout)
+  assert.equal(result.entity, 'rounds')
+  assert.ok(result.totals.rounds > 0)
+  assert.ok(result.share.rounds > 0 && result.share.rounds <= 1)
+  assert.equal(result.hits.length, Math.min(result.found, 50))
+})
+
+test('`find --in` counts something other than rounds', () => {
+  const env = makeSource(2)
+  collect(env)
+  const out = find(env, ['tool:Bash', '--in', 'sessions', '--json'])
+  const result = JSON.parse(out.stdout)
+  assert.equal(result.entity, 'sessions')
+  // Two sessions of the same fixture, so each hit says how much of its own session matched.
+  assert.equal(result.hits.length, 2)
+  assert.ok(result.hits.every((hit: { of: number; rounds: number }) => hit.of >= hit.rounds))
+})
+
+test('a broken query is explained under the part that broke, and the rest still runs', () => {
+  const env = makeSource(1)
+  collect(env)
+  const out = find(env, ['tool:Bash categoy:test'])
+  assert.equal(out.status, 0)
+  assert.match(out.stdout, /there is no `categoy:` field/)
+  assert.match(out.stdout, /did you mean category:\?/)
+})
+
+test('`find --plan` says what it made of a query and reads no store at all', () => {
+  const env = makeSource(1)
+  // Deliberately not collected: --plan must not need anything to have been.
+  const out = run(['find', 'cost:>0.50 in:sessions', '--plan', '--data-dir', env.dataDir])
+  assert.equal(out.status, 0)
+  assert.match(out.stdout, /read as {3}cost:>0.50 in:sessions/)
+  assert.match(out.stdout, /counting {2}sessions/)
+  assert.match(out.stdout, /fields {4}cost/)
+})
+
+test('`find` with nothing to look for says so rather than listing the store', () => {
+  const env = makeSource(1)
+  collect(env)
+  const out = run(['find', '--data-dir', env.dataDir])
+  assert.equal(out.status, 2)
+  assert.match(out.stderr, /find needs something to look for/)
+})
+
+test('a query that matches nothing says so, and points at the field list', () => {
+  const env = makeSource(1)
+  collect(env)
+  const out = find(env, ['tool:NoSuchTool'])
+  assert.equal(out.status, 0)
+  assert.match(out.stdout, /nothing matched/)
+  assert.match(out.stdout, /probez help` lists every field/)
+})
+
+test('`find` reads the store, so it refuses a project that was never collected', () => {
+  const env = makeSource(1)
+  const out = find(env, ['tool:Bash'])
+  assert.equal(out.status, 2)
+  assert.match(out.stderr, /no collected project matched/)
+})
+
+test('a flag belonging to find is refused elsewhere, and says where it belongs', () => {
+  const env = makeSource(1)
+  collect(env)
+  assert.match(read(env, ['rounds', '--plan']).stderr, /--plan does not apply/)
+  assert.match(read(env, ['rounds', '--in', 'tasks']).stderr, /It belongs to `find`/)
+})
+
+test('collecting a project leaves it searchable, and `find` says when one is not', () => {
+  const env = makeSource(1)
+  collect(env)
+  const store = join(env.dataDir, 'projects')
+  const [project] = readdirSync(store)
+  const index = join(store, project!, 'search.jsonl')
+  assert.ok(existsSync(index), 'collect did not write a search index')
+
+  // Answered from the index: nothing was read in full, so nothing is said about it.
+  const fast = find(env, ['tool:Bash'])
+  assert.equal(fast.status, 0)
+  assert.doesNotMatch(fast.stdout, /read in full/)
+
+  // The index is derived data. Without it the same query is answered by reading the rounds, gives
+  // the same rounds, and says that it had to.
+  const before = JSON.parse(find(env, ['tool:Bash', '--json']).stdout)
+  rmSync(index)
+  const slow = find(env, ['tool:Bash'])
+  assert.match(slow.stdout, /1 project was read in full for want of a current search index/)
+  const after = JSON.parse(find(env, ['tool:Bash', '--json']).stdout)
+  assert.equal(after.totals.rounds, before.totals.rounds)
+  assert.deepEqual(after.hits, before.hits)
+  assert.equal(before.scanned.indexed, 1)
+  assert.equal(after.scanned.read, 1)
+})
+
+test('an index is not read once the rounds it describes have moved', () => {
+  const env = makeSource(1)
+  collect(env)
+  const store = join(env.dataDir, 'projects')
+  const [project] = readdirSync(store)
+  const rounds = join(store, project!, 'rounds.jsonl')
+
+  const before = JSON.parse(find(env, ['tool:Bash', '--json']).stdout)
+  assert.equal(before.scanned.indexed, 1)
+
+  // A round appended by something other than collect, which is what a stale index looks like.
+  const line = readFileSync(rounds, 'utf8').trimEnd().split('\n').at(-1)!
+  const extra = JSON.parse(line)
+  extra.round = 9999
+  extra.session = 'ffffffff-0000-0000-0000-000000000000'
+  writeFileSync(rounds, readFileSync(rounds, 'utf8') + JSON.stringify(extra) + '\n')
+
+  const after = JSON.parse(find(env, ['tool:Bash', '--json']).stdout)
+  assert.equal(after.scanned.read, 1, 'a stale index was used')
+  // The scope is the denominator of every share, and it is the figure the index supplies without
+  // reading anything — so it counting the new round is what proves the stale one was not believed.
+  assert.equal(after.scope.rounds, before.scope.rounds + 1)
+})

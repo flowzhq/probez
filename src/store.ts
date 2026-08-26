@@ -306,8 +306,8 @@ export async function writeAnalysis(
 }
 
 /** Owner-only, the mode the agent already uses for the session files probez reads. */
-const DIR_MODE = 0o700
-const FILE_MODE = 0o600
+export const DIR_MODE = 0o700
+export const FILE_MODE = 0o600
 /** Any bit granting group or other access. */
 const SHARED_BITS = 0o077
 
@@ -318,8 +318,12 @@ const SHARED_BITS = 0o077
  * default `0644` would publish, to every local account, what the source deliberately kept private.
  * New stores are created owner-only; this repairs the ones written before that was true. It only
  * ever removes access, never grants it, and only inside the data directory.
+ *
+ * Exported because `writeFile`'s `mode` applies only when it creates the file: anything that
+ * rewrites a store file in place has to call this after, or a store somebody once loosened stays
+ * loose. The search index is one of those, and `test/cli.test.ts` checks it.
  */
-async function tighten(path: string, mode: number): Promise<void> {
+export async function tighten(path: string, mode: number): Promise<void> {
   try {
     const info = await stat(path)
     if ((info.mode & SHARED_BITS) !== 0) await chmod(path, mode)
@@ -357,6 +361,107 @@ export async function eachRound(file: string, visit: (round: Round) => void): Pr
   } catch {
     // file does not exist yet
   }
+}
+
+/**
+ * Every non-blank line of a rounds file, with the position that names it.
+ *
+ * That position is what the search index calls a round, and it is counted over *lines* rather than
+ * over rounds that parsed. The difference only shows up on a torn line from an interrupted write,
+ * and it is the whole reason this exists: counting successful parses would mean the index could
+ * only say which round it meant by parsing every line again, which is the one thing the index is
+ * for avoiding. A line that does not parse keeps its position and is recorded as matching nothing.
+ */
+export async function eachRoundLine(
+  file: string,
+  visit: (at: number, line: string, offset: number, bytes: number) => void,
+): Promise<void> {
+  let stream
+  try {
+    stream = createReadStream(file, { encoding: 'utf8' })
+  } catch {
+    return
+  }
+  const lines = createInterface({ input: stream, crlfDelay: Infinity })
+  let at = 0
+  // Where each line begins, so the index can record it and a later read can seek straight to it
+  // instead of walking the file again. Counted in bytes rather than characters, because that is
+  // what a file position is and a prompt is full of characters that are not one byte.
+  let offset = 0
+  try {
+    for await (const line of lines) {
+      const bytes = Buffer.byteLength(line, 'utf8')
+      if (line.trim() !== '') {
+        visit(at, line, offset, bytes)
+        at += 1
+      }
+      offset += bytes + 1
+    }
+  } catch {
+    // file does not exist yet
+  }
+}
+
+/**
+ * The rounds at these positions, and no others.
+ *
+ * The point of the search index: a query that matched four hundred of fifty thousand rounds reads
+ * four hundred of them off disk, and `JSON.parse` — which is nearly all of what reading a store
+ * costs — never sees the rest.
+ */
+export async function readRoundsAt(dir: string, wanted: Set<number>): Promise<Map<number, Round>> {
+  const found = new Map<number, Round>()
+  if (wanted.size === 0) return found
+  await eachRoundLine(join(dir, 'rounds.jsonl'), (at, line) => {
+    if (!wanted.has(at)) return
+    try {
+      found.set(at, JSON.parse(line) as Round)
+    } catch {
+      // a torn line from an interrupted write; the index already records it as matching nothing
+    }
+  })
+  return found
+}
+
+/**
+ * The rounds at these byte ranges, read without touching the rest of the file.
+ *
+ * The other half of what the index buys. `readRoundsAt` still walks every line to count its way to
+ * the ones it wants, which on a forty-megabyte store is most of the cost of the query; this seeks
+ * to each one, so a search that matched four hundred rounds reads four hundred rounds' worth of
+ * bytes. Ranges are read in file order and coalesced, so what reaches the disk is a handful of
+ * sequential reads rather than one per hit.
+ */
+export async function readRoundsAtOffsets(
+  dir: string,
+  ranges: Array<{ at: number; offset: number; bytes: number }>,
+): Promise<Map<number, Round>> {
+  const found = new Map<number, Round>()
+  if (ranges.length === 0) return found
+  const file = join(dir, 'rounds.jsonl')
+  let handle
+  try {
+    handle = await open(file, 'r')
+  } catch {
+    return found
+  }
+  try {
+    const ordered = [...ranges].sort((a, b) => a.offset - b.offset)
+    for (const one of ordered) {
+      if (one.bytes <= 0) continue
+      const buffer = Buffer.allocUnsafe(one.bytes)
+      const read = await handle.read(buffer, 0, one.bytes, one.offset)
+      if (read.bytesRead !== one.bytes) continue
+      try {
+        found.set(one.at, JSON.parse(buffer.toString('utf8')) as Round)
+      } catch {
+        // the file moved under the index; the caller's staleness check catches it next time
+      }
+    }
+  } finally {
+    await handle.close()
+  }
+  return found
 }
 
 /**

@@ -57,6 +57,7 @@ import {
   writePricing,
 } from './pricing.js'
 import type { Pricing, Rates } from './pricing.js'
+import { buildIndex } from './searchindex.js'
 import { contextShare } from './models.js'
 import type { Round, ToolCall } from './types.js'
 
@@ -950,6 +951,9 @@ export async function syncProject(
       { rounds: rounds.length, toolless: analysis.coverage.toolless },
       analysisRecords(rounds),
     )
+    // Written beside the labels cache, from the same rounds, for the same reason: both are
+    // derivations of `rounds.jsonl`, and a sync is the one place that rebuilds them.
+    await buildIndex(stored.dir)
 
     const after = (await findStored(dataDir, slug)) ?? stored
     return {

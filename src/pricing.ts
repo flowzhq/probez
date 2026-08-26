@@ -142,16 +142,41 @@ export async function writePricing(dataDir: string, pricing: Pricing): Promise<v
  * however much it actually was.
  */
 export function costOf(round: Round, pricing: Pricing): number | null {
-  const model = round.model
+  return priceOf(pricing, round.model, {
+    uncached: round.in_uncached,
+    write_5m: round.in_cache_write_5m,
+    write_1h: round.in_cache_write_1h,
+    cache_read: round.in_cache_read,
+    out: round.out_tokens,
+  })
+}
+
+/** The five counts a price is worked out from. Nulls are zero here; an absent *rate* is not. */
+export interface Charged {
+  uncached: number | null
+  write_5m: number | null
+  write_1h: number | null
+  cache_read: number | null
+  out: number | null
+}
+
+/**
+ * The same arithmetic as `costOf`, over the counts rather than over a round.
+ *
+ * The search index holds those counts in columns and never builds a round, so without this it
+ * would have to either carry a copy of this formula or store a price — and a stored price goes
+ * silently wrong the moment somebody corrects a rate. One formula, two callers.
+ */
+export function priceOf(pricing: Pricing, model: string | null, charged: Charged): number | null {
   if (model === null) return null
   const rate = pricing.models[model]
   if (rate === undefined) return null
   return (
-    ((round.in_uncached || 0) * rate.in +
-      (round.in_cache_write_5m || 0) * rate.cache_write_5m +
-      (round.in_cache_write_1h || 0) * rate.cache_write_1h +
-      (round.in_cache_read || 0) * rate.cache_read +
-      (round.out_tokens || 0) * rate.out) /
+    ((charged.uncached || 0) * rate.in +
+      (charged.write_5m || 0) * rate.cache_write_5m +
+      (charged.write_1h || 0) * rate.cache_write_1h +
+      (charged.cache_read || 0) * rate.cache_read +
+      (charged.out || 0) * rate.out) /
     1_000_000
   )
 }
