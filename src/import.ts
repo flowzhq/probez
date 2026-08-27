@@ -1,4 +1,5 @@
-import type { Compaction, Patch, Round, RoundEvent, ToolCall } from './types.js'
+import { isRoundSource, sourceFromAlias } from './agents/paths.js'
+import type { Compaction, Patch, Round, RoundEvent, RoundSource, ToolCall } from './types.js'
 
 /**
  * Reading a project someone else exported.
@@ -180,6 +181,7 @@ export function normalizeRound(value: unknown): Round | null {
     task: num(r.task),
     commit: commitOf(r.commit),
     agent: r.agent === 'sub' ? 'sub' : 'main',
+    source: importedSource(r.source),
     id,
     ts: strOrNull(r.ts),
     ms: numOrNull(r.ms),
@@ -207,6 +209,12 @@ export function normalizeRound(value: unknown): Round | null {
       .map(eventOf)
       .filter((event): event is RoundEvent => event !== null),
   }
+}
+
+function importedSource(value: unknown): RoundSource {
+  if (typeof value !== 'string' || value === '') return 'unknown'
+  if (isRoundSource(value)) return value
+  return sourceFromAlias(value) ?? 'unknown'
 }
 
 /** A round that predates the token split cannot be priced, and inventing the split would be a lie. */

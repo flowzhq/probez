@@ -35,6 +35,7 @@ import { COMMAND_KINDS, subCommands } from './bash.js'
 import type { Command } from './bash.js'
 import { CATEGORIES, TARGETS } from './classify.js'
 import type { Label } from './classify.js'
+import { aliasOfSource, roundSourceOf, SOURCE_ALIASES } from './agents/paths.js'
 import { costOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
 import type { Round } from './types.js'
@@ -132,7 +133,8 @@ export const FIELDS: Field[] = [
   { key: 'round', kind: 'number', group: 'where', says: 'the round number within its session', example: '12' },
   { key: 'commit', kind: 'text', group: 'where', match: 'loose', says: 'the commit the task started from', example: '9e4e660' },
   { key: 'model', kind: 'text', group: 'where', match: 'loose', says: 'the model that answered', example: 'opus' },
-  { key: 'agent', kind: 'enum', group: 'where', says: 'who ran it', values: ['main', 'sub'] },
+  { key: 'agent', kind: 'enum', group: 'where', says: 'who ran it: main agent or subagent, not which product', values: ['main', 'sub'] },
+  { key: 'source', kind: 'enum', group: 'where', says: 'which product wrote it: claude, cursor, or codex (claude matches persisted claude-code)', values: [...SOURCE_ALIASES] },
   { key: 'skill', kind: 'text', group: 'where', match: 'loose', says: 'the skill the work was attributed to', example: 'code-review' },
   { key: 'mcp', kind: 'text', group: 'where', match: 'loose', says: 'the MCP server the work was attributed to', example: 'gitnexus' },
 
@@ -549,7 +551,10 @@ export function parse(text: string, options: ParseOptions = {}): Query {
     if (rest === '*') return { kind: 'field', key, op: 'has', value: '*', low: null, high: null, at: span }
 
     if (spec.kind === 'enum') {
-      const value = rest.toLowerCase()
+      let value = rest.toLowerCase()
+      // `claude` is the CLI alias; `claude-code` is what the store writes. Both must name the
+      // same rounds, or a query that parses cleanly would match nothing.
+      if (key === 'source' && value === 'claude-code') value = 'claude'
       if (!(spec.values ?? []).includes(value)) {
         const meant = didYouMean(value, spec.values ?? [])
         diagnostics.push({
@@ -748,6 +753,30 @@ export function print(query: Query): string {
   if (query.sort !== null) parts.push(`sort:${query.sort.desc ? '' : '+'}${query.sort.key}`)
   if (query.limit !== null) parts.push(`limit:${query.limit}`)
   return parts.filter((part) => part !== '').join(' ')
+}
+
+/**
+ * Write or replace a `source:` token in a query string.
+ *
+ * The search page's dropdown calls this so picking Cursor and typing `source:cursor` stay the
+ * same language. Browse pages pin with `?source=` instead. A new source replaces the previous
+ * token instead of appending a second one. `null` removes every `source:` atom (All).
+ */
+export function setSourceQuery(text: string, alias: string | null): string {
+  const stripped = text
+    .replace(/(?:^|\s)-?source:(?:claude-code|claude|cursor|codex|unknown)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (alias === null || alias === '') return stripped
+  return stripped === '' ? `source:${alias}` : `${stripped} source:${alias}`
+}
+
+/** The last `source:` token in a query, as a CLI alias, or null when the query does not name one. */
+export function sourceQueryOf(text: string): string | null {
+  const matches = [...text.matchAll(/\bsource:(claude-code|claude|cursor|codex|unknown)\b/gi)]
+  if (matches.length === 0) return null
+  const raw = matches[matches.length - 1]![1]!.toLowerCase()
+  return raw === 'claude-code' ? 'claude' : raw
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -986,6 +1015,8 @@ export function subjectOf(round: Round, context: RoundContext): Subject {
           return round.model === null ? [] : [round.model]
         case 'agent':
           return [round.agent]
+        case 'source':
+          return [aliasOfSource(roundSourceOf(round))]
         case 'skill':
           return round.skill === null ? [] : [round.skill]
         case 'mcp':
@@ -1131,6 +1162,8 @@ export interface RoundFilter {
   category?: string
   target?: string
   agent?: 'main' | 'sub'
+  /** CLI/query alias: `claude` (not `claude-code`), `cursor`, `codex`, or `unknown`. */
+  source?: string
   errorsOnly?: boolean
 }
 
@@ -1159,6 +1192,7 @@ export function queryFromFilter(filter: RoundFilter): Query {
   if (filter.category !== undefined) field('category', filter.category.toLowerCase())
   if (filter.target !== undefined) field('target', filter.target.toLowerCase())
   if (filter.agent !== undefined) field('agent', filter.agent)
+  if (filter.source !== undefined) field('source', filter.source)
   if (filter.errorsOnly === true) field('is', 'error')
 
   const node: Node =

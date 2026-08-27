@@ -33,15 +33,18 @@ const here = dirname(fileURLToPath(import.meta.url))
 const CLI = join(here, '..', 'src', 'cli.js')
 const FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'session.jsonl')
 const SUBAGENT_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'claude-subagent.jsonl')
+const CURSOR_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'cursor-session.jsonl')
 const VIEW = join(here, '..', 'view')
 
 /** A collected store of one project, built by running the real `collect`. */
 function makeStore(delegated = false): {
   dataDir: string
   claudeDir: string
+  cursorDir: string
   sourceDir: string
   slug: string
   session: string
+  project: string
 } {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'probez-view-test-')))
   const claudeDir = join(root, 'claude')
@@ -85,7 +88,7 @@ function makeStore(delegated = false): {
   )
 
   const slug = readdirSync(join(dataDir, 'projects'))[0]!
-  return { dataDir, claudeDir, sourceDir, slug, session }
+  return { dataDir, claudeDir, cursorDir, sourceDir, slug, session, project }
 }
 
 /** Every file in a tree, by size and modification time: what "left it alone" means. */
@@ -105,9 +108,20 @@ function snapshot(dir: string): Record<string, string> {
   return seen
 }
 
-async function serving(dataDir: string, claudeDir = ''): Promise<Serving> {
+async function serving(
+  dataDir: string,
+  claudeDir = '',
+  extra: { cursorDir?: string; codexDir?: string } = {},
+): Promise<Serving> {
   forgetRounds()
-  return startServer({ dataDir, claudeDir, cursorDir: '', codexDir: '', port: 0, pinned: true })
+  return startServer({
+    dataDir,
+    claudeDir,
+    cursorDir: extra.cursorDir ?? '',
+    codexDir: extra.codexDir ?? '',
+    port: 0,
+    pinned: true,
+  })
 }
 
 const get = (server: Serving, path: string, init?: RequestInit): Promise<Response> =>
@@ -151,6 +165,8 @@ test('every level answers, and its numbers are the ones the store holds', async 
     const project = await body(withToken(server, `/api/projects/${slug}`))
     assert.equal(project.sessions.length, 1)
     assert.equal(project.sessions[0].session, session)
+    assert.equal(project.sessions[0].source, 'claude-code')
+    assert.ok((project.project.sources ?? []).includes('claude-code'))
     assert.equal(project.analysis.coverage.rounds, 5)
 
     const one = await body(withToken(server, `/api/projects/${slug}/sessions/${session}`))
@@ -601,6 +617,126 @@ test('sync collects what is new and rebuilds the analysis', async () => {
   }
 })
 
+test('?source= on a project is a page filter, not a search', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const all = await body(withToken(server, `/api/projects/${slug}`))
+    const claude = await body(withToken(server, `/api/projects/${slug}?source=claude`))
+    assert.equal(claude.sessions.length, all.sessions.length)
+    assert.equal(claude.analysis.coverage.rounds, all.analysis.coverage.rounds)
+    assert.ok(claude.sessions.every((row: { source: string }) => row.source === 'claude-code'))
+    assert.equal(claude.project.rounds, claude.analysis.coverage.rounds)
+
+    const cursor = await body(withToken(server, `/api/projects/${slug}?source=cursor`))
+    assert.equal(cursor.sessions.length, 0)
+    assert.equal(cursor.project.rounds, 0)
+    assert.equal(cursor.analysis.coverage.rounds, 0)
+    assert.ok((cursor.project.sources ?? []).includes('claude-code'))
+
+    const listed = await body(withToken(server, '/api/projects?source=cursor'))
+    assert.equal(listed.projects.length, 0)
+    const listedClaude = await body(withToken(server, '/api/projects?source=claude'))
+    assert.equal(listedClaude.projects.length, 1)
+
+    const tools = await body(withToken(server, `/api/projects/${slug}/tools?source=cursor`))
+    assert.equal(tools.tools.length, 0)
+
+    const bad = await withToken(server, `/api/projects/${slug}?source=both`)
+    assert.equal(bad.status, 400)
+
+    // Typing source: in the query is still a search.
+    const found = await body(withToken(server, `/api/search?q=source:claude&project=${slug}`))
+    assert.ok(found.totals.rounds > 0)
+  } finally {
+    await server.close()
+  }
+})
+
+test('?source=cursor keeps the project payload to Cursor rounds on a mixed store', async () => {
+  const { dataDir, claudeDir, cursorDir, slug, project } = makeStore()
+  const cursorSlug = project.replaceAll('/', '-').replace(/^-/, '')
+  const sessionId = 'aaaa1111-0000-0000-0000-000000000000'
+  const sessionDir = join(cursorDir, cursorSlug, 'agent-transcripts', sessionId)
+  mkdirSync(sessionDir, { recursive: true })
+  writeFileSync(join(sessionDir, `${sessionId}.jsonl`), readFileSync(CURSOR_FIXTURE, 'utf8'))
+
+  const server = await serving(dataDir, claudeDir, { cursorDir })
+  try {
+    await body(
+      get(server, `/api/projects/${slug}/sync`, {
+        method: 'POST',
+        headers: { 'x-probez-token': server.token },
+      }),
+    )
+
+    const all = await body(withToken(server, `/api/projects/${slug}`))
+    const cursor = await body(withToken(server, `/api/projects/${slug}?source=cursor`))
+    const claude = await body(withToken(server, `/api/projects/${slug}?source=claude`))
+
+    assert.ok(all.sessions.length > cursor.sessions.length)
+    assert.ok(cursor.sessions.length > 0)
+    assert.ok(cursor.sessions.every((row: { source: string }) => row.source === 'cursor'))
+    assert.ok(claude.sessions.every((row: { source: string }) => row.source === 'claude-code'))
+    assert.equal(
+      cursor.sessions.reduce((n: number, row: { rounds: number }) => n + row.rounds, 0),
+      cursor.analysis.coverage.rounds,
+    )
+    assert.equal(cursor.project.rounds, cursor.analysis.coverage.rounds)
+    assert.ok((cursor.project.sources ?? []).includes('claude-code'))
+    assert.ok((cursor.project.sources ?? []).includes('cursor'))
+    assert.ok(cursor.analysis.coverage.rounds < all.analysis.coverage.rounds)
+
+    const listed = await body(withToken(server, '/api/projects?source=cursor'))
+    assert.equal(listed.projects.length, 1)
+    assert.equal(listed.projects[0].rounds, cursor.project.rounds)
+
+    const found = await body(withToken(server, `/api/search?q=source:cursor&project=${slug}`))
+    assert.equal(found.totals.rounds, cursor.analysis.coverage.rounds)
+  } finally {
+    await server.close()
+  }
+})
+
+test('sync collects every agent even when a source: query would hide some of them', async () => {
+  const { dataDir, claudeDir, cursorDir, slug, project } = makeStore()
+  const cursorSlug = project.replaceAll('/', '-').replace(/^-/, '')
+  const sessionId = 'aaaa1111-0000-0000-0000-000000000000'
+  const sessionDir = join(cursorDir, cursorSlug, 'agent-transcripts', sessionId)
+  mkdirSync(sessionDir, { recursive: true })
+  writeFileSync(join(sessionDir, `${sessionId}.jsonl`), readFileSync(CURSOR_FIXTURE, 'utf8'))
+
+  const server = await serving(dataDir, claudeDir, { cursorDir })
+  try {
+    // Display filter: only Claude. Sync must still pick up the Cursor transcript that appeared.
+    const before = await body(withToken(server, `/api/search?q=source:claude&project=${slug}`))
+    assert.ok(before.totals.rounds > 0)
+    const hidden = await body(withToken(server, `/api/search?q=source:cursor&project=${slug}`))
+    assert.equal(hidden.totals.rounds, 0)
+
+    const synced = await body(
+      get(server, `/api/projects/${slug}/sync`, {
+        method: 'POST',
+        headers: { 'x-probez-token': server.token },
+      }),
+    )
+    assert.equal(synced.source_found, true)
+    assert.ok(synced.new_rounds > 0)
+
+    const projectBody = await body(withToken(server, `/api/projects/${slug}`))
+    assert.ok((projectBody.project.sources ?? []).includes('claude-code'))
+    assert.ok((projectBody.project.sources ?? []).includes('cursor'))
+    assert.ok(projectBody.sessions.some((row: { source: string }) => row.source === 'cursor'))
+
+    const stillClaude = await body(withToken(server, `/api/search?q=source:claude&project=${slug}`))
+    assert.equal(stillClaude.totals.rounds, before.totals.rounds)
+    const nowCursor = await body(withToken(server, `/api/search?q=source:cursor&project=${slug}`))
+    assert.ok(nowCursor.totals.rounds > 0)
+  } finally {
+    await server.close()
+  }
+})
+
 test('sync says so when the sessions it would collect from are gone', async () => {
   const { dataDir, slug } = makeStore()
   // A claude directory with nothing in it: the store is still readable, there is just no source.
@@ -863,6 +999,12 @@ test('the page it serves loads nothing from anywhere else', () => {
     const remote = /(?:fetch|src|href)\s*[=(]\s*['"`]https?:\/\//.exec(body)
     assert.equal(remote, null, `${name.name} loads ${remote?.[0] ?? ''}`)
   }
+
+  const bundled = readdirSync(join(VIEW, 'assets'))
+    .filter((name) => name.endsWith('.js'))
+    .map((name) => readFileSync(join(VIEW, 'assets', name), 'utf8'))
+    .join('\n')
+  assert.match(bundled, /Filter by agent source/)
 })
 
 test('a query is answered over the store, and over one project when named', async () => {
@@ -887,6 +1029,11 @@ test('a query is answered over the store, and over one project when named', asyn
     assert.equal(grouped.entity, 'sessions')
     assert.equal(grouped.query, 'tool:Bash')
     assert.ok(grouped.hits.every((hit: { of: number; rounds: number }) => hit.of >= hit.rounds))
+
+    const claude = await body(withToken(server, `/api/search?q=source:claude&project=${slug}`))
+    assert.ok(claude.totals.rounds > 0)
+    const cursor = await body(withToken(server, `/api/search?q=source:cursor&project=${slug}`))
+    assert.equal(cursor.totals.rounds, 0)
   } finally {
     await server.close()
   }
@@ -926,6 +1073,9 @@ test('the facets are what a query can name, and what this store holds for it', a
     // Most used first, which is the order that makes a list of them worth reading.
     const counts = tools.values.map((one: { rounds: number }) => one.rounds)
     assert.deepEqual(counts, [...counts].sort((a: number, b: number) => b - a))
+
+    const sources = await body(withToken(server, `/api/facets?key=source&project=${slug}`))
+    assert.ok(sources.values.some((one: { value: string }) => one.value === 'claude'))
   } finally {
     await server.close()
   }

@@ -51,8 +51,17 @@ export interface RoundEvent {
   tool_call_id?: string
 }
 
-/** Which coding agent produced a session. */
+/** Which coding agent produced a session. Persisted as-is; the CLI aliases `claude-code` to `claude`. */
 export type AgentSource = 'claude-code' | 'cursor' | 'codex'
+
+/**
+ * What a stored round records as its agent origin.
+ *
+ * `unknown` is only for data whose origin could not be determined — a sniff that did not recognise
+ * the transcript, an import with no field, a round written before this was collected. Live
+ * collection always writes one of the three `AgentSource` values.
+ */
+export type RoundSource = AgentSource | 'unknown'
 
 /**
  * A compaction the harness ran, recorded on the round that came after it.
@@ -93,8 +102,16 @@ export interface Round {
    * does not decay as the reflog is pruned.
    */
   commit: string | null
-  /** "sub" for subagent work, "main" otherwise. */
+  /** "sub" for subagent work, "main" otherwise. Not which product produced the session. */
   agent: 'main' | 'sub'
+  /**
+   * Which coding agent produced this round's session.
+   *
+   * Stamped at collect time from `SessionFile.source`, never inferred from tokens or tool names.
+   * Absent on a round that has not been rebuilt since the field existed; readers treat that as
+   * `unknown`.
+   */
+  source?: RoundSource
   /** Provider message id, unique within the session. */
   id: string
   /** ISO timestamp of the first record belonging to this round. */
@@ -156,7 +173,7 @@ export interface SessionFile {
   file: string
   size: number
   mtimeMs: number
-  source: AgentSource
+  source: RoundSource
 }
 
 /** A project the agent has been run in. */

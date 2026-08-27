@@ -783,6 +783,30 @@ button.save.grave:hover {
   color: var(--ink);
 }
 
+.source-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.source-filter select {
+  appearance: none;
+  padding: 2px 22px 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%),
+    linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: calc(100% - 10px) 50%, calc(100% - 6px) 50%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+
 /* Inspector --------------------------------------------------------------- */
 
 /* One trail or question, under the trace it was picked from. Built like the inspector beside it,
@@ -1247,6 +1271,24 @@ button:disabled {
    Escape, which the field already handles. */
 .find-in::-webkit-search-cancel-button {
   display: none;
+}
+
+.find-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-right: -3px;
+  border-radius: 3px;
+  color: var(--ink-3);
+}
+
+.find-clear:hover,
+.find-clear:focus-visible {
+  color: var(--ink);
+  background: var(--wash);
 }
 
 .find-key {

@@ -42,9 +42,9 @@ interface Run {
   stderr: string
 }
 
-function run(args: string[]): Run {
+function run(args: string[], cwd?: string): Run {
   try {
-    const stdout = execFileSync(process.execPath, [CLI, ...args], { encoding: 'utf8' })
+    const stdout = execFileSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd })
     return { status: 0, stdout, stderr: '' }
   } catch (error) {
     const e = error as { status: number; stdout: string; stderr: string }
@@ -440,6 +440,7 @@ test('a store from an older schema is rebuilt, not appended to', () => {
   assert.equal(after.length, before, 'a rebuild replaces the rounds rather than adding to them')
   assert.ok(after.every((round) => Array.isArray(round.events)), 'every round is the new shape')
   assert.ok(after.every((round) => typeof round.in_cache_read === 'number'))
+  assert.ok(after.every((round) => round.source === 'claude-code'), 'rebuild stamps source from the session')
 })
 
 test('a rebuild keeps rounds whose session the agent has since pruned', () => {
@@ -705,12 +706,18 @@ test('collect merges Claude and Cursor sessions for the same checkout', () => {
   const store = join(env.dataDir, 'projects', readdirSync(join(env.dataDir, 'projects'))[0]!)
   const manifest = JSON.parse(readFileSync(join(store, 'manifest.json'), 'utf8')) as { sources: string[] }
   assert.deepEqual(manifest.sources.slice().sort(), ['claude-code', 'cursor'])
+  const stamped = storedRounds(store)
+  assert.ok(stamped.some((round) => round.source === 'claude-code'))
+  assert.ok(stamped.some((round) => round.source === 'cursor'))
+  assert.ok(stamped.every((round) => round.source === 'claude-code' || round.source === 'cursor'))
 })
 
 test('--help names the agents', () => {
   const help = run(['--help'])
   assert.equal(help.status, 0, help.stderr)
   assert.match(help.stdout, /--source claude\|cursor\|codex\|all/)
+  assert.match(help.stdout, /Does not collect/)
+  assert.match(help.stdout, /source:claude/)
   assert.match(help.stdout, /--cursor-dir/)
   assert.match(help.stdout, /--codex-dir/)
   assert.match(help.stdout, /Codex CLI rollouts/)
@@ -786,6 +793,114 @@ test('collect merges Claude and Codex sessions for the same checkout', () => {
   const store = join(env.dataDir, 'projects', readdirSync(join(env.dataDir, 'projects'))[0]!)
   const manifest = JSON.parse(readFileSync(join(store, 'manifest.json'), 'utf8')) as { sources: string[] }
   assert.deepEqual(manifest.sources.slice().sort(), ['claude-code', 'codex'])
+  const stamped = storedRounds(store)
+  assert.ok(stamped.some((round) => round.source === 'claude-code'))
+  assert.ok(stamped.some((round) => round.source === 'codex'))
+})
+
+function makeMixedSource(): ReturnType<typeof makeSource> {
+  const env = makeCursorSource()
+  const sourceDir = join(env.claudeDir, 'encoded-project-name')
+  mkdirSync(sourceDir, { recursive: true })
+  writeFileSync(
+    join(sourceDir, '11111111-0000-0000-0000-000000000000.jsonl'),
+    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', env.project),
+  )
+  const day = join(env.codexDir, '2026', '01', '06')
+  mkdirSync(day, { recursive: true })
+  writeFileSync(
+    join(day, 'rollout-2026-01-06T00-00-00-cccc3333-0000-0000-0000-000000000000.jsonl'),
+    readFileSync(CODEX_FIXTURE, 'utf8').replaceAll('/tmp/demo', env.project),
+  )
+  return env
+}
+
+test('collect stamps each mixed-agent round with its session source', () => {
+  const env = makeMixedSource()
+  const both = collect(env, ['--json'])
+  assert.equal(both.status, 0, both.stderr)
+  const store = join(env.dataDir, 'projects', readdirSync(join(env.dataDir, 'projects'))[0]!)
+  const stamped = storedRounds(store)
+  const sources = [...new Set(stamped.map((round) => round.source))].sort()
+  assert.deepEqual(sources, ['claude-code', 'codex', 'cursor'])
+})
+
+test('--source on sessions filters stored rounds and does not restrict discovery', () => {
+  const env = makeMixedSource()
+  assert.equal(collect(env).status, 0)
+
+  const listed = JSON.parse(read(env, ['sessions', '--json']).stdout) as Array<{ source: string }>
+  assert.ok(listed.some((row) => row.source === 'cursor'))
+  assert.ok(listed.some((row) => row.source === 'claude-code'))
+
+  const cursorOnly = JSON.parse(
+    read(env, ['sessions', '--source', 'cursor', '--json']).stdout,
+  ) as Array<{ source: string; session: string }>
+  assert.ok(cursorOnly.length > 0)
+  assert.ok(cursorOnly.every((row) => row.source === 'cursor'))
+
+  const claudeOnly = JSON.parse(
+    read(env, ['sessions', '--source', 'claude', '--json']).stdout,
+  ) as Array<{ source: string }>
+  assert.ok(claudeOnly.length > 0)
+  assert.ok(claudeOnly.every((row) => row.source === 'claude-code'))
+
+  const found = run(['find', 'source:cursor', env.project, '--data-dir', env.dataDir, '--json'])
+  assert.equal(found.status, 0, found.stderr)
+  const result = JSON.parse(found.stdout) as { found: number }
+  assert.ok(result.found > 0)
+
+  const byFlag = run([
+    'find',
+    'tool:Read',
+    env.project,
+    '--source',
+    'cursor',
+    '--data-dir',
+    env.dataDir,
+    '--json',
+  ])
+  assert.equal(byFlag.status, 0, byFlag.stderr)
+  const flagged = JSON.parse(byFlag.stdout) as { found: number; query: string }
+  assert.ok(flagged.found > 0)
+  assert.match(flagged.query, /source:cursor/)
+
+  // Wipe live Cursor files. If `--source cursor` still went to discoverProjects, this would
+  // fail to find the project when run from the checkout with no project argument.
+  rmSync(env.cursorDir, { recursive: true, force: true })
+  mkdirSync(env.cursorDir, { recursive: true })
+  const emptyCursor = join(env.dataDir, 'empty-cursor')
+  mkdirSync(emptyCursor, { recursive: true })
+  const fromCwd = run(
+    [
+      'sessions',
+      '--source',
+      'cursor',
+      '--json',
+      '--data-dir',
+      env.dataDir,
+      '--claude-dir',
+      env.claudeDir,
+      '--cursor-dir',
+      emptyCursor,
+      '--codex-dir',
+      env.codexDir,
+    ],
+    env.project,
+  )
+  assert.equal(fromCwd.status, 0, fromCwd.stderr)
+  const recovered = JSON.parse(fromCwd.stdout) as Array<{ source: string }>
+  assert.ok(recovered.length > 0, fromCwd.stdout)
+  assert.ok(recovered.every((row) => row.source === 'cursor'))
+})
+
+test('read commands honour --source for analyze, tools, rounds, trails, questions and tasks', () => {
+  const env = makeMixedSource()
+  assert.equal(collect(env).status, 0)
+  for (const command of ['analyze', 'tools', 'rounds', 'trails', 'questions', 'tasks']) {
+    const result = read(env, [command, '--source', 'cursor'])
+    assert.equal(result.status, 0, `${command}: ${result.stderr}`)
+  }
 })
 
 test('collecting a Codex project twice does not duplicate rounds', () => {

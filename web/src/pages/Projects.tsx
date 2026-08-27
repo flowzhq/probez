@@ -4,10 +4,12 @@ import { api } from '../api'
 import { Actions } from '../components/Actions'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
 import { Import } from '../components/Import'
+import { SourceMarks } from '../components/SourceMarks'
 import { TokenCells, TokenHeaders } from '../components/Tokens'
 import { MixBar } from '../components/WorkBars'
 import { ago, count, percent } from '../format'
 import { go, href, linkProps } from '../router'
+import type { SourceChoice } from '../router'
 import { useData } from '../useData'
 import type { ReactElement } from 'react'
 
@@ -18,15 +20,15 @@ import type { ReactElement } from 'react'
  * project stays readable after the sessions it was collected from are gone. What is recorded is
  * recorded.
  */
-export function Projects(): ReactElement {
+export function Projects({ source = null }: { source?: SourceChoice | null }): ReactElement {
   const [read, setRead] = useState(0)
-  const { data, error, loading } = useData(() => api.projects(), [read])
+  const { data, error, loading } = useData(() => api.projects(source), [read, source])
   // Syncing, renaming, deleting and importing all change what this list is. One list, one re-read.
   const reread = (): void => setRead(read + 1)
 
   return (
     <>
-      <Chrome crumbs={[]} search={{}} />
+      <Chrome crumbs={[]} search={{ source }} />
       <main className="page">
         {error !== null && data === null ? (
           <Problem message={error} />
@@ -75,10 +77,10 @@ export function Projects(): ReactElement {
                       <tr
                         key={project.slug}
                         className="row"
-                        onClick={() => go(href.project(project.slug))}
+                        onClick={() => go(href.project(project.slug, source))}
                       >
                         <td>
-                          <a {...linkProps(href.project(project.slug))}>
+                          <a {...linkProps(href.project(project.slug, source))}>
                             <strong>{project.project}</strong>
                           </a>
                           {/* An import was measured on somebody else's machine. The row carries its
@@ -88,19 +90,7 @@ export function Projects(): ReactElement {
                               imported
                             </span>
                           )}
-                          {(project.sources ?? []).includes('cursor') ? (
-                            <span
-                              className="mark"
-                              title="Includes Cursor sessions. Cursor transcripts do not record token usage or cost."
-                            >
-                              cursor
-                            </span>
-                          ) : null}
-                          {(project.sources ?? []).includes('codex') ? (
-                            <span className="mark" title="Includes Codex CLI sessions">
-                              codex
-                            </span>
-                          ) : null}
+                          <SourceMarks sources={project.sources} />
                           <div className="muted mono clip" style={{ fontSize: 11 }}>
                             {project.path ?? project.key}
                           </div>
@@ -123,7 +113,7 @@ export function Projects(): ReactElement {
                             slug={project.slug}
                             project={project.project}
                             renamed={project.renamed}
-                            rounds={project.rounds}
+                            rounds={source === null ? project.rounds : null}
                             compact
                             onSynced={reread}
                             onRenamed={reread}
@@ -137,8 +127,18 @@ export function Projects(): ReactElement {
               )}
               {data.projects.length === 0 ? (
                 <p className="note" style={{ marginTop: 16 }}>
-                  Nothing here yet. Run <span className="mono">probez collect</span> in a project
-                  you work in, then reload — or <strong>Import</strong> a project someone sent you.
+                  {source === null ? (
+                    <>
+                      Nothing here yet. Run <span className="mono">probez collect</span> in a project
+                      you work in, then reload — or <strong>Import</strong> a project someone sent you.
+                    </>
+                  ) : (
+                    <>
+                      No project in this store has{' '}
+                      {source === 'claude' ? 'Claude' : source === 'cursor' ? 'Cursor' : 'Codex'}{' '}
+                      sessions.
+                    </>
+                  )}
                 </p>
               ) : null}
             </section>

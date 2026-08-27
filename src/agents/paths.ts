@@ -2,7 +2,7 @@ import { realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import type { AgentSource } from '../types.js'
+import type { AgentSource, RoundSource } from '../types.js'
 
 /**
  * Which agents to collect from.
@@ -152,6 +152,55 @@ export function isAgentSource(value: string): value is AgentSource {
   return value === 'claude-code' || value === 'cursor' || value === 'codex'
 }
 
+export function isRoundSource(value: string): value is RoundSource {
+  return isAgentSource(value) || value === 'unknown'
+}
+
+/**
+ * The names `source:` and `--source` accept, including `unknown` for data whose origin was not
+ * determined. `claude` is the alias for the persisted value `claude-code`.
+ */
+export const SOURCE_ALIASES = ['claude', 'cursor', 'codex', 'unknown'] as const
+
+export type SourceAlias = (typeof SOURCE_ALIASES)[number]
+
+export function isSourceAlias(value: string): value is SourceAlias {
+  return (SOURCE_ALIASES as readonly string[]).includes(value)
+}
+
+/** How a persisted source is written in the query language and the CLI. */
+export function aliasOfSource(source: RoundSource): SourceAlias {
+  return source === 'claude-code' ? 'claude' : source
+}
+
+/**
+ * The persisted value for a CLI/query alias, or null when the word is not a source.
+ *
+ * `claude` and `claude-code` both name Claude Code, so a query cannot silently match nothing
+ * because the person typed the name the flag uses rather than the name the store writes.
+ */
+export function sourceFromAlias(value: string): RoundSource | null {
+  const wanted = value.toLowerCase()
+  if (wanted === 'claude' || wanted === 'claude-code') return 'claude-code'
+  if (wanted === 'cursor' || wanted === 'codex' || wanted === 'unknown') return wanted
+  return null
+}
+
+/** A round whose field is missing or unrecognised is unknown, not Claude. */
+export function roundSourceOf(round: { source?: string }): RoundSource {
+  return typeof round.source === 'string' && isRoundSource(round.source) ? round.source : 'unknown'
+}
+
 export function isSourceFilter(value: string): value is SourceFilter {
   return value === 'claude' || value === 'cursor' || value === 'codex' || value === 'both' || value === 'all'
+}
+
+/**
+ * `--source` on a read command: a single agent to filter stored rounds to, or null for all of them.
+ *
+ * `both` and `all` are discovery spellings and mean "do not filter the store".
+ */
+export function storeSourceAlias(filter: SourceFilter): SourceAlias | null {
+  if (filter === 'claude' || filter === 'cursor' || filter === 'codex') return filter
+  return null
 }

@@ -18,6 +18,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   select which trees to walk. Token counts, when the rollout recorded them, are kept; cost stays
   blank until a rate exists for that model, the same as any other unpriced round.
 
+- **Agent source is a filterable round dimension.** Every stored round records which product
+  produced its session (`claude-code`, `cursor`, `codex`, or `unknown`). The field is stamped in the
+  store after extraction, not inside each extractor. `--source` on `collect` and `projects` still
+  selects which directories to scan. On read commands (`sessions`, `tasks`, `rounds`, `analyze`,
+  `tools`, `find`, `trails`, `questions`, `view`) the same flag filters already-collected rounds and
+  does not restrict discovery. `source:claude` in a query matches persisted `claude-code`. Schema 7
+  rebuilds existing stores on the next collect; a missing or unrecognised source is `unknown`, never
+  assumed Claude. In the view, the Source control is a page filter (same project layout, that
+  agent's sessions); typing `source:` in the query bar is still a search. Neither changes what Sync
+  collects. Mixed-source cost coverage stays explicit: rounds with no rate or no usage recorded are
+  marked `+` / unpriced rather than invented. The query bar's magnifying glass runs the search, a
+  completion already typed in full is not repeated under the box, and a clear control drops the
+  current query and source filter.
+
 ## [0.3.9] - 2026-08-26
 
 ### Added

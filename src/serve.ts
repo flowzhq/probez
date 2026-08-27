@@ -13,6 +13,7 @@ import {
   facetsPayload,
   importExport,
   NotFound,
+  pageSourceOf,
   pricingPayload,
   projectPayload,
   projectsPayload,
@@ -325,10 +326,10 @@ async function serveApi(
   // /api/compile                                              POST
   // /api/search?q=&project=&in=&limit=
   // /api/facets?key=&project=
-  // /api/projects
-  // /api/projects/<slug>
-  // /api/projects/<slug>/tools
-  // /api/projects/<slug>/trails, /api/projects/<slug>/questions
+  // /api/projects?source=
+  // /api/projects/<slug>?source=
+  // /api/projects/<slug>/tools?source=
+  // /api/projects/<slug>/trails?source=, /api/projects/<slug>/questions?source=
   // /api/projects/<slug>/readings
   // /api/projects/<slug>/prompt?session=&task=&at=
   // /api/projects/<slug>/explain                                POST
@@ -433,12 +434,13 @@ async function serveApi(
     sendJson(res, 404, { error: `no endpoint /api/${parts.join('/')}` })
     return
   }
+  const source = pageSourceOf(url.searchParams.get('source'))
   if (slug === undefined) {
-    sendJson(res, 200, await projectsPayload(dataDir))
+    sendJson(res, 200, await projectsPayload(dataDir, source))
     return
   }
   if (kind === undefined) {
-    sendJson(res, 200, await projectPayload(dataDir, slug))
+    sendJson(res, 200, await projectPayload(dataDir, slug, source))
     return
   }
   if (kind === 'sync' && id === undefined) {
@@ -481,15 +483,15 @@ async function serveApi(
     return
   }
   if (kind === 'tools' && id === undefined) {
-    sendJson(res, 200, await toolsPayload(dataDir, slug))
+    sendJson(res, 200, await toolsPayload(dataDir, slug, source))
     return
   }
   if (kind === 'questions' && id === undefined) {
-    sendJson(res, 200, await questionsPayload(dataDir, slug))
+    sendJson(res, 200, await questionsPayload(dataDir, slug, source))
     return
   }
   if (kind === 'trails' && id === undefined) {
-    sendJson(res, 200, await trailsPayload(dataDir, slug))
+    sendJson(res, 200, await trailsPayload(dataDir, slug, source))
     return
   }
   if (kind === 'readings' && id === undefined) {

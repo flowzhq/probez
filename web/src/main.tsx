@@ -20,7 +20,7 @@ function App(): ReactElement {
     <>
       <Defs />
       {route.name === 'projects' ? (
-        <Projects />
+        <Projects source={route.source} />
       ) : route.name === 'settings' ? (
         <Settings />
       ) : route.name === 'search' ? (
@@ -32,9 +32,14 @@ function App(): ReactElement {
           from={route.from}
         />
       ) : route.name === 'project' ? (
-        <Project key={route.slug} slug={route.slug} />
+        <Project key={route.slug} slug={route.slug} source={route.source} />
       ) : route.name === 'session' ? (
-        <Session key={`${route.slug}/${route.session}`} slug={route.slug} session={route.session} />
+        <Session
+          key={`${route.slug}/${route.session}`}
+          slug={route.slug}
+          session={route.session}
+          source={route.source}
+        />
       ) : route.name === 'task' ? (
         <Task
           key={`${route.slug}/${route.session}/${route.task}`}
@@ -45,6 +50,7 @@ function App(): ReactElement {
           trail={route.trail}
           question={route.question}
           q={route.q}
+          source={route.source}
         />
       ) : (
         <>

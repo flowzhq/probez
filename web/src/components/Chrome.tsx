@@ -2,7 +2,9 @@ import { Fragment, useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 
 import { linkProps } from '../router'
+import type { Entity, SourceChoice } from '../router'
 import { SearchBar } from './SearchBar'
+import { SourceFilter } from './SourceFilter'
 import { Tip, useTip } from './Tip'
 
 export interface Crumb {
@@ -25,7 +27,13 @@ export function Chrome({
   crumbs: Crumb[]
   right?: ReactNode
   /** Present on every page that knows what it would be searching. Omit only where nothing is. */
-  search?: { slug?: string | null; initial?: string }
+  search?: {
+    slug?: string | null
+    initial?: string
+    entity?: Entity | null
+    source?: SourceChoice | null
+    mode?: 'page' | 'search'
+  }
 }): ReactElement {
   return (
     <header className="top">
@@ -53,7 +61,16 @@ export function Chrome({
         <span className="spacer" />
         {right}
         {search === undefined ? null : (
-          <SearchBar slug={search.slug} initial={search.initial} />
+          <>
+            <SourceFilter
+              slug={search.slug}
+              initial={search.initial}
+              entity={search.entity}
+              source={search.source}
+              mode={search.mode}
+            />
+            <SearchBar slug={search.slug} initial={search.initial} source={search.source} />
+          </>
         )}
         <a
           className="gear"
