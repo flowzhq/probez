@@ -40,17 +40,20 @@ ways:
   DNS rebinding, where a page you visit resolves its own domain to `127.0.0.1` and talks to the
   server from inside your browser. The token alone would not stop that, because the browser would
   send it.
-- `GET` is the only method with an implementation, apart from eight: `POST .../sync`, which runs a
+- `GET` is the only method with an implementation, apart from nine: `POST .../sync`, which runs a
   collection on that project, `POST .../rename`, which sets the name a project is shown under,
-  `POST .../delete`, which removes a project from the store, `POST .../explain`, which runs the
+  `POST .../delete`, which removes a project from the store, `POST /api/clear`, which removes many
+  of them, `POST .../explain`, which runs the
   reader on one question, `POST /api/compile`, which runs the reader on one question you typed into
   the search box, `POST /api/pricing`, which saves the token rates, `POST /api/reader`,
   which sets the command those two run, and `POST /api/import`, which takes in a project someone
-  sent you. Nothing else accepts anything but `GET`, and all eight refuse `GET` themselves — a URL
+  sent you. Nothing else accepts anything but `GET`, and all nine refuse `GET` themselves — a URL
   that collects, renames, deletes, imports or starts a program when it is merely visited is a URL
   that can be put in an `<img>` tag on any page you happen to open. Pricing and the reader are
   readable with `GET` because reading a setting changes nothing. **Searching is a `GET`** — it
-  writes nothing, not even the index it is answered from.
+  writes nothing, not even the index it is answered from. `/api/clear` is a `POST` in both halves:
+  saying what would go writes nothing either, and is a `POST` only so that the half which acts
+  cannot be reached by a URL.
 - The page it serves may load only from its own origin, enforced by a content-security-policy on
   every response, and there is nothing off-origin in it to load.
 
@@ -60,22 +63,44 @@ writes, because that is what it is for: it runs `collect` and then rebuilds the 
 same two things the commands of those names do. **Rename** rewrites one field of one manifest.
 **Delete** removes one project's directory. Saving under **Settings** writes the rate table and the
 reader, **Explain** writes what a reader answered about one question, **ask** writes what one
-answered about a question you typed, and **Import** writes a new project. Those eight are the only
-writes the view can make.
+answered about a question you typed, the **danger zone** removes projects, and **Import** writes a
+new project. Those nine are the only writes the view can make.
 
 Those buttons change what the token protects. Before them, the token and the `Host` check stood
 between a page you did not open and *reading* your prompts; now they also stand between it and
 starting a collection on your machine, between it and deleting what has been recorded, and — where
 a reader is configured — between it and running that command.
 
-**Delete is the only thing in probez that destroys data.** It removes one project's directory from
-the store — its rounds, the session copies beside them, the analysis cache and the manifest — and
-there is no undo. Two checks keep it pointed inside the store: the slug from the URL must have the
-shape `slugFor` produces, with no separators and no `..`, and the path it resolves to must be under
-`<data-dir>/projects/`. It never touches the agent's own session files, which probez has only ever
-read, so a collected project comes back with `probez collect` minus whatever the agent has pruned
-since. An imported one does not come back: the file it arrived as is the only other copy that ever
-existed here. The view asks before running it, and says what will go.
+**Deleting and clearing are the only things in probez that destroy data.** There are three shapes
+of it and they go through the same fence.
+
+**Delete** removes one project's directory from the store — its rounds, the session copies beside
+them, the analysis cache and the manifest. **Clear** removes many: `probez clear --all`, or the
+danger zone's *clear the whole store*, takes every project; `probez clear --before 30d`, or *trim
+old history*, takes every **session** whose last round is older than the window, along with the
+archived transcript beside it, and removes any project left with nothing. A session with any newer
+round is kept whole, so a project you still work in keeps its recent work.
+
+Two checks keep all three pointed inside the store, and they are the same two: the slug must have
+the shape `slugFor` produces, with no separators and no `..`, and the path it resolves to must be
+under `<data-dir>/projects/`. Nothing outside the store is reachable from any of them, whatever a
+request says. Trimming rewrites `rounds.jsonl` beside itself and moves the new file over the old
+one, so a clear that is interrupted leaves the store as it was rather than half of it. Rates and the
+reader are settings rather than projects and are never cleared.
+
+None of it touches the agent's own session files, which probez has only ever read. So a collected
+project comes back with `probez collect` minus whatever the agent has pruned since — and a session
+cleared from the store is not remembered as cleared, so an unrestricted collect brings that back
+too. If what you wanted was a smaller store rather than a fuller one, `probez collect --since 30d`
+is the companion: it reads only sessions the agent has written to inside a window. An imported
+project does not come back: the file it arrived as is the only other copy that ever existed here.
+
+Everything that destroys says what will go before it goes, and asks. The command prints the plan —
+how many projects, sessions, rounds and bytes — and waits for an answer on the terminal; with no
+terminal to ask on it refuses rather than assuming, which is what makes `probez clear --all | tee
+log` safe, and `--yes` is how a script says it means it. The view shows the same figures, and names
+the largest projects rather than only counting them, in a panel that has to be opened before
+anything can be pressed.
 
 **Rename is a label and moves nothing.** The name is stored in the manifest and used for display and
 for matching a project by name on the command line. A project's directory in the store is a hash of

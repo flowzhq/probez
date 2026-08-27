@@ -1530,3 +1530,87 @@ button:disabled {
 .read-from a:hover {
   color: var(--ink);
 }
+
+/* The danger zone: the two things that remove more than one project. Set apart from the settings
+   above it, because everything else on that page is a preference and these are not. */
+.danger {
+  margin-top: 40px;
+  padding-top: 18px;
+  border-top: 1px solid var(--bad);
+}
+
+.danger h2 {
+  color: var(--bad);
+}
+
+.danger-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.danger-row > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.danger-row strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.danger-row select {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.danger-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* What would go, shown before anything does. Never a summary on its own: the biggest few are
+   named, because a total is a number and a name is a thing you recognise. */
+.danger-plan {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--bad);
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+.danger-plan strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.danger-list {
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.danger-list li {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.danger-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

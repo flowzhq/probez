@@ -7,6 +7,7 @@ import { extname, join, resolve, sep } from 'node:path'
 
 import {
   BadRequest,
+  clearStore,
   compileSentenceFor,
   explainOne,
   exportProject,
@@ -245,6 +246,17 @@ function isReaderPath(parts: string[]): boolean {
 }
 
 /**
+ * Clearing the store. POST only, because it destroys data.
+ *
+ * The one route that can remove more than a single project, and so the one that most needs to be
+ * unreachable by being visited. Both halves of it — saying what would go and taking it — are POSTs
+ * for that reason; which of the two happens is a field of the body, not the path.
+ */
+function isClearPath(parts: string[]): boolean {
+  return parts.length === 1 && parts[0] === 'clear'
+}
+
+/**
  * Reading a sentence as a query. POST only, because it starts a program.
  *
  * The second thing in probez that spawns anything, after `explain`, and it is a POST for the same
@@ -267,6 +279,7 @@ function isWritePath(parts: string[]): boolean {
     isPricingPath(parts) ||
     isReaderPath(parts) ||
     isCompilePath(parts) ||
+    isClearPath(parts) ||
     isImportPath(parts)
   )
 }
@@ -320,6 +333,7 @@ async function serveApi(
   url: URL,
 ): Promise<void> {
   const method = req.method ?? 'GET'
+  // /api/clear                                                POST
   // /api/compile                                              POST
   // /api/search?q=&project=&in=&limit=
   // /api/facets?key=&project=
@@ -379,6 +393,19 @@ async function serveApi(
         slug: url.searchParams.get('project') ?? undefined,
       }),
     )
+    return
+  }
+
+  if (group === 'clear' && slug === undefined) {
+    // Reachable only as POST; the method check upstream has already refused a GET here.
+    let body: unknown
+    try {
+      body = await readJsonBody(req)
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+      return
+    }
+    sendJson(res, 200, await clearStore(dataDir, body))
     return
   }
 
@@ -612,7 +639,10 @@ export async function startServer(options: ServeOptions): Promise<Serving> {
     if (
       wanted === 'GET' &&
       isApi &&
-      (isProjectWritePath(parts) || isImportPath(parts) || isCompilePath(parts))
+      (isProjectWritePath(parts) ||
+        isImportPath(parts) ||
+        isCompilePath(parts) ||
+        isClearPath(parts))
     ) {
       res.writeHead(405, { allow: 'POST', 'content-length': 0 })
       res.end()

@@ -119,9 +119,10 @@ Three constraints are not up for negotiation in a PR, because they are the produ
    installed. CI greps for it, so a second reader anywhere else fails the build rather than
    arriving quietly, and a PR that wants one needs to argue for it the way this paragraph does.
 
-   The view's routes that write are all `POST`, and there are eight: `.../sync` writes what `collect`
+   The view's routes that write are all `POST`, and there are nine: `.../sync` writes what `collect`
    and `analyze` write, `.../rename` sets one field of a manifest, `.../delete` removes one project's
-   directory, `.../explain` keeps what a reader said about one question, `/compile` keeps what one
+   directory, `/clear` removes many of them, `.../explain` keeps what a reader said about one
+   question, `/compile` keeps what one
    said about one sentence, `/import` writes a project
    that arrived as a file, `/pricing` stores rates, and `/reader` stores the command they run.
    Every
@@ -130,10 +131,19 @@ Three constraints are not up for negotiation in a PR, because they are the produ
    and the browser writes them where the person said, which is the only way a page can put a file on
    disk.
 
-   `delete` is the only thing anywhere in probez that destroys data, and it stays inside the same
-   fence: the slug is checked against the shape `slugFor` produces *and* the resolved path is checked
-   to be under `<data-dir>/projects/`, so nothing outside probez's own directory is reachable. The
-   agent's session files are not among the things it removes.
+   `delete` and `clear` are the only things anywhere in probez that destroy data, and they stay
+   inside the same fence: every one of them reaches a project through `ownDir`, which checks the slug
+   against the shape `slugFor` produces *and* checks the resolved path to be under
+   `<data-dir>/projects/`, so nothing outside probez's own directory is reachable however a request
+   is shaped. `test/clear.test.ts` asserts that directly, by handing `applyClear` a plan naming a
+   path outside the store and checking the file there survives. The agent's session files are not
+   among the things any of them removes.
+
+   Both of the wider ones are split into a plan and an apply, and that is not tidiness. Every
+   surface has to say what is about to go before it goes — the command prints the plan and waits,
+   the view shows the same figures in the panel that asks — so the numbers you are shown and the
+   thing that happens have to come from one place. A new destructive operation belongs in that
+   shape, and in the tests listed under `test/clear.test.ts` below.
 
 ## Code style
 
@@ -192,6 +202,11 @@ output in `dist/test/`, which is why `npm test` builds first.
   carries the schema and the question and nothing else, that it is bounded, and that a query with no
   *filter* in it is kept — `in:sessions sort:cost limit:1` is the right answer to "what is the most
   expensive session", and refusing it was a real bug.
+- `test/clear.test.ts` covers the two operations that destroy more than one project. The tests
+  that matter are the ones about what *survives*: that a session is old when its newest round is
+  rather than its oldest, that a trim keeps every surviving round in the order it was in, that the
+  manifest is recounted from what is left, that the state no longer claims a cleared session was
+  read, and that a plan naming a path outside the store cannot reach it.
 - `test/view.test.ts` runs the local server in-process against a temporary store. The refusals are
   the reason it exists: no token, wrong `Host`, and the method rules — every write path refuses
   `GET` and every read path refuses everything but it. Beside them sit the assertion that the store

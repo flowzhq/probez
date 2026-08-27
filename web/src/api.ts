@@ -768,6 +768,31 @@ export interface CompilePayload {
   ran: boolean
 }
 
+export interface ClearPlanProject {
+  slug: string
+  project: string
+  sessions: number
+  rounds: number
+  bytes: number
+  whole: boolean
+}
+
+export interface ClearPayload {
+  plan: {
+    before: number | null
+    projects: ClearPlanProject[]
+    totals: { projects: number; whole: number; sessions: number; rounds: number; bytes: number }
+  }
+  done: {
+    projects: number
+    whole: number
+    sessions: number
+    rounds: number
+    bytes: number
+    removed: string[]
+  } | null
+}
+
 export interface FacetPayload {
   fields: Array<{ key: string; says: string; kind: string; group: string; values: string[] }>
   key: string | null
@@ -826,6 +851,15 @@ export const api = {
     if (options.limit !== undefined) query.set('limit', String(options.limit))
     return get<SearchPayload>(`/search?${query.toString()}`)
   },
+  // The one call in the view that can remove more than a single project. A POST either way: the
+  // half that only says what would go is a POST too, so that the half that acts cannot be reached
+  // by visiting a URL.
+  clear: (scope: 'all' | 'before', options: { before?: string; apply?: boolean } = {}) =>
+    post<ClearPayload>('/clear', {
+      scope,
+      ...(options.before === undefined ? {} : { before: options.before }),
+      apply: options.apply === true,
+    }),
   // The one call in the view that turns a sentence into a query. A POST, because it starts the
   // program in `reader.json` — and what comes back is a query, which probez then runs itself.
   compile: (sentence: string, slug?: string | null, again = false) =>

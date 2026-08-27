@@ -52,6 +52,8 @@ export interface CollectResult extends Summary {
   new_rounds: number
   read_sessions: number
   skipped_sessions: number
+  /** Of those, the ones `--since` put outside the window rather than ones already up to date. */
+  skipped_by_window: number
   /** Whether the store was written from scratch because it predated the current schema. */
   rebuilt: boolean
 }
@@ -682,7 +684,7 @@ async function withArchived(
 export async function collectProject(
   project: Project,
   dataDir: string,
-  options: { full?: boolean } = {},
+  options: { full?: boolean; since?: number } = {},
 ): Promise<CollectResult> {
   const dir = projectDir(dataDir, project)
   const roundsFile = join(dir, 'rounds.jsonl')
@@ -704,12 +706,22 @@ export async function collectProject(
   // rounds are all there is, and keeping them at the version they were written for beats replacing
   // them with nothing.
   const rebuild = outdated && sources.length > 0
+  // `--since` narrows one run to the sessions the agent has written to lately, so a first collect
+  // on a machine with years of history does not have to read all of it. It is a window on *this*
+  // run and nothing else: a skipped session never enters `state`, so a later collect with no
+  // window reads it then. Never applied to a rebuild — that writes a new `rounds.jsonl` from what
+  // it reads, and a window there would silently drop everything outside it.
+  const windowed =
+    options.since === undefined || rebuild
+      ? sources
+      : sources.filter((session) => session.mtimeMs >= options.since!)
+  const skippedByWindow = sources.length - windowed.length
   const version = outdated && !rebuild ? (stored?.schema_version ?? SCHEMA_VERSION) : SCHEMA_VERSION
   const state =
     (options.full || rebuild ? null : stored) ??
     ({ schema_version: version, sessions: {} } as State)
 
-  const stale = sources.filter((session) => {
+  const stale = windowed.filter((session) => {
     const seen = state.sessions[session.id]
     return seen === undefined || seen.size !== session.size || seen.mtimeMs !== session.mtimeMs
   })
@@ -832,6 +844,7 @@ export async function collectProject(
     new_rounds: newRounds,
     read_sessions: stale.length,
     skipped_sessions: sources.length - stale.length,
+    skipped_by_window: skippedByWindow,
     rebuilt: rebuild,
   }
 }
@@ -1049,4 +1062,348 @@ export async function removeProject(
     rounds: stored.rounds,
     sessions: stored.sessions,
   }
+}
+
+/* Clearing: the two operations that destroy more than one project. ---------------------------- */
+
+/**
+ * What a clear would remove, worked out before anything is removed.
+ *
+ * Split in two on purpose. `removeProject` could be called in a loop and be done with it, but then
+ * the only way to find out what a clear would take is to let it take it — and every surface here
+ * has to say what is about to go before it goes: the command shows this and waits for an answer,
+ * and the view shows the same figures in the panel that asks. One plan, computed once, so what you
+ * are shown and what happens cannot come apart.
+ */
+export interface ClearPlan {
+  /**
+   * The cutoff, as epoch milliseconds. Null clears everything, whatever its age.
+   *
+   * A *session* is the unit either way: one whose last round is older than this goes entirely —
+   * its rounds and the archived copy beside them — and one with any round newer stays whole. That
+   * keeps a long-lived project's recent work while still reclaiming the archived transcripts,
+   * which are the great majority of what a store weighs, and it never leaves a session half
+   * trimmed for `trails --deep` to read back inconsistently.
+   */
+  before: number | null
+  projects: ClearPlanProject[]
+  totals: {
+    projects: number
+    /** Of those, the ones nothing would survive in, which go entirely. */
+    whole: number
+    sessions: number
+    rounds: number
+    bytes: number
+  }
+}
+
+export interface ClearPlanProject {
+  slug: string
+  project: string
+  dir: string
+  /** How many sessions would go. */
+  sessions: number
+  /**
+   * Which ones, for a trim. Empty when the whole project goes, because then nothing has to be
+   * named — the directory is removed entire — and an imported project has no session state to
+   * name them from anyway.
+   */
+  ids: string[]
+  /** Rounds in those sessions. */
+  rounds: number
+  /** What would actually be freed: the files that get deleted. */
+  bytes: number
+  /** True when nothing would survive, so the project is removed rather than trimmed. */
+  whole: boolean
+}
+
+/** Every byte under a directory, for saying what a removal actually frees. */
+async function dirSize(dir: string): Promise<number> {
+  let total = 0
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) total += await dirSize(path)
+    else total += await stat(path).then((info) => info.size).catch(() => 0)
+  }
+  return total
+}
+
+async function fileSize(path: string): Promise<number> {
+  return stat(path).then((info) => info.size).catch(() => 0)
+}
+
+/**
+ * When each session was last active.
+ *
+ * From the rounds, which is the honest answer: a session is as old as the newest work in it. A
+ * session the store has an archived copy of but no rounds for — an extraction that yielded nothing,
+ * or a copy left by an older probez — is dated by what `state.json` recorded of the agent's own
+ * file instead, so it can be cleared rather than accumulating forever with no way to name its age.
+ */
+async function sessionAges(dir: string): Promise<Map<string, number>> {
+  const last = new Map<string, number>()
+  await eachRound(join(dir, 'rounds.jsonl'), (round) => {
+    if (typeof round.ts !== 'string') return
+    const at = Date.parse(round.ts)
+    if (Number.isNaN(at)) return
+    const seen = last.get(round.session)
+    if (seen === undefined || at > seen) last.set(round.session, at)
+  })
+  const state = await readJson<State>(join(dir, 'state.json'))
+  for (const [id, one] of Object.entries(state?.sessions ?? {})) {
+    if (!last.has(id)) last.set(id, one.mtimeMs)
+  }
+  return last
+}
+
+/**
+ * Work out what a clear would take.
+ *
+ * Reads and writes nothing. Every count in it comes from the store as it stands, so a plan shown to
+ * someone is a plan of what is there now — and `applyClear` reads the store again rather than
+ * trusting these numbers, so a store that moved in between is trimmed correctly and merely reported
+ * approximately.
+ */
+export async function planClear(
+  dataDir: string,
+  options: { before?: number | null; slug?: string } = {},
+): Promise<ClearPlan> {
+  const before = options.before ?? null
+  const stored = await listStored(dataDir)
+  const wanted = options.slug === undefined ? stored : stored.filter((row) => row.slug === options.slug)
+  const projects: ClearPlanProject[] = []
+
+  for (const row of wanted) {
+    if (ownDir(dataDir, row.slug) === null) continue
+
+    if (before === null) {
+      projects.push({
+        slug: row.slug,
+        project: row.project,
+        dir: row.dir,
+        // The manifest's count, not the state's: an import has rounds and no state at all, and
+        // reporting nought sessions for a project plainly full of them is worse than no count.
+        sessions: row.sessions,
+        ids: [],
+        rounds: row.rounds,
+        bytes: await dirSize(row.dir),
+        whole: true,
+      })
+      continue
+    }
+
+    const ages = await sessionAges(row.dir)
+    const doomed = new Set([...ages.entries()].filter(([, at]) => at < before).map(([id]) => id))
+    if (doomed.size === 0) continue
+
+    let rounds = 0
+    await eachRound(join(row.dir, 'rounds.jsonl'), (round) => {
+      if (doomed.has(round.session)) rounds += 1
+    })
+
+    const whole = doomed.size === ages.size
+    let bytes = 0
+    if (whole) {
+      bytes = await dirSize(row.dir)
+    } else {
+      for (const id of doomed) {
+        bytes += await fileSize(join(row.dir, 'sessions', safeSessionFilename(id)))
+      }
+      // Both are derived from the rounds and are rebuilt on the next analyze or collect, so what
+      // they take back is real but temporary. Counted, because it is freed.
+      bytes += await fileSize(join(row.dir, 'analysis.jsonl'))
+      bytes += await fileSize(join(row.dir, 'search.jsonl'))
+    }
+
+    projects.push({
+      slug: row.slug,
+      project: row.project,
+      dir: row.dir,
+      sessions: doomed.size,
+      ids: whole ? [] : [...doomed],
+      rounds,
+      bytes,
+      whole,
+    })
+  }
+
+  return {
+    before,
+    projects,
+    totals: {
+      projects: projects.length,
+      whole: projects.filter((one) => one.whole).length,
+      sessions: projects.reduce((sum, one) => sum + one.sessions, 0),
+      rounds: projects.reduce((sum, one) => sum + one.rounds, 0),
+      bytes: projects.reduce((sum, one) => sum + one.bytes, 0),
+    },
+  }
+}
+
+export interface ClearResult {
+  projects: number
+  /** Of those, removed entirely rather than trimmed. */
+  whole: number
+  sessions: number
+  rounds: number
+  bytes: number
+  /** What went entirely, by name, so a report can say rather than count. */
+  removed: string[]
+}
+
+/**
+ * Carry out a plan.
+ *
+ * Every project is reached through `ownDir`, the same fence `removeProject` uses: the slug must
+ * have the shape `slugFor` produces and the path it resolves to must be under
+ * `<data-dir>/projects/`. Nothing outside the store is reachable from here, whatever a plan says.
+ *
+ * Trimming a project rewrites `rounds.jsonl` beside itself and moves the new file over the old one,
+ * so an interrupted clear leaves the store as it was rather than half of it. The two derived files
+ * are deleted rather than updated — they are cheaper to rebuild than to repair, and a stale index
+ * is the one thing worse than no index.
+ *
+ * What is never touched, here as everywhere: the agent's own session files. A session cleared by
+ * mistake comes back with `probez collect`, minus whatever the agent has pruned since.
+ */
+export async function applyClear(dataDir: string, plan: ClearPlan): Promise<ClearResult> {
+  const result: ClearResult = { projects: 0, whole: 0, sessions: 0, rounds: 0, bytes: 0, removed: [] }
+
+  for (const one of plan.projects) {
+    const dir = ownDir(dataDir, one.slug)
+    if (dir === null) continue
+
+    if (one.whole) {
+      const gone = await removeProject(dataDir, one.slug)
+      if (gone === null) continue
+      result.projects += 1
+      result.whole += 1
+      result.sessions += one.sessions
+      result.rounds += gone.rounds
+      result.bytes += one.bytes
+      result.removed.push(gone.project)
+      continue
+    }
+
+    const doomed = new Set(one.ids)
+    const roundsFile = join(dir, 'rounds.jsonl')
+    const target = `${roundsFile}.trim`
+    await rm(target, { force: true })
+
+    let kept: string[] = []
+    let dropped = 0
+    // Written out in batches rather than held whole: a project's rounds are the one thing here
+    // that can be tens of megabytes, and the point of this command is a store that got too big.
+    //
+    // Two things about this are load-bearing. The buffer is taken and reset in the same tick, so a
+    // round arriving while a write is in flight cannot be swallowed by the reset. And the writes
+    // are chained rather than awaited together, because appends that overlap land in whatever order
+    // the filesystem finishes them and `rounds.jsonl` is read back in file order.
+    let writing: Promise<void> = Promise.resolve()
+    const flush = (): void => {
+      if (kept.length === 0) return
+      const batch = kept.join('\n') + '\n'
+      kept = []
+      writing = writing.then(() =>
+        appendFile(target, batch, { encoding: 'utf8', mode: FILE_MODE }),
+      )
+    }
+    await eachRound(roundsFile, (round) => {
+      if (doomed.has(round.session)) {
+        dropped += 1
+        return
+      }
+      kept.push(JSON.stringify(round))
+      if (kept.length >= 2000) flush()
+    })
+    flush()
+    await writing
+
+    // A project whose rounds all turned out to be doomed after all — the store moved since the
+    // plan was made — is removed rather than left with an empty file.
+    const survived = await fileSize(target)
+    if (survived === 0) {
+      await rm(target, { force: true })
+      const gone = await removeProject(dataDir, one.slug)
+      if (gone !== null) {
+        result.projects += 1
+        result.whole += 1
+        result.sessions += one.sessions
+        result.rounds += gone.rounds
+        result.bytes += one.bytes
+        result.removed.push(gone.project)
+      }
+      continue
+    }
+
+    await rename(target, roundsFile)
+    await tighten(roundsFile, FILE_MODE)
+
+    for (const id of doomed) {
+      await rm(join(dir, 'sessions', safeSessionFilename(id)), { force: true })
+    }
+
+    // The state is what tells the next collect a session is already read. A session that is no
+    // longer here has not been read, and saying otherwise would mean it never came back.
+    const state = await readJson<State>(join(dir, 'state.json'))
+    if (state !== null) {
+      for (const id of doomed) delete state.sessions[id]
+      await writeFile(join(dir, 'state.json'), JSON.stringify(state, null, 2) + '\n', {
+        encoding: 'utf8',
+        mode: FILE_MODE,
+      })
+      // `mode` above applies only when the file is created, and this one already existed. A store
+      // that was once left world-readable would otherwise stay that way through a trim.
+      await tighten(join(dir, 'state.json'), FILE_MODE)
+    }
+
+    await rm(join(dir, 'analysis.jsonl'), { force: true })
+    await rm(join(dir, 'search.jsonl'), { force: true })
+    await refreshManifest(dataDir, one.slug, dir)
+
+    result.projects += 1
+    result.sessions += doomed.size
+    result.rounds += dropped
+    result.bytes += one.bytes
+  }
+
+  return result
+}
+
+/**
+ * Recount a manifest from the rounds that are left.
+ *
+ * A trimmed project whose manifest still claimed the old totals would report a session count and a
+ * token bill for work that is no longer in the store, and every share drawn from it would be wrong.
+ * Everything that is not a count — the chosen name, the path, where it came from — is carried
+ * across untouched.
+ */
+async function refreshManifest(dataDir: string, slug: string, dir: string): Promise<void> {
+  const manifest = await readJson<Manifest>(join(dir, 'manifest.json'))
+  if (manifest === null) return
+  const summary = await summarize(
+    { key: manifest.key ?? slug, path: manifest.path ?? null, dir: '', sessions: [], lastActivity: 0, slug },
+    dataDir,
+  )
+  const next: Manifest = {
+    ...manifest,
+    sessions: summary.sessions,
+    rounds: summary.rounds,
+    tasks: summary.tasks,
+    in_tokens: summary.in_tokens,
+    in_uncached: summary.in_uncached,
+    in_cache_write: summary.in_cache_write,
+    in_cache_write_5m: summary.in_cache_write_5m,
+    in_cache_write_1h: summary.in_cache_write_1h,
+    in_cache_read: summary.in_cache_read,
+    out_tokens: summary.out_tokens,
+    first_ts: summary.first_ts,
+    last_ts: summary.last_ts,
+  }
+  await writeFile(join(dir, 'manifest.json'), JSON.stringify(next, null, 2) + '\n', {
+    encoding: 'utf8',
+    mode: FILE_MODE,
+  })
+  await tighten(join(dir, 'manifest.json'), FILE_MODE)
 }

@@ -10,6 +10,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -1201,4 +1202,99 @@ test('--prompt is refused without --ask, since there is nothing to send', () => 
   const out = find(env, ['tool:Bash', '--prompt'])
   assert.equal(out.status, 2)
   assert.match(out.stderr, /--prompt goes with --ask/)
+})
+
+/** `clear <target> [flags]`, where the target may be a project or nothing at all. */
+function clear(env: ReturnType<typeof makeSource>, args: string[]): Run {
+  return run(['clear', ...args, '--data-dir', env.dataDir, '--claude-dir', env.claudeDir, '--cursor-dir', env.cursorDir])
+}
+
+test('`clear` says what it would take and, with no terminal to ask, takes nothing', () => {
+  const env = makeSource(2)
+  collect(env)
+  const before = walk(env.dataDir).length
+
+  const out = clear(env, ['--all'])
+  assert.equal(out.status, 0)
+  assert.match(out.stdout, /would remove every project in the store/)
+  assert.match(out.stdout, /rounds/)
+  // The suite is not a terminal, which is the same position a pipe or a CI job is in.
+  assert.match(out.stdout, /needs a terminal to ask/)
+  assert.match(out.stdout, /nothing was removed/)
+  assert.deepEqual(walk(env.dataDir).length, before, 'a refused clear still wrote')
+})
+
+test('`clear --all --yes` removes every project and leaves the settings', () => {
+  const env = makeSource(2)
+  collect(env)
+  writeFileSync(join(env.dataDir, 'pricing.json'), '{"schema_version":1,"models":{}}\n')
+
+  const out = clear(env, ['--all', '--yes'])
+  assert.equal(out.status, 0)
+  assert.match(out.stdout, /removed .* rounds/)
+  assert.equal(readdirSync(join(env.dataDir, 'projects')).length, 0)
+  assert.ok(existsSync(join(env.dataDir, 'pricing.json')), 'the rates went with the projects')
+})
+
+test('`clear --before` keeps what is inside the window', () => {
+  const env = makeSource(1)
+  collect(env)
+  const rounds = () => JSON.parse(read(env, ['sessions', '--json']).stdout).length
+
+  // The fixture's sessions are older than any window a person would type, so a wide one keeps
+  // everything and a narrow one takes it.
+  const kept = clear(env, ['--before', '3650d', '--yes'])
+  assert.equal(kept.status, 0)
+  assert.match(kept.stdout, /nothing in the store is older than/)
+  assert.ok(rounds() > 0)
+
+  const gone = clear(env, ['--before', '1h', '--yes'])
+  assert.equal(gone.status, 0)
+  assert.match(gone.stdout, /removed/)
+  assert.equal(readdirSync(join(env.dataDir, 'projects')).length, 0)
+})
+
+test('`clear` refuses what it cannot act on rather than guessing', () => {
+  const env = makeSource(1)
+  collect(env)
+  assert.match(clear(env, []).stderr, /needs to know what to clear/)
+  assert.match(clear(env, ['--all', '--before', '30d']).stderr, /use one or the other/)
+  assert.match(clear(env, ['--before', 'soon']).stderr, /takes a span like 30d/)
+  assert.match(clear(env, ['no-such-project']).stderr, /no collected project matched/)
+})
+
+test('`clear --json` is the plan before it runs, and what went after', () => {
+  const env = makeSource(2)
+  collect(env)
+  const plan = JSON.parse(clear(env, ['--all', '--json']).stdout)
+  assert.equal(plan.before, null)
+  assert.equal(plan.totals.projects, 1)
+  assert.ok(plan.totals.rounds > 0)
+  // Reading the plan writes nothing.
+  assert.equal(readdirSync(join(env.dataDir, 'projects')).length, 1)
+
+  const done = JSON.parse(clear(env, ['--all', '--json', '--yes']).stdout)
+  assert.equal(done.whole, 1)
+  assert.equal(readdirSync(join(env.dataDir, 'projects')).length, 0)
+})
+
+test('`collect --since` reads only what the agent wrote inside the window', () => {
+  const env = makeSource(2)
+  // The fixture's files are written now, so one of them is aged deliberately: the window then has
+  // something on each side of it, which is the only arrangement that tests anything.
+  const sourceDir = join(env.claudeDir, 'encoded-project-name')
+  const [first] = readdirSync(sourceDir).sort()
+  const old = new Date(Date.now() - 90 * 86_400_000)
+  utimesSync(join(sourceDir, first!), old, old)
+
+  const narrow = collect(env, ['--since', '30d'])
+  assert.equal(narrow.status, 0)
+  assert.match(narrow.stdout, /1 session read, 1 outside the window/)
+  assert.equal(JSON.parse(read(env, ['sessions', '--json']).stdout).length, 1)
+
+  // A session outside the window was not read, so it is not recorded as read either — which is
+  // what makes the window a window on one run rather than a decision about the store.
+  const wide = collect(env)
+  assert.equal(wide.status, 0)
+  assert.equal(JSON.parse(read(env, ['sessions', '--json']).stdout).length, 2)
 })

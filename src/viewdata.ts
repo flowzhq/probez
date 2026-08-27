@@ -63,6 +63,8 @@ import { FIELDS } from './query.js'
 import { fromStore, search } from './search.js'
 import type { SearchResult, Source } from './search.js'
 import { buildIndex, isFacet, SearchIndex } from './searchindex.js'
+import { applyClear, planClear } from './store.js'
+import type { ClearPlan, ClearResult } from './store.js'
 import { contextShare } from './models.js'
 import type { Round, ToolCall } from './types.js'
 
@@ -1082,6 +1084,57 @@ export async function compileSentenceFor(dataDir: string, body: unknown): Promis
     at: compiled.asked.at,
     ran: compiled.ran,
   }
+}
+
+/* Clearing: the two operations that destroy more than one project. --------------------------- */
+
+export interface ClearPayload {
+  /** What would go, or what went. */
+  plan: ClearPlan
+  /** Present only once something actually went. */
+  done: ClearResult | null
+}
+
+/** Spans the danger zone offers. A free-text window here would be a typo away from everything. */
+const WINDOWS: Record<string, number> = {
+  '7d': 7 * 86_400_000,
+  '30d': 30 * 86_400_000,
+  '90d': 90 * 86_400_000,
+  '180d': 180 * 86_400_000,
+  '365d': 365 * 86_400_000,
+}
+
+export const CLEAR_WINDOWS = Object.keys(WINDOWS)
+
+/**
+ * Say what a clear would take, or take it.
+ *
+ * One route for both, because the panel that asks has to be showing the same figures the button
+ * then acts on. `apply` is what separates them, and it is a field of a POST body rather than a
+ * method or a path: nothing here is reachable by visiting a URL, and the plan half writes nothing
+ * either — it is a POST only so that the thing which does write cannot be a GET by accident.
+ *
+ * A window is chosen from a list rather than typed. `before: "3d"` and `before: "30d"` differ by
+ * one character and by most of a store, and there is no undo behind either of them.
+ */
+export async function clearStore(dataDir: string, body: unknown): Promise<ClearPayload> {
+  const given = (body ?? {}) as { scope?: unknown; before?: unknown; apply?: unknown }
+  const scope = given.scope
+
+  let before: number | null = null
+  if (scope === 'before') {
+    const window = typeof given.before === 'string' ? WINDOWS[given.before] : undefined
+    if (window === undefined) {
+      throw new BadRequest(`a window has to be one of ${CLEAR_WINDOWS.join(', ')}`)
+    }
+    before = Date.now() - window
+  } else if (scope !== 'all') {
+    throw new BadRequest('that names nothing to clear')
+  }
+
+  const plan = await planClear(dataDir, { before })
+  if (given.apply !== true) return { plan, done: null }
+  return { plan, done: await applyClear(dataDir, plan) }
 }
 
 export async function toolsPayload(dataDir: string, slug: string): Promise<ToolsPayload> {

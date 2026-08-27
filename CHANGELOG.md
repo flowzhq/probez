@@ -6,6 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [Unreleased]
+
+### Added
+
+- **`probez clear`, and a danger zone in the view: a way to give the disk back.** A store grows, and
+  almost all of what it weighs is the verbatim copies of the agent's own transcripts kept beside the
+  rounds — on the machine this was written on, 830 MB of 977. Until now the only way to reclaim any
+  of it was to delete a whole project, one at a time, from the browser.
+
+  Three shapes, one command: `probez clear <project>` takes one, `probez clear --all` takes every
+  project, and `probez clear --before 30d` takes everything older than a window. The CLI had no
+  delete at all before this.
+
+  **A session is the unit of the window.** One whose last round is older than the cutoff goes
+  entirely — its rounds and the archived transcript beside them — and one with any newer round stays
+  whole. So a project you still work in keeps its recent work and gives up the rest, and a project
+  left with nothing is removed. The alternative, trimming individual rounds, would have left the
+  archived copies behind — which is to say almost all of the disk — or forced rewriting someone's
+  transcript and left `trails --deep` reading a session that is half there.
+
+  ```
+  $ probez clear --before 14d
+
+    would remove everything last active before 2026-08-13:
+
+    flowz-agentic-sdlc       all of it   3744 rounds     55 MB
+    flowz-mcp               5 sessions    442 rounds      6 MB
+
+    2 projects touched · 1 removed entirely · 29 sessions · 4186 rounds · 61 MB freed
+
+    Remove 4186 rounds from 2 projects? There is no undo. [y/N]
+  ```
+
+  **Nothing acts on the first press.** The plan is worked out, printed, and only then asked about —
+  and it is the same plan the view shows in the panel that asks, so what you are shown and what
+  happens cannot come apart. With no terminal to ask on, the command refuses rather than assuming,
+  which is what makes `probez clear --all | tee log` safe; `--yes` is how a script says it means it.
+  This is the first and only place probez waits for a person.
+
+  A trim rewrites `rounds.jsonl` beside itself and moves the new file over the old one, so an
+  interrupted clear leaves the store as it was rather than half of it. The manifest is recounted
+  from what is left, the state stops claiming a cleared session was read, and the analysis and
+  search index are removed rather than repaired — both are derived, and a stale index is the one
+  thing worse than none. Rates and the reader are settings rather than projects and are never
+  cleared.
+
+- **`probez collect --since 30d`**, the companion: read only the sessions the agent has written to
+  inside a window, so a first collect on a machine with years of history does not have to read all
+  of it. A window on one run and nothing else — a session outside it is not recorded as read, so a
+  later collect with no window reads it then. Never applied to a schema rebuild, which writes a new
+  store from what it reads and would silently drop everything outside the window.
+
+  The summary line counts sessions skipped by the window apart from sessions already up to date,
+  because saying "unchanged" about one probez has never opened would be untrue about what is in the
+  store.
+
+### Changed
+
+- **`delete` is no longer the only thing in probez that destroys data**, so SECURITY.md and
+  CONTRIBUTING § rule 3 now describe three shapes of it rather than one. All of them go through the
+  same fence — `ownDir`, which checks the slug against the shape `slugFor` produces *and* checks the
+  resolved path to be under `<data-dir>/projects/` — and `test/clear.test.ts` asserts that by handing
+  the applier a plan naming a path outside the store and checking the file there survives.
+
 ## [0.3.9] - 2026-08-26
 
 ### Added

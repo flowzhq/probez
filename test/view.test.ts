@@ -1030,3 +1030,56 @@ test('a reader that answers with an unreadable query is refused rather than run'
     await server.close()
   }
 })
+
+test('clearing the store is a POST, says what would go, and only then takes it', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  const clear = (body: unknown): Promise<Response> =>
+    get(server, `/api/clear?t=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  try {
+    // It destroys data, so visiting it must never be enough, and neither must the wrong token.
+    assert.equal((await withToken(server, '/api/clear')).status, 405)
+    assert.equal((await get(server, '/api/clear', { method: 'POST' })).status, 403)
+
+    assert.match((await body(clear({}))).error, /names nothing to clear/)
+    // A window is chosen from a list rather than typed: `3d` and `30d` differ by one character
+    // and by most of a store.
+    assert.match((await body(clear({ scope: 'before', before: '3d' }))).error, /has to be one of/)
+
+    const before = snapshot(dataDir)
+    const plan = await body(clear({ scope: 'all' }))
+    assert.equal(plan.done, null, 'a plan removed something')
+    assert.equal(plan.plan.totals.projects, 1)
+    assert.ok(plan.plan.totals.rounds > 0)
+    assert.deepEqual(snapshot(dataDir), before, 'asking what would go changed the store')
+
+    const done = await body(clear({ scope: 'all', apply: true }))
+    assert.equal(done.done.whole, 1)
+    assert.equal(existsSync(join(dataDir, 'projects', slug)), false)
+  } finally {
+    await server.close()
+  }
+})
+
+test('a window that catches nothing is a plan of nothing, not a failure', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const plan = await body(
+      get(server, `/api/clear?t=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ scope: 'before', before: '365d', apply: true }),
+      }),
+    )
+    assert.equal(plan.plan.totals.projects, 0)
+    assert.equal(plan.done.projects, 0)
+    assert.ok(existsSync(join(dataDir, 'projects', slug)), 'a window that caught nothing removed something')
+  } finally {
+    await server.close()
+  }
+})

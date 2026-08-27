@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 
 import {
@@ -102,11 +103,13 @@ import type {
 import { DEFAULT_PORT, startServer } from './serve.js'
 import {
   analysisFile,
+  applyClear,
   collectProject,
   defaultDataDir,
   findStored,
   importProject,
   listStored,
+  planClear,
   projectDir,
   readResults,
   readRounds,
@@ -114,7 +117,7 @@ import {
   slugFor,
   writeAnalysis,
 } from './store.js'
-import type { CollectResult, StoredProject, Summary } from './store.js'
+import type { ClearPlan, CollectResult, StoredProject, Summary } from './store.js'
 import type { Project, Round, ToolCall } from './types.js'
 import { exportProject } from './viewdata.js'
 
@@ -136,6 +139,7 @@ const COMMANDS = new Set([
   'explain',
   'find',
   'tools',
+  'clear',
   'analyze',
   'view',
   'help',
@@ -167,7 +171,7 @@ const GLOBAL_FLAGS = new Set([
  * worth more than a table that quietly ignores it.
  */
 const COMMAND_FLAGS: Record<string, string[]> = {
-  collect: ['full'],
+  collect: ['full', 'since'],
   export: ['bundle', 'out'],
   import: ['as'],
   projects: [],
@@ -183,6 +187,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   question: ['session'],
   explain: ['session', 'again', 'prompt'],
   find: ['limit', 'in', 'sort', 'plan', 'ask', 'prompt', 'again'],
+  clear: ['all', 'before', 'yes'],
   tools: ['limit', 'kinds'],
   analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified', 'deep'],
   view: ['port', 'no-open'],
@@ -458,6 +463,30 @@ The view
   It listens on 127.0.0.1 and nothing leaves the machine. The URL carries a token that is new
   on every run, without which the data neither answers nor syncs. Reading writes nothing.
 
+Clearing
+  probez clear <project>       Remove one project and everything probez recorded for it
+  probez clear --all           Remove every project in the store
+  probez clear --before <span> Remove everything last active before this window ago
+  --yes                        Do it without asking. Without this, probez prints what
+                               would go and asks; with no terminal to ask on, it refuses
+  --json                       The plan, or what went if it went
+
+  A *session* is the unit. One whose last round is older than the window goes entirely —
+  its rounds and the archived transcript beside them, which is the great majority of what
+  a store weighs — and one with any newer round stays whole. A project left with nothing
+  is removed. A project with recent work keeps it.
+
+  What is never touched, here as everywhere, is the agent's own session files: probez has
+  only ever read those. So a project cleared by mistake comes back with \`probez collect\`,
+  minus whatever the agent has pruned since — and a session cleared from the store is not
+  remembered as cleared, so an unrestricted collect brings it back. \`--since\` is the
+  companion to that: clear the old, then collect inside a window.
+
+  An imported project does not come back. The file it arrived as is the only other copy.
+  The analysis and search index of a trimmed project are removed rather than repaired, and
+  are rebuilt by the next \`probez analyze\`. Rates and the reader are settings, not
+  projects, and are never cleared.
+
 Sharing
   probez export <project>      Write a project out as a file to send someone
   --bundle                     One .json with the manifest and analysis, not bare .jsonl rounds
@@ -473,6 +502,11 @@ Collection
   probez collect [project]     Collect one project, or every project under a folder
   probez collect --all         Collect every project on this machine
   --full                       Re-read every session instead of only what changed
+  --since <span>               Only sessions the agent has written to inside this window,
+                               as 30d, 12h or 6w. A window on this run and nothing else: a
+                               session outside it is not recorded as read, so a later
+                               collect with no window reads it then. Ignored on a rebuild,
+                               which writes a new store from what it reads
   --source claude|cursor|both  Which agents to read (default both)
 
   Claude Code sessions live under ~/.claude/projects. Cursor transcripts live under
@@ -675,10 +709,18 @@ function collectedLine(result: CollectResult): string {
   if (result.rebuilt) {
     return `rebuilt for the current schema, ${result.read_sessions} sessions re-read, ${result.rounds} rounds`
   }
-  if (result.read_sessions === 0) return `up to date, ${result.skipped_sessions} sessions unchanged`
+  // A session `--since` put outside the window was not skipped because it was already read, and
+  // saying "unchanged" about one probez has never opened would be a plain untruth about what is
+  // in the store. The two are counted apart and said apart.
+  const outside =
+    result.skipped_by_window > 0 ? `, ${result.skipped_by_window} outside the window` : ''
+  const unchanged = result.skipped_sessions - result.skipped_by_window
+  if (result.read_sessions === 0) {
+    return `up to date, ${unchanged} sessions unchanged${outside}`
+  }
   const sessions = `${result.read_sessions} session${result.read_sessions === 1 ? '' : 's'} read`
-  const skipped = result.skipped_sessions > 0 ? `, ${result.skipped_sessions} unchanged` : ''
-  return `+${result.new_rounds} rounds, ${sessions}${skipped}`
+  const skipped = unchanged > 0 ? `, ${unchanged} unchanged` : ''
+  return `+${result.new_rounds} rounds, ${sessions}${skipped}${outside}`
 }
 
 /**
@@ -1928,6 +1970,194 @@ async function runFind(
   console.log('')
 }
 
+/* ---------------------------------------------------------------------------------------------
+   Clearing
+   --------------------------------------------------------------------------------------------- */
+
+/** A window written the way `since:` takes one: `30d`, `12h`, `6w`. Returns milliseconds. */
+function windowOf(value: string, flag: string): number {
+  const match = /^(\d+(?:\.\d+)?)(h|d|w|m)$/.exec(value.trim().toLowerCase())
+  if (match === null) {
+    fail(`--${flag} takes a span like 30d, 12h or 6w, got "${value}"`)
+  }
+  const unit = match[2] === 'h' ? 3_600_000 : match[2] === 'w' ? 604_800_000 : match[2] === 'm' ? 2_592_000_000 : 86_400_000
+  return Number(match[1]) * unit
+}
+
+/** The room a table has, the same way every other listing here works it out. */
+function termWidth(): number {
+  return Math.max(60, Math.min(process.stdout.columns ?? 100, 120)) - 8
+}
+
+/** The day a cutoff falls on, which is what a person checks a window against. */
+function onDay(at: number): string {
+  return new Date(at).toISOString().slice(0, 10)
+}
+
+/** Bytes, at the size a person reads them: a store is measured in hundreds of megabytes. */
+function bytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(0)} MB`
+  return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`
+}
+
+/**
+ * Ask, on a terminal, and take only yes for an answer.
+ *
+ * The one place probez waits for a person. It is here and nowhere else because this is the one
+ * thing it does that cannot be undone from inside probez — the agent's own files are what a clear
+ * is recoverable from, and only for as long as the agent keeps them.
+ *
+ * Without a terminal there is nobody to ask, so it refuses rather than assuming. That is what makes
+ * `probez clear --all | tee log` safe, and it is why `--yes` exists: a script that means it says so.
+ */
+async function confirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.log('')
+    console.log('  probez clear needs a terminal to ask, and this is not one.')
+    console.log('  Pass --yes to run it without asking.')
+    console.log('')
+    return false
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    const answer = await rl.question(`  ${question} [y/N] `)
+    return /^y(es)?$/i.test(answer.trim())
+  } finally {
+    rl.close()
+  }
+}
+
+/** What the plan would take, in the words the confirmation is about to use. */
+function printPlan(plan: ClearPlan, width: number): void {
+  const { totals } = plan
+  console.log('')
+  if (totals.projects === 0) {
+    console.log(
+      plan.before === null
+        ? '  there is nothing in the store to clear.'
+        : `  nothing in the store is older than ${onDay(plan.before)}.`,
+    )
+    console.log('')
+    return
+  }
+
+  console.log(
+    plan.before === null
+      ? '  would remove every project in the store:'
+      : `  would remove everything last active before ${onDay(plan.before)}:`,
+  )
+  console.log('')
+  const shown = [...plan.projects].sort((a, b) => b.bytes - a.bytes).slice(0, 10)
+  const nameWidth = idColumn(16, shown.map((one) => one.project))
+  for (const one of shown) {
+    const what = one.whole
+      ? 'all of it'
+      : `${one.sessions} session${one.sessions === 1 ? '' : 's'}`
+    console.log(
+      `  ${pad(clip(one.project, nameWidth - 2), nameWidth)}${padStart(what, 14)}${padStart(`${one.rounds} rounds`, 14)}${padStart(bytes(one.bytes), 10)}`,
+    )
+  }
+  if (plan.projects.length > shown.length) {
+    console.log(`  … and ${plan.projects.length - shown.length} more`)
+  }
+  console.log('')
+  const parts = [
+    `${totals.projects} project${totals.projects === 1 ? '' : 's'} touched`,
+    `${totals.whole} removed entirely`,
+    `${totals.sessions} session${totals.sessions === 1 ? '' : 's'}`,
+    `${totals.rounds} rounds`,
+    `${bytes(totals.bytes)} freed`,
+  ]
+  for (const line of wrap(parts.join(' · '), width)) console.log(`  ${line}`)
+  console.log('')
+  console.log("  The agent's own session files are not touched, so `probez collect` brings back")
+  console.log('  whatever the agent still has. An imported project does not come back.')
+  console.log('')
+}
+
+/**
+ * `probez clear`: the one command that destroys more than it reads.
+ *
+ * Three shapes, one plan: everything, everything older than a span, or one project. Whichever it
+ * is, what would go is printed first and then asked about, because the thing being removed is the
+ * only record probez has of work that has already happened.
+ */
+async function runClear(
+  dataDir: string,
+  target: string | undefined,
+  options: { all: boolean; before: string | undefined; yes: boolean; json: boolean },
+): Promise<void> {
+  const named = target !== undefined
+  if (!options.all && options.before === undefined && !named) {
+    fail(
+      'clear needs to know what to clear: `probez clear <project>`, `probez clear --all`, or ' +
+        '`probez clear --before 30d`',
+    )
+  }
+  if (options.all && options.before !== undefined) {
+    fail('--all clears everything and --before clears part of it; use one or the other')
+  }
+
+  let slug: string | undefined
+  if (named) {
+    const matched = await storedMatches(dataDir, target)
+    if (matched.length === 0) {
+      fail(`no collected project matched "${target}". Run \`probez projects\` for the list`)
+    }
+    if (matched.length > 1) {
+      fail(`"${target}" matches ${matched.length} projects. Name one exactly`)
+    }
+    slug = matched[0]!.slug
+  }
+
+  const before = options.before === undefined ? null : Date.now() - windowOf(options.before, 'before')
+  const plan = await planClear(dataDir, { before, slug })
+
+  if (options.json && !options.yes) {
+    console.log(JSON.stringify(plan, null, 2))
+    return
+  }
+  if (plan.totals.projects === 0) {
+    if (options.json) console.log(JSON.stringify({ projects: 0, whole: 0, sessions: 0, rounds: 0, bytes: 0, removed: [] }, null, 2))
+    else printPlan(plan, termWidth())
+    return
+  }
+
+  if (!options.yes) {
+    printPlan(plan, termWidth())
+    const question =
+      plan.before === null && slug === undefined
+        ? `Remove all ${plan.totals.projects} projects? There is no undo.`
+        : `Remove ${plan.totals.rounds} rounds from ${plan.totals.projects} project${plan.totals.projects === 1 ? '' : 's'}? There is no undo.`
+    if (!(await confirm(question))) {
+      console.log('  nothing was removed.')
+      console.log('')
+      return
+    }
+  }
+
+  const done = await applyClear(dataDir, plan)
+  if (options.json) {
+    console.log(JSON.stringify(done, null, 2))
+    return
+  }
+  console.log('')
+  console.log(
+    `  removed ${done.sessions} session${done.sessions === 1 ? '' : 's'} · ${done.rounds} rounds · ${bytes(done.bytes)} freed`,
+  )
+  if (done.whole > 0) {
+    console.log(
+      `  ${done.whole} project${done.whole === 1 ? '' : 's'} gone entirely: ${clip(done.removed.join(', '), 68)}`,
+    )
+  }
+  if (done.projects > done.whole) {
+    console.log(`  ${done.projects - done.whole} trimmed; their analysis and index rebuild on the next \`probez analyze\`.`)
+  }
+  console.log('')
+}
+
 function fail(message: string): never {
   console.error(`probez: ${message}`)
   process.exit(2)
@@ -2069,6 +2299,9 @@ async function main(): Promise<void> {
         sort: { type: 'string' },
         plan: { type: 'boolean', default: false },
         ask: { type: 'boolean', default: false },
+        before: { type: 'string' },
+        since: { type: 'string' },
+        yes: { type: 'boolean', default: false },
         agent: { type: 'string' },
         errors: { type: 'boolean', default: false },
         limit: { type: 'string' },
@@ -2172,6 +2405,18 @@ async function main(): Promise<void> {
   // Export reads the store and writes a file of its own; the agent's directory has no part in it.
   if (command === 'export') {
     await runExport(dataDir, target, values.bundle === true, values.out)
+    return
+  }
+
+  // Clearing reads the store and then removes from it. Like `view` and `find` it never looks at
+  // the agent's directory — what it destroys is probez's own copy, and only ever that.
+  if (command === 'clear') {
+    await runClear(dataDir, target, {
+      all: values.all === true,
+      before: values.before,
+      yes: values.yes === true,
+      json: values.json === true,
+    })
     return
   }
 
@@ -2777,9 +3022,16 @@ async function main(): Promise<void> {
   const { projects: matched, skippedTemp } = await resolveTargets(projects, target, targeting)
   if (matched.length === 0) noMatch(projects, target)
 
+  // `--since` narrows this run to the sessions the agent has written to lately. It is a window on
+  // one run: a session outside it is not recorded as read, so a later plain collect reads it.
+  const window = values.since === undefined ? null : Date.now() - windowOf(values.since, 'since')
+
   const results: CollectResult[] = []
   for (const project of matched) {
-    const collected = await collectProject(project, dataDir, { full: values.full })
+    const collected = await collectProject(project, dataDir, {
+      full: values.full,
+      ...(window === null ? {} : { since: window }),
+    })
     results.push(collected)
     // A project that has just been collected is searchable at once rather than on the next
     // `analyze`, which is what makes `probez find` fast on a store nobody has analyzed.

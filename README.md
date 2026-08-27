@@ -141,8 +141,14 @@ Three things worth knowing:
 **Settings** holds the token rates every cost is computed from — one row per model, five rates
 each, at published list prices and yours to change. Stored in `~/.probez/pricing.json`, owner-only.
 Under them sits the **reader**: the command *explain* runs, which is the only program probez ever
-starts. It is argv and not a shell line, it runs only when you press explain on one question, and
-leaving it blank leaves probez with nothing it could run.
+starts. It is argv and not a shell line, it runs only when you press explain on one question or
+*ask* on a search, and leaving it blank leaves probez with nothing it could run.
+
+At the bottom, behind its own heading, is the **danger zone**: the two operations that remove more
+than one project. *Trim old history* takes every session older than a window you pick, and the
+archived transcripts beside them; *clear the whole store* takes every project. Neither acts on its
+first press — both show what would go, the largest projects named rather than only counted, in a
+panel you have to open. Your rates and your reader are settings rather than projects and stay.
 
 Each project carries a **⋮** menu, on its own page and on every row of the projects list. *Sync*
 runs `collect` then `analyze` for that project. *Rename* gives it a name of your own — a label, on
@@ -186,12 +192,14 @@ project                a directory an agent was started in    its name, or its p
 | `probez collect` | Collect one project, or every project under a folder |
 | `probez export <project>` | Write a project out as a file to send someone |
 | `probez import <file>` | Read a project someone sent you |
+| `probez clear` | Remove a project, everything, or everything older than a window |
 
 Lists take `--limit` and always say how many rows they withheld. `rounds` filters by `--session`,
 `--task`, `--tool`, `--command`, `--kind`, `--category`, `--target`, `--agent` and `--errors`, and
 `sessions` takes `--agent` too. `find` takes `--all`, `--in`, `--sort`, `--plan`, `--ask`, `--prompt` and `--again`.
 `analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
 `--outcome`. `questions` takes `--kind` and `--min-calls`, and `explain` takes `--again` and `--prompt`.
+`clear` takes `--all`, `--before` and `--yes`, and `collect` takes `--since`.
 `--source` selects Claude Code, Cursor, or
 both. `--json` works everywhere. `probez --help` lists every flag under the command it belongs to.
 
@@ -218,14 +226,14 @@ $ probez sessions flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   SESSION    ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   15 days ago
-  0b2cc149       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   15 days ago
-  51cced08      134      4  131          24.3M   138.1K     $22.57  Impl 39%   14 days ago
-  be254122       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  14 days ago
-  bfd594d9       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  14 days ago
-  6ffef9bc       33      4  30            2.2M    17.5K      $2.19  Recon 52%  10 days ago
-  c21c7448      146      2  145 ✗5       22.8M   112.6K     $18.83  Recon 43%  9 days ago
-  069d8593       31      1  30 ✗3         1.9M    11.3K      $1.76  Recon 72%  8 days ago
+  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   16 days ago
+  0b2cc149       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   16 days ago
+  51cced08      134      4  131          24.3M   138.1K     $22.57  Impl 39%   16 days ago
+  be254122       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  16 days ago
+  bfd594d9       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  16 days ago
+  6ffef9bc       33      4  30            2.2M    17.5K      $2.19  Recon 52%  11 days ago
+  c21c7448      146      2  145 ✗5       22.8M   112.6K     $18.83  Recon 43%  11 days ago
+  069d8593       31      1  30 ✗3         1.9M    11.3K      $1.76  Recon 72%  10 days ago
 
   8 sessions · 652 rounds · $82.58
   `probez session <id>` shows one of them, task by task.
@@ -241,12 +249,12 @@ $ probez sessions flowz-agentic-sdlc --limit 6
   flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
   SESSION            AGENT ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  6b45d8d7/a5420a73  sub        7      1  17          182.4K     5.8K      $0.84  Recon 83%  26 days ago
-  6b45d8d7/ab80aaad  sub        8      1  16          197.9K     5.4K      $0.86  Recon 86%  26 days ago
-  6b45d8d7           main     122      8  234 ✗3       58.6M   139.5K     $76.13  Docs 29%   26 days ago
-  15ac167d/a29da1c6  sub        7      1  19          135.0K     9.1K      $0.94  Recon 93%  26 days ago
-  15ac167d/ad108a22  sub       18      1  38          515.5K    17.7K      $1.99  Plan 65%   26 days ago
-  15ac167d           main     150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   26 days ago
+  6b45d8d7/a5420a73  sub        7      1  17          182.4K     5.8K      $0.84  Recon 83%  27 days ago
+  6b45d8d7/ab80aaad  sub        8      1  16          197.9K     5.4K      $0.86  Recon 86%  27 days ago
+  6b45d8d7           main     122      8  234 ✗3       58.6M   139.5K     $76.13  Docs 29%   27 days ago
+  15ac167d/a29da1c6  sub        7      1  19          135.0K     9.1K      $0.94  Recon 93%  27 days ago
+  15ac167d/ad108a22  sub       18      1  38          515.5K    17.7K      $1.99  Plan 65%   27 days ago
+  15ac167d           main     150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   27 days ago
 
   showing 6 of 23 sessions · 3744 rounds · $941.53, --limit 0 for all
   `probez session <id>` shows one of them, task by task.
@@ -365,10 +373,10 @@ $ probez find 'category:reconstruction cost:>0.30 -tool:Read' flowz-mcp
   4 rounds · $2.32 · 0.6% of rounds · 2.8% of cost · 3 sessions · 81% reconstruction
 
   ROUND           WORK                COST     TIME         WHEN  SAYS
-  c21c7448#2.64   Environment        $1.16    842ms   9 days ago  Bash 1
-  c21c7448#1.0    Reconstruction     $0.39     1.5s  10 days ago  implement next task
-  bfd594d9#2.24   Reconstruction     $0.42    866ms  14 days ago  Bash 1
-  0b2cc149#1.0    Reconstruction     $0.36    794ms  15 days ago  did we implemented T001?
+  c21c7448#2.64   Environment        $1.16    842ms  11 days ago  Bash 1
+  c21c7448#1.0    Reconstruction     $0.39     1.5s  11 days ago  implement next task
+  bfd594d9#2.24   Reconstruction     $0.42    866ms  16 days ago  Bash 1
+  0b2cc149#1.0    Reconstruction     $0.36    794ms  16 days ago  did we implemented T001?
 
   4 rounds
 ```
@@ -447,12 +455,12 @@ $ probez find --ask 'which sessions had the most failing shell commands' flowz-m
   8 rounds · $0.70 · 1.2% of rounds · 0.8% of cost · 6 sessions · 8 tool errors · 40% reconstruction
 
   SESSION      ROUNDS     OF       COST     TIME  LAST
-  069d8593          3     31      $0.18    29.4s  8 days ago
-  0bfa7fe3          1    127      $0.21    26.5s  15 days ago
-  bfd594d9          1     73      $0.11     4.6s  14 days ago
-  c21c7448          1    146      $0.10    23.8s  10 days ago
-  be254122          1     21      $0.05     2.2s  14 days ago
-  0b2cc149          1     87      $0.04     8.2s  15 days ago
+  069d8593          3     31      $0.18    29.4s  10 days ago
+  0bfa7fe3          1    127      $0.21    26.5s  16 days ago
+  bfd594d9          1     73      $0.11     4.6s  16 days ago
+  c21c7448          1    146      $0.10    23.8s  11 days ago
+  be254122          1     21      $0.05     2.2s  16 days ago
+  0b2cc149          1     87      $0.04     8.2s  16 days ago
 
   6 sessions
 ```
@@ -728,6 +736,45 @@ before one — and the round after it opens on a rule naming what was dropped:
 `── compacted (auto) · 1.0M → 21.0K · took 2.6m ──`. No block is pasted for it here because the
 round after a compaction carries the whole continuation summary as its prompt, and printing one runs
 to several hundred lines.
+
+## Clearing what you no longer need
+
+A store grows. Almost all of it is the verbatim copies of the agent's own transcripts kept beside
+the rounds — on the machine this was written on, 830 MB of 977 — so trimming those is what actually
+gives the disk back.
+
+```console
+$ probez clear --before 14d
+
+  would remove everything last active before 2026-08-13:
+
+  flowz-agentic-sdlc       all of it   3744 rounds     55 MB
+  flowz-mcp               5 sessions    442 rounds      6 MB
+
+  2 projects touched · 1 removed entirely · 29 sessions · 4186 rounds · 61 MB freed
+
+  The agent's own session files are not touched, so `probez collect` brings back
+  whatever the agent still has. An imported project does not come back.
+
+  Remove 4186 rounds from 2 projects? There is no undo. [y/N]
+```
+
+**A session is the unit.** One whose last round is older than the window goes entirely, with the
+archived transcript beside it; one with any newer round stays whole. So a project you still work in
+keeps its recent work and gives up the rest, and a project you have not touched in months goes.
+`probez clear --all` takes everything; `probez clear <project>` takes one.
+
+**Nothing acts on the first press.** The plan above is printed and then asked about, and with no
+terminal to ask on — a pipe, a CI job — it refuses rather than assuming, so `--yes` is how a script
+says it means it. The same two operations sit under *Danger zone* in `probez view` → Settings,
+where the panel names the largest projects rather than only counting them.
+
+**What is gone is only as recoverable as the agent's own files.** probez has only ever read those,
+so `probez collect` brings back whatever the agent still has — and a session cleared from the store
+is not remembered as cleared, so an unrestricted collect brings that back too. If what you want is a
+store that stays small, `probez collect --since 30d` is the companion: it reads only the sessions
+the agent has written to inside a window, and a later collect with no window still picks up the
+rest. An imported project does not come back: the file it arrived as is the only other copy.
 
 ## Sharing a project
 

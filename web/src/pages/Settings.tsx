@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { PricedModel, PricingPayload, Rates, ReaderPayload } from '../api'
 import { Chrome, Loading, Problem } from '../components/Chrome'
+import { DangerZone } from '../components/DangerZone'
 import { count } from '../format'
 import { href } from '../router'
 import type { ReactElement } from 'react'
@@ -47,6 +48,9 @@ export function Settings(): ReactElement {
   const [draft, setDraft] = useState<Record<string, Record<string, string>>>({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState<string | null>(null)
+  // Bumped after a clear. The rate table counts the rounds each model was used for, and a clear
+  // is the one thing on this page that changes them.
+  const [read, setRead] = useState(0)
 
   const load = (payload: PricingPayload): void => {
     setData(payload)
@@ -66,7 +70,9 @@ export function Settings(): ReactElement {
     return () => {
       live = false
     }
-  }, [])
+    // `load` closes over setters only; the counter is the real key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [read])
 
   const edit = (model: string, field: string, value: string): void => {
     setSaved(null)
@@ -199,6 +205,7 @@ export function Settings(): ReactElement {
 
             <hr />
             <Reader />
+            <DangerZone onCleared={() => setRead((was) => was + 1)} />
           </>
         )}
       </main>
