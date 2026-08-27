@@ -96,6 +96,11 @@ export function Projects(): ReactElement {
                               cursor
                             </span>
                           ) : null}
+                          {(project.sources ?? []).includes('codex') ? (
+                            <span className="mark" title="Includes Codex CLI sessions">
+                              codex
+                            </span>
+                          ) : null}
                           <div className="muted mono clip" style={{ fontSize: 11 }}>
                             {project.path ?? project.key}
                           </div>

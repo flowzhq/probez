@@ -53,13 +53,26 @@ export interface ToolResultBody {
 /** The `tool_result` block for one call id, or null if this record holds no such block. */
 function resultIn(record: Json, toolUseId: string): Json | null {
   const message = record.message
-  if (message === null || typeof message !== 'object') return null
-  const content = (message as Json).content
-  if (!Array.isArray(content)) return null
-  for (const block of content) {
-    if (block === null || typeof block !== 'object') continue
-    const it = block as Json
-    if (it.type === 'tool_result' && it.tool_use_id === toolUseId) return it
+  if (message !== null && typeof message === 'object') {
+    const content = (message as Json).content
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block === null || typeof block !== 'object') continue
+        const it = block as Json
+        if (it.type === 'tool_result' && it.tool_use_id === toolUseId) return it
+      }
+    }
+  }
+
+  const payload =
+    record.type === 'response_item' && record.payload !== null && typeof record.payload === 'object'
+      ? (record.payload as Json)
+      : record
+  if (payload.type === 'function_call_output' && payload.call_id === toolUseId) {
+    return {
+      content: payload.output,
+      is_error: payload.success === false,
+    }
   }
   return null
 }
@@ -144,24 +157,18 @@ export async function readToolResults(
       // Every result carries the marker, so this keeps the scan to a substring search across the
       // file and a parse of only the lines that could hold one. Matching each id separately would
       // be a thousand substring searches per line.
-      if (!line.includes('tool_use_id')) continue
+      if (!line.includes('tool_use_id') && !line.includes('function_call_output')) continue
       let record: Json
       try {
         record = JSON.parse(line) as Json
       } catch {
         continue
       }
-      const message = record.message
-      if (message === null || typeof message !== 'object') continue
-      const content = (message as Json).content
-      if (!Array.isArray(content)) continue
-      for (const block of content) {
-        if (block === null || typeof block !== 'object') continue
-        const it = block as Json
-        if (it.type !== 'tool_result') continue
-        const id = it.tool_use_id
-        if (typeof id !== 'string' || !ids.has(id) || out.has(id)) continue
-        out.set(id, fold(it, cap).body)
+      for (const id of ids) {
+        if (out.has(id) || !line.includes(id)) continue
+        const found = resultIn(record, id)
+        if (found === null) continue
+        out.set(id, fold(found, cap).body)
       }
     }
   } catch {

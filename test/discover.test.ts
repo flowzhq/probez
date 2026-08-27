@@ -6,6 +6,7 @@ import { test } from 'node:test'
 
 import {
   discoverClaudeProjects,
+  discoverCodexProjects,
   discoverCursorProjects,
   discoverProjects,
   matchProjects,
@@ -80,7 +81,7 @@ test('Claude and Cursor checkouts of the same path merge into one project', asyn
   mkdirSync(join(cursorDir, slug, 'agent-transcripts', 'sid'), { recursive: true })
   writeFileSync(join(cursorDir, slug, 'agent-transcripts', 'sid', 'sid.jsonl'), '{}\n')
 
-  const merged = await discoverProjects({ claudeDir, cursorDir })
+  const merged = await discoverProjects({ claudeDir, cursorDir, codexDir: join(root, 'codex') })
   assert.equal(merged.length, 1)
   assert.equal(merged[0]!.path, project)
   assert.equal(merged[0]!.path_inferred, false)
@@ -123,7 +124,7 @@ test('--source cursor skips Claude projects', async () => {
   mkdirSync(join(claudeDir, 'encoded'), { recursive: true })
   writeFileSync(join(claudeDir, 'encoded', 'sess.jsonl'), '{}\n')
   const cursorDir = join(root, 'none')
-  const found = await discoverProjects({ claudeDir, cursorDir, source: 'cursor' })
+  const found = await discoverProjects({ claudeDir, cursorDir, codexDir: join(root, 'codex'), source: 'cursor' })
   assert.equal(found.length, 0)
 })
 
@@ -150,3 +151,85 @@ test('a Cursor checkout whose directory name contains dashes is still that direc
   assert.equal(found[0]!.path, project)
   assert.equal(matchProjects(found, project).length, 1)
 })
+
+test('Codex discovery walks the dated tree and groups rollouts by cwd', async () => {
+  const root = workspace()
+  const project = join(root, 'work')
+  mkdirSync(project, { recursive: true })
+  const day = join(root, 'codex', '2026', '01', '06')
+  mkdirSync(day, { recursive: true })
+  const meta = (cwd: string, id: string): string =>
+    JSON.stringify({
+      timestamp: '2026-01-06T00:00:00.000Z',
+      type: 'session_meta',
+      payload: { id, cwd, originator: 'codex_cli_rs', cli_version: '0.50.0', source: 'cli' },
+    }) + '\n'
+  writeFileSync(
+    join(day, 'rollout-2026-01-06T00-00-00-cccc3333-0000-0000-0000-000000000000.jsonl'),
+    meta(project, 'cccc3333-0000-0000-0000-000000000000'),
+  )
+  writeFileSync(
+    join(day, 'rollout-2026-01-06T01-00-00-eeee5555-0000-0000-0000-000000000000.jsonl'),
+    meta(project, 'eeee5555-0000-0000-0000-000000000000'),
+  )
+  writeFileSync(join(day, 'notes.jsonl'), meta(project, 'not-a-rollout'))
+
+  const projects = await discoverCodexProjects(join(root, 'codex'))
+  assert.equal(projects.length, 1)
+  assert.equal(projects[0]!.path, project)
+  assert.deepEqual(projects[0]!.sources, ['codex'])
+  assert.equal(projects[0]!.sessions.length, 2)
+  assert.ok(projects[0]!.sessions.every((s) => s.source === 'codex'))
+  assert.ok(
+    projects[0]!.sessions.every((s) => s.id.startsWith('2026/01/06/rollout-')),
+  )
+})
+
+test('Claude and Codex checkouts of the same path merge into one project', async () => {
+  const root = workspace()
+  const project = join(root, 'work')
+  mkdirSync(project, { recursive: true })
+
+  const claudeDir = join(root, 'claude')
+  mkdirSync(join(claudeDir, 'encoded'), { recursive: true })
+  writeFileSync(
+    join(claudeDir, 'encoded', 'sess.jsonl'),
+    `{"type":"user","cwd":${JSON.stringify(project)},"message":{"role":"user","content":"hi"}}\n`,
+  )
+
+  const day = join(root, 'codex', '2026', '01', '06')
+  mkdirSync(day, { recursive: true })
+  writeFileSync(
+    join(day, 'rollout-2026-01-06T00-00-00-cccc3333-0000-0000-0000-000000000000.jsonl'),
+    JSON.stringify({
+      timestamp: '2026-01-06T00:00:00.000Z',
+      type: 'session_meta',
+      payload: { id: 'cccc3333', cwd: project, originator: 'codex_cli_rs', cli_version: '0.1.0', source: 'cli' },
+    }) + '\n',
+  )
+
+  const merged = await discoverProjects({
+    claudeDir,
+    cursorDir: join(root, 'none-cursor'),
+    codexDir: join(root, 'codex'),
+  })
+  assert.equal(merged.length, 1)
+  assert.equal(merged[0]!.path, project)
+  assert.deepEqual(merged[0]!.sources?.slice().sort(), ['claude-code', 'codex'])
+  assert.equal(merged[0]!.sessions.length, 2)
+})
+
+test('--source codex skips Claude projects', async () => {
+  const root = workspace()
+  const claudeDir = join(root, 'claude')
+  mkdirSync(join(claudeDir, 'encoded'), { recursive: true })
+  writeFileSync(join(claudeDir, 'encoded', 'sess.jsonl'), '{}\n')
+  const found = await discoverProjects({
+    claudeDir,
+    cursorDir: join(root, 'none'),
+    codexDir: join(root, 'none-codex'),
+    source: 'codex',
+  })
+  assert.equal(found.length, 0)
+})
+

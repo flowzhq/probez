@@ -38,10 +38,10 @@ cd ~/any/project-you-work-in
 probez collect
 ```
 
-It reads [Claude Code](https://claude.com/claude-code) sessions from `~/.claude/projects` and [Cursor](https://cursor.com) transcripts from `~/.cursor/projects`, then writes
+It reads [Claude Code](https://claude.com/claude-code) sessions from `~/.claude/projects`, [Cursor](https://cursor.com) transcripts from `~/.cursor/projects`, and [Codex](https://github.com/openai/codex) CLI rollouts from `~/.codex/sessions` (or `$CODEX_HOME/sessions`), then writes
 one record per LLM round under `~/.probez`. Run it again whenever you want to catch up — it reads
 only what changed. `probez collect --all` does every project on the machine at once. A repository
-used in both agents is one project. Cursor transcripts do not include token usage, so those rounds
+used in more than one agent is one project. Cursor transcripts do not include token usage, so those rounds
 have no cost.
 
 **3. Look at what came back**, in the browser or in the terminal:
@@ -192,8 +192,8 @@ Lists take `--limit` and always say how many rows they withheld. `rounds` filter
 `sessions` takes `--agent` too. `find` takes `--all`, `--in`, `--sort`, `--plan`, `--ask`, `--prompt` and `--again`.
 `analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
 `--outcome`. `questions` takes `--kind` and `--min-calls`, and `explain` takes `--again` and `--prompt`.
-`--source` selects Claude Code, Cursor, or
-both. `--json` works everywhere. `probez --help` lists every flag under the command it belongs to.
+`--source` selects Claude Code, Cursor, Codex, or
+all. `--json` works everywhere. `probez --help` lists every flag under the command it belongs to.
 
 ```console
 $ probez

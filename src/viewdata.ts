@@ -1131,6 +1131,7 @@ export async function syncProject(
   dataDir: string,
   claudeDir: string,
   cursorDir: string,
+  codexDir: string,
   slug: string,
 ): Promise<SyncResult> {
   const held = running.get(slug)
@@ -1140,7 +1141,7 @@ export async function syncProject(
     const stored = await findStored(dataDir, slug)
     if (stored === null) throw new NotFound(`no project ${slug} in this store`)
 
-    const projects = await discoverProjects({ claudeDir, cursorDir })
+    const projects = await discoverProjects({ claudeDir, cursorDir, codexDir })
     const source = projects.find((project) => slugFor(project) === slug) ?? null
 
     let collected: CollectResult | null = null

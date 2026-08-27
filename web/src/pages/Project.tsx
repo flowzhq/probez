@@ -51,6 +51,11 @@ export function Project({ slug }: { slug: string }): ReactElement {
                   cursor
                 </span>
               ) : null}
+              {(data.project.sources ?? []).includes('codex') ? (
+                <span className="mark" title="Includes Codex CLI sessions">
+                  codex
+                </span>
+              ) : null}
               <span className="muted mono clip">{data.project.path ?? data.project.key}</span>
               <span className="spacer" style={{ flex: 1 }} />
               {/*

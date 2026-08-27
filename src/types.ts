@@ -52,7 +52,7 @@ export interface RoundEvent {
 }
 
 /** Which coding agent produced a session. */
-export type AgentSource = 'claude-code' | 'cursor'
+export type AgentSource = 'claude-code' | 'cursor' | 'codex'
 
 /**
  * A compaction the harness ran, recorded on the round that came after it.
@@ -113,7 +113,8 @@ export interface Round {
   model: string | null
   /**
    * Total input, which is the three fields below summed. Null when the session never recorded
-   * usage — Cursor transcripts do not — which is not the same as a measured zero.
+   * usage — Cursor transcripts do not — which is not the same as a measured zero. Codex rollouts
+   * often do record it; a round that still has nulls is one whose log never did.
    */
   in_tokens: number | null
   /** Input the model had not seen before, charged at full rate. */

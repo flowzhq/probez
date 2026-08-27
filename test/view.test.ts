@@ -78,6 +78,8 @@ function makeStore(delegated = false): {
       claudeDir,
       '--cursor-dir',
       cursorDir,
+      '--codex-dir',
+      join(root, 'codex'),
     ],
     { encoding: 'utf8' },
   )
@@ -105,7 +107,7 @@ function snapshot(dir: string): Record<string, string> {
 
 async function serving(dataDir: string, claudeDir = ''): Promise<Serving> {
   forgetRounds()
-  return startServer({ dataDir, claudeDir, cursorDir: '', port: 0, pinned: true })
+  return startServer({ dataDir, claudeDir, cursorDir: '', codexDir: '', port: 0, pinned: true })
 }
 
 const get = (server: Serving, path: string, init?: RequestInit): Promise<Response> =>

@@ -19,6 +19,7 @@ import { createInterface } from 'node:readline'
 
 import { isAgentSource, safeSessionFilename, sessionIdFromFilename } from './agents/paths.js'
 import { readToolResults } from './result.js'
+import { extractCodexSession, isCodexRecord } from './extract-codex.js'
 import { extractCursorSession } from './extract-cursor.js'
 import { extractSession } from './extract.js'
 import { readHeadHistory } from './git.js'
@@ -597,10 +598,12 @@ const SNIFF_BYTES = 64 * 1024
  * Which agent wrote an archived session, for the one case the store cannot simply look up.
  *
  * Normally the source is recorded beside the size and mtime. It is missing only for a copy whose
- * state entry is gone, and the id cannot settle it: both agents name a subagent's transcript for
- * the path it sits at, so a `/` in the id says a subagent wrote it and nothing about which agent
- * did. The records themselves are unambiguous — Claude rows are typed and carry a `sessionId`,
- * Cursor rows carry a `role` and nothing else — so read one.
+ * state entry is gone, and the id cannot settle it: Claude and Cursor name a subagent's transcript
+ * for the path it sits at, so a `/` in the id says a subagent wrote it and nothing about which
+ * agent did. The records themselves are unambiguous — Codex lines are typed envelopes with a
+ * `payload`, Claude rows are typed and carry a `sessionId`, Cursor rows carry a `role` and
+ * nothing else — so read one. Codex is checked first because every rollout line has a `type`,
+ * which is also how Claude rows announce themselves.
  */
 async function sniffSource(file: string): Promise<AgentSource> {
   const handle = await open(file, 'r').catch(() => null)
@@ -624,6 +627,7 @@ async function sniffSource(file: string): Promise<AgentSource> {
     }
     if (!record || typeof record !== 'object') continue
     const row = record as Record<string, unknown>
+    if (isCodexRecord(row)) return 'codex'
     if (typeof row.type === 'string' || typeof row.sessionId === 'string') return 'claude-code'
     if (typeof row.role === 'string') return 'cursor'
   }
@@ -739,7 +743,9 @@ export async function collectProject(
     const rounds =
       session.source === 'cursor'
         ? await extractCursorSession(session.file, session.id, head)
-        : await extractSession(session.file, session.id, head)
+        : session.source === 'codex'
+          ? await extractCodexSession(session.file, session.id, head)
+          : await extractSession(session.file, session.id, head)
     const lines: string[] = []
     for (const round of rounds) {
       const key = `${round.session}\u0000${round.id}`

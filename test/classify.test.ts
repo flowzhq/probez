@@ -150,6 +150,9 @@ test('a call parses to verbs before anything decides what kind of work they are'
   assert.deepEqual(verbs(tool('Edit', { file_path: '/repo/src/a.ts' })), ['write'])
   assert.deepEqual(verbs(tool('StrReplace', { path: '/repo/src/a.ts' })), ['write'])
   assert.deepEqual(verbs(tool('Grep', { pattern: 'flush' })), ['search'])
+  assert.deepEqual(verbs(tool('apply_patch', { path: '/repo/src/a.ts' })), ['write'])
+  assert.deepEqual(verbs(tool('shell', { command: ['npm', 'test'] })), ['test'])
+  assert.deepEqual(verbs(tool('shell', { command: ['bash', '-lc', 'npm test'] })), ['test'])
 })
 
 test('an act carries the file it named, which is what the category rules ask about', () => {

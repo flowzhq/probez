@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [Unreleased]
+
+### Added
+
+- **Codex CLI rollouts.** `probez collect` reads OpenAI Codex sessions under `~/.codex/sessions`
+  (or `$CODEX_HOME/sessions`) as well as Claude Code and Cursor. Codex writes one dated tree of
+  `rollout-*.jsonl` files rather than a folder per project; discovery groups them by the `cwd` each
+  rollout recorded, and a repository used by more than one agent is still one project.
+  `--source claude|cursor|codex|all` (default `all`; `both` still means all three) and `--codex-dir`
+  select which trees to walk. Token counts, when the rollout recorded them, are kept; cost stays
+  blank until a rate exists for that model, the same as any other unpriced round.
+
 ## [0.3.9] - 2026-08-26
 
 ### Added
@@ -1107,7 +1119,7 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.8...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.9...HEAD
 [0.3.9]: https://github.com/flowzhq/probez/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/flowzhq/probez/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/flowzhq/probez/compare/v0.3.6...v0.3.7

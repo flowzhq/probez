@@ -77,6 +77,8 @@ export interface ServeOptions {
   claudeDir: string
   /** Where Cursor project folders live. Same as `claudeDir`: only `sync` reads it. */
   cursorDir: string
+  /** Where Codex CLI rollouts live. Same as `claudeDir`: only `sync` reads it. */
+  codexDir: string
   /** Port to listen on. 0 lets the OS choose, which is what the tests want. */
   port?: number
   /** Fail rather than move to another port. True when `--port` was typed. */
@@ -441,7 +443,7 @@ async function serveApi(
   }
   if (kind === 'sync' && id === undefined) {
     // Reachable only as POST; the method check upstream has already refused a GET here.
-    sendJson(res, 200, await syncProject(dataDir, options.claudeDir, options.cursorDir, slug))
+    sendJson(res, 200, await syncProject(dataDir, options.claudeDir, options.cursorDir, options.codexDir, slug))
     return
   }
   if (kind === 'rename' && id === undefined) {

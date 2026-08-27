@@ -17,6 +17,7 @@ import { COMMAND_KINDS } from './bash.js'
 import { CATEGORIES, classifyCall, isCategory, isTarget, TARGETS } from './classify.js'
 import {
   defaultClaudeDir,
+  defaultCodexDir,
   defaultCursorDir,
   discoverProjects,
   isEphemeral,
@@ -24,7 +25,8 @@ import {
   matchProjects,
   projectName,
 } from './discover.js'
-import { parentSession } from './agents/paths.js'
+import { isSourceFilter, parentSession, wantsClaude, wantsCodex, wantsCursor } from './agents/paths.js'
+import type { SourceFilter } from './agents/paths.js'
 import { ago, clip, duration, pad, padStart, shortCommit, shorten, shortSession, span, tokens, wrap } from './format.js'
 import { contextShare } from './models.js'
 import {
@@ -154,6 +156,7 @@ const GLOBAL_FLAGS = new Set([
   'data-dir',
   'claude-dir',
   'cursor-dir',
+  'codex-dir',
   'source',
   'version',
   'help',
@@ -473,10 +476,12 @@ Collection
   probez collect [project]     Collect one project, or every project under a folder
   probez collect --all         Collect every project on this machine
   --full                       Re-read every session instead of only what changed
-  --source claude|cursor|both  Which agents to read (default both)
+  --source claude|cursor|codex|all  Which agents to read (default all; \`both\` still means all)
 
   Claude Code sessions live under ~/.claude/projects. Cursor transcripts live under
-  ~/.cursor/projects/<slug>/agent-transcripts. A repository used by both is one project.
+  ~/.cursor/projects/<slug>/agent-transcripts. Codex CLI rollouts live under
+  ~/.codex/sessions (or \$CODEX_HOME/sessions). A repository used by more than one
+  agent is one project.
 
   A store collected by an older probez is rebuilt on the next collect, from the session copies
   it already keeps. Nothing leaves the machine and nothing is lost, but it is not instant.
@@ -491,7 +496,9 @@ Options (these work on every command)
                                (default ~/.claude/projects)
   --cursor-dir <dir>           Where to read Cursor projects from
                                (default ~/.cursor/projects)
-  --source claude|cursor|both  Which agents to collect (default both)
+  --codex-dir <dir>            Where to read Codex CLI rollouts from
+                               (default ~/.codex/sessions, or \$CODEX_HOME/sessions)
+  --source claude|cursor|codex|all  Which agents to collect (default all; \`both\` still means all)
   --version                    Print the version
   -h, --help                   Print this help
 
@@ -1966,6 +1973,7 @@ async function runView(
   dataDir: string,
   claudeDir: string,
   cursorDir: string,
+  codexDir: string,
   target: string | undefined,
   options: { port?: string; open: boolean; json: boolean },
 ): Promise<void> {
@@ -2000,6 +2008,7 @@ async function runView(
     dataDir,
     claudeDir,
     cursorDir,
+    codexDir,
     port,
     pinned: options.port !== undefined,
   })
@@ -2043,6 +2052,7 @@ async function main(): Promise<void> {
         'data-dir': { type: 'string' },
         'claude-dir': { type: 'string' },
         'cursor-dir': { type: 'string' },
+        'codex-dir': { type: 'string' },
         source: { type: 'string' },
         json: { type: 'boolean', default: false },
         all: { type: 'boolean', default: false },
@@ -2152,15 +2162,11 @@ async function main(): Promise<void> {
 
   const claudeDir = values['claude-dir'] ? resolve(values['claude-dir']) : defaultClaudeDir()
   const cursorDir = values['cursor-dir'] ? resolve(values['cursor-dir']) : defaultCursorDir()
-  if (
-    values.source !== undefined &&
-    values.source !== 'claude' &&
-    values.source !== 'cursor' &&
-    values.source !== 'both'
-  ) {
-    fail(`--source takes claude, cursor or both, got "${values.source}"`)
+  const codexDir = values['codex-dir'] ? resolve(values['codex-dir']) : defaultCodexDir()
+  if (values.source !== undefined && !isSourceFilter(values.source)) {
+    fail(`--source takes claude, cursor, codex or all, got "${values.source}"`)
   }
-  const source = (values.source ?? 'both') as 'claude' | 'cursor' | 'both'
+  const source: SourceFilter = values.source === undefined ? 'both' : (values.source as SourceFilter)
 
   // Import reads a file and writes the store, and never looks at the agent's directory at all.
   if (command === 'import') {
@@ -2196,7 +2202,7 @@ async function main(): Promise<void> {
   // been collected stays browsable whether or not the sessions it came from still do; the agent's
   // directory is consulted only when you press Sync, and only then can it be missing.
   if (command === 'view') {
-    await runView(dataDir, claudeDir, cursorDir, target, {
+    await runView(dataDir, claudeDir, cursorDir, codexDir, target, {
       port: values.port,
       open: values['no-open'] !== true,
       json: values.json,
@@ -2204,17 +2210,21 @@ async function main(): Promise<void> {
     return
   }
 
-  const projects = await discoverProjects({ claudeDir, cursorDir, source })
+  const projects = await discoverProjects({ claudeDir, cursorDir, codexDir, source })
 
   // An empty agent directory is only a dead end if the store is empty too. Someone who was sent an
   // export and has never run an agent has nothing to discover and a project to read all the same.
   if (projects.length === 0 && (await listStored(dataDir)).length === 0) {
+    const parts: string[] = []
+    if (wantsClaude(source)) parts.push(shorten(claudeDir))
+    if (wantsCursor(source)) parts.push(shorten(cursorDir))
+    if (wantsCodex(source)) parts.push(shorten(codexDir))
     const where =
-      source === 'cursor'
-        ? shorten(cursorDir)
-        : source === 'claude'
-          ? shorten(claudeDir)
-          : `${shorten(claudeDir)} or ${shorten(cursorDir)}`
+      parts.length === 0
+        ? shorten(claudeDir)
+        : parts.length === 1
+          ? parts[0]!
+          : `${parts.slice(0, -1).join(', ')} or ${parts[parts.length - 1]!}`
     console.error(`probez: no agent sessions found in ${where}`)
     process.exit(1)
   }

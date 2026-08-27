@@ -25,7 +25,7 @@
 import { isProse, pathOf, pathsIn, targetOf, writesToFile } from './act.js'
 import type { Verb } from './act.js'
 import { actsOf } from './act.js'
-import { commandOf, parsePlaced } from './bash.js'
+import { commandOf, isShellTool, parsePlaced } from './bash.js'
 import type { Placed } from './bash.js'
 import type { Round, ToolCall } from './types.js'
 
@@ -219,13 +219,13 @@ function probesOfCommand(placed: Placed): string[] {
 /** What a call was looking for: the words it asked the repository about. */
 export function probesIn(tool: ToolCall): string[] {
   const name = typeof tool.name === 'string' ? tool.name : ''
-  if (name === 'Grep' || name === 'Glob') {
+  if (name === 'Grep' || name === 'Glob' || name === 'grep_files') {
     const input = tool.input
     if (input === null || typeof input !== 'object') return []
     const pattern = (input as Record<string, unknown>).pattern
     return typeof pattern === 'string' ? termsOf(pattern) : []
   }
-  if (name !== 'Bash') return []
+  if (!isShellTool(name)) return []
   const out = new Set<string>()
   for (const placed of parsePlaced(commandOf(tool.input))) {
     for (const term of probesOfCommand(placed)) out.add(term)
@@ -242,7 +242,7 @@ export function probesIn(tool: ToolCall): string[] {
  */
 export function sitesIn(tool: ToolCall, root = ''): string[] {
   const name = typeof tool.name === 'string' ? tool.name : ''
-  if (name !== 'Bash') {
+  if (!isShellTool(name)) {
     const out: string[] = []
     const direct = pathOf(tool.input)
     if (direct !== '') out.push(direct)
@@ -324,12 +324,12 @@ function isSpan(placed: Placed, tokens: string[]): boolean {
 export function scopeOf(tool: ToolCall, sites: string[]): Scope {
   const name = typeof tool.name === 'string' ? tool.name : ''
 
-  if (name === 'Glob') return 'tree'
-  if (name === 'Grep') {
+  if (name === 'Glob' || name === 'list_dir') return 'tree'
+  if (name === 'Grep' || name === 'grep_files') {
     const target = sites[0]
     return target === undefined || looksLikeDirectory(target) ? 'tree' : 'file'
   }
-  if (name === 'Read') {
+  if (name === 'Read' || name === 'read_file') {
     const input = tool.input
     const offset =
       input !== null && typeof input === 'object'
@@ -337,7 +337,7 @@ export function scopeOf(tool: ToolCall, sites: string[]): Scope {
         : undefined
     return typeof offset === 'number' ? 'span' : 'file'
   }
-  if (name !== 'Bash') return sites.length > 0 ? 'file' : 'dir'
+  if (!isShellTool(name)) return sites.length > 0 ? 'file' : 'dir'
 
   let widest: Scope = sites.length > 0 ? 'file' : 'dir'
   let narrowest: Scope | null = null
@@ -473,11 +473,11 @@ export function textOf(tool: ToolCall, root = ''): string {
     return flat.length <= MAX_TEXT ? flat : `${flat.slice(0, MAX_TEXT - 1)}…`
   }
 
-  if (name === 'Bash') {
+  if (isShellTool(name)) {
     const raw = commandOf(tool.input)
     return cut(typeof raw === 'string' ? raw : '')
   }
-  if (name === 'Read' || name === 'NotebookEdit') {
+  if (name === 'Read' || name === 'read_file' || name === 'NotebookEdit') {
     const path = field('file_path') || field('notebook_path')
     const offset = input.offset
     const limit = input.limit
@@ -489,13 +489,13 @@ export function textOf(tool: ToolCall, root = ''): string {
     }
     return cut(`${name} ${path}`)
   }
-  if (name === 'Grep') {
+  if (name === 'Grep' || name === 'grep_files') {
     const where = field('path')
-    return cut(`Grep ${field('pattern')}${where === '' ? '' : ` in ${where}`}`)
+    return cut(`${name} ${field('pattern')}${where === '' ? '' : ` in ${where}`}`)
   }
-  if (name === 'Glob') {
+  if (name === 'Glob' || name === 'list_dir') {
     const where = field('path')
-    return cut(`Glob ${field('pattern')}${where === '' ? '' : ` in ${where}`}`)
+    return cut(`${name} ${field('pattern')}${where === '' ? '' : ` in ${where}`}`)
   }
   // Anything else: the tool, and the one field of its input worth putting on a row. The order is
   // the Inspector's, which has been answering the same question for every tool probez has met.
@@ -509,7 +509,7 @@ export function textOf(tool: ToolCall, root = ''): string {
 /** The name a step reads as: what the call ran, or the tool that has no finer level. */
 function nameOf(tool: ToolCall): string {
   const name = typeof tool.name === 'string' ? tool.name : '(unnamed)'
-  if (name !== 'Bash') return name
+  if (!isShellTool(name)) return name
   const placed = parsePlaced(commandOf(tool.input))
   const real = placed.find((one) => one.kind !== 'nav' && one.kind !== 'shell')
   return (real ?? placed[0])?.name ?? name

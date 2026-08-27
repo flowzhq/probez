@@ -125,7 +125,7 @@ export interface StoredProject {
   collected_at: string | null
   /** When this arrived as an export, or null when it was collected on this machine. */
   imported_at: string | null
-  sources: Array<'claude-code' | 'cursor'>
+  sources: Array<'claude-code' | 'cursor' | 'codex'>
 }
 
 export interface TraceRound {
