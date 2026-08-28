@@ -1235,3 +1235,35 @@ test('a window that catches nothing is a plan of nothing, not a failure', async 
     await server.close()
   }
 })
+
+test('a model probez has never seen can be priced, which is the only way to price a new agent', async () => {
+  const { dataDir } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    // The table is built from models with rounds collected, models the rate file names, and models
+    // with a published price. None of those can hold a model you have not run yet — so pricing
+    // Codex on a machine with no Codex sessions depends entirely on a name being acceptable here.
+    const before = await body(withToken(server, '/api/pricing'))
+    assert.equal(before.models.some((one: { model: string }) => one.model === 'gpt-5'), false)
+
+    const saved = await body(
+      get(server, `/api/pricing?t=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          models: { 'gpt-5': { in: 1, cache_write_5m: 1, cache_write_1h: 2, cache_read: 0.1, out: 8 } },
+        }),
+      }),
+    )
+    const row = saved.models.find((one: { model: string }) => one.model === 'gpt-5')
+    assert.ok(row !== undefined, 'a model named in the rate file is not offered back')
+    assert.equal(row.rates.out, 8)
+    assert.equal(row.rounds, 0, 'a priced model with no rounds is still a row')
+
+    // And it survives a re-read, since the rate file is what the screen is built from.
+    const again = await body(withToken(server, '/api/pricing'))
+    assert.ok(again.models.some((one: { model: string }) => one.model === 'gpt-5'))
+  } finally {
+    await server.close()
+  }
+})

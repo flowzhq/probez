@@ -51,6 +51,17 @@ export function Settings(): ReactElement {
   // Bumped after a clear. The rate table counts the rounds each model was used for, and a clear
   // is the one thing on this page that changes them.
   const [read, setRead] = useState(0)
+  /**
+   * Models named here rather than found in the store.
+   *
+   * The table is otherwise built from three things that have all already happened: models with
+   * rounds collected, models the rate file names, and models with a published price. None of them
+   * can contain a model you have not run yet — so before this there was no way to price Codex on a
+   * machine that had not collected any Codex sessions, and no way to price anything probez does not
+   * ship a rate for until after the bill had been run up.
+   */
+  const [added, setAdded] = useState<string[]>([])
+  const [naming, setNaming] = useState('')
 
   const load = (payload: PricingPayload): void => {
     setData(payload)
@@ -155,7 +166,14 @@ export function Settings(): ReactElement {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.models.map((model) => (
+                  {[
+                    ...data.models,
+                    // Shown as a row like any other, with no rounds behind it, so it is priced and
+                    // saved by exactly the controls the rest of the table uses.
+                    ...added
+                      .filter((one) => !data.models.some((model) => model.model === one))
+                      .map((one) => ({ model: one, rounds: 0, rates: null, custom: false })),
+                  ].map((model) => (
                     <tr key={model.model}>
                       <td className="mono">
                         {model.model}
@@ -186,6 +204,35 @@ export function Settings(): ReactElement {
                   ))}
                 </tbody>
               </table>
+
+              <form
+                className="add-model"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  const name = naming.trim()
+                  if (name === '') return
+                  setAdded((was) => (was.includes(name) ? was : [...was, name]))
+                  setDraft((current) => ({ ...current, [name]: current[name] ?? blank() }))
+                  setNaming('')
+                  setSaved(null)
+                }}
+              >
+                <input
+                  className="mono"
+                  value={naming}
+                  spellCheck={false}
+                  placeholder="gpt-5"
+                  aria-label="Add a model by name"
+                  onChange={(event) => setNaming(event.target.value)}
+                />
+                <button type="submit" className="ghost" disabled={naming.trim() === ''}>
+                  Add a model
+                </button>
+                <span className="muted">
+                  For a model you have not run yet, or one probez ships no rate for. The name has to
+                  be the one the agent records — <span className="mono">gpt-5</span> for Codex.
+                </span>
+              </form>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
                 <button className="save" onClick={() => void save()} disabled={saving}>

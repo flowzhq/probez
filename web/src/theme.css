@@ -1656,3 +1656,39 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Naming a model the table cannot already know: one you have not run yet, or one probez ships no
+   rate for. The rate file has always accepted any name; there was simply no way to type one. */
+.add-model {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  font-size: 12px;
+}
+
+.add-model input {
+  width: 200px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.add-model input:focus {
+  outline: none;
+  border-color: var(--axis);
+}
+
+.add-model > span {
+  flex: 1;
+  min-width: 240px;
+}
