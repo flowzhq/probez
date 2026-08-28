@@ -204,6 +204,9 @@ output in `dist/test/`, which is why `npm test` builds first.
   carries the schema and the question and nothing else, that it is bounded, and that a query with no
   *filter* in it is kept — `in:sessions sort:cost limit:1` is the right answer to "what is the most
   expensive session", and refusing it was a real bug.
+- `test/store.test.ts` covers how a transcript's product is recognised: from its format rather than
+  from what it happens to be missing, so a Claude row with no token counts is not read as Cursor,
+  and anything unrecognised is `unknown` rather than assumed.
 - `test/clear.test.ts` covers the two operations that destroy more than one project. The tests
   that matter are the ones about what *survives*: that a session is old when its newest round is
   rather than its oldest, that a trim keeps every surviving round in the order it was in, that the

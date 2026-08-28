@@ -563,3 +563,40 @@ through to discovery. `source:claude` matches persisted `claude-code`. A sniff t
 recognise the transcript, or an import with no field, is `unknown` — never assumed Claude. The
 view's Source control filters the page you are on and does not change what Sync collects.
 Typing `source:` in the query bar is still a search.
+
+## Clearing, and the shape a destructive operation has to have
+
+A store grows without bound, and almost all of what it weighs is the verbatim copies of the agent's
+own transcripts kept beside the rounds — on the machine this was written on, 830 MB of 977. Until
+`clear` the only way to reclaim any of it was to delete a whole project, one at a time, from the
+browser; the command line could not delete at all.
+
+**A session is the unit of a window.** `probez clear --before 30d` removes every session whose last
+round is older than the cutoff, with the archived transcript beside it, and keeps whole any session
+with a newer round. A project left with nothing is removed. The two alternatives were both worse:
+removing whole *projects* reclaims nothing from one you still work in, which on a real store is
+every one of them, and removing individual *rounds* leaves the archived copies behind — which is to
+say almost all of the disk — or forces rewriting somebody's transcript and leaves `trails --deep`
+reading a session that is half there.
+
+**Nothing acts on the first press, and the plan is computed once.** Working out what would go is a
+separate step from taking it, and the same plan drives both surfaces: the command prints it and
+waits, the view shows the same figures in the panel that asks. That is not tidiness — it is what
+stops the numbers somebody was shown and the thing that happened from coming apart.
+
+**The command asks on a terminal, and refuses without one.** This is the only place probez waits for
+a person, and it is here because this is the only thing it does that it cannot undo. With no
+terminal there is nobody to ask, so it refuses rather than assuming, which is what makes
+`probez clear --all | tee log` safe; `--yes` is how a script says it means it.
+
+**What is destroyed is only ever probez's own copy.** The agent's session files are untouched, here
+as everywhere, so a project cleared by mistake comes back with `probez collect` — and a session
+cleared from the store is not remembered as cleared, so an unrestricted collect brings that back
+too. `probez collect --since 30d` is the companion for anyone who wants the store to stay small
+rather than be trimmed after the fact. An imported project does not come back: the file it arrived
+as is the only other copy that ever existed here.
+
+`delete` is therefore no longer the only thing in probez that destroys data. All three shapes of it
+reach a project through one function, which checks the slug against the shape `slugFor` produces and
+checks the path it resolves to is under `<data-dir>/projects/`, so nothing outside the store is
+reachable however a request is shaped.
