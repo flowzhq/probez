@@ -6,26 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
-## [Unreleased]
-
-### Fixed
-
-- **A model probez has not seen cannot be priced, which made Codex support unusable for cost.** The
-  rate table under Settings is built from three things that have all already happened: models with
-  rounds in the store, models the rate file names, and models with a published price. None of them
-  can hold a model you have not run yet, and probez ships no OpenAI rates — so on a machine with no
-  Codex sessions collected there was no Codex row, and no way to make one. The rate *file* has
-  always accepted any name; there was simply nothing on screen that could type one.
-
-  Settings now has an **Add a model** field. What it adds is an ordinary row, priced and saved by
-  the same controls as the rest of the table, so it also covers a Claude model probez does not ship
-  a rate for yet and a name an agent records differently than expected.
-
-  This does not price Codex for you. `defaultPricing()` still ships no OpenAI models, so a Codex
-  round stays unpriced — reported as `—` and counted outside COST — until somebody enters a rate.
-  That is the same contract every unpriced model has had: a missing number rather than an invented
-  one.
-
 ## [0.4.0] - 2026-08-28
 
 ### Added
@@ -111,6 +91,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   same fence — `ownDir`, which checks the slug against the shape `slugFor` produces *and* checks the
   resolved path to be under `<data-dir>/projects/` — and `test/clear.test.ts` asserts that by handing
   the applier a plan naming a path outside the store and checking the file there survives.
+
+### Fixed
+
+- **A model probez has not seen cannot be priced, which made Codex support unusable for cost.** The
+  rate table under Settings is built from three things that have all already happened: models with
+  rounds in the store, models the rate file names, and models with a published price. None of them
+  can hold a model you have not run yet, and probez ships no OpenAI rates — so on a machine with no
+  Codex sessions collected there was no Codex row, and no way to make one. The rate *file* has
+  always accepted any name; there was simply nothing on screen that could type one.
+
+  Settings now has an **Add a model** field. What it adds is an ordinary row, priced and saved by
+  the same controls as the rest of the table, so it also covers a Claude model probez does not ship
+  a rate for yet and a name an agent records differently than expected.
+
+  This does not price Codex for you. `defaultPricing()` still ships no OpenAI models, so a Codex
+  round stays unpriced — reported as `—` and counted outside COST — until somebody enters a rate.
+  That is the same contract every unpriced model has had: a missing number rather than an invented
+  one.
 
 ## [0.3.9] - 2026-08-26
 
