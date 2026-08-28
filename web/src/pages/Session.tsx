@@ -3,11 +3,13 @@ import { useState } from 'react'
 import { api } from '../api'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
 import type { Fact } from '../components/Chrome'
+import { SourceTag } from '../components/SourceMarks'
 import { InTokens, Lines, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
 import { Trace } from '../components/Trace'
 import { MixBar, WorkBars } from '../components/WorkBars'
 import { clip, count, duration, money, shortId, shortModel, tokens, when } from '../format'
-import { go, href, linkProps } from '../router'
+import { go, href, linkProps, withSource } from '../router'
+import type { SourceChoice } from '../router'
 import { useData } from '../useData'
 import type { ReactElement } from 'react'
 
@@ -18,7 +20,15 @@ import type { ReactElement } from 'react'
  * from the CLI at all: where the tasks sit relative to each other, and which one swallowed the
  * afternoon. Double-clicking a round opens the task it belongs to.
  */
-export function Session({ slug, session }: { slug: string; session: string }): ReactElement {
+export function Session({
+  slug,
+  session,
+  source = null,
+}: {
+  slug: string
+  session: string
+  source?: SourceChoice | null
+}): ReactElement {
   const { data, error } = useData(() => api.session(slug, session), [slug, session])
   const [selected, setSelected] = useState<number | null>(null)
 
@@ -26,10 +36,10 @@ export function Session({ slug, session }: { slug: string; session: string }): R
     <>
       <Chrome
         crumbs={[
-          { label: data?.project.project ?? slug, to: href.project(slug) },
+          { label: data?.project.project ?? slug, to: href.project(slug, source) },
           { label: `Session ${shortId(session)}` },
         ]}
-        search={{ slug }}
+        search={{ slug, source }}
       />
       <main className="page">
         {error !== null && data === null ? (
@@ -41,6 +51,7 @@ export function Session({ slug, session }: { slug: string; session: string }): R
             <div className="head">
               <h1 className="mono">{shortId(session)}</h1>
               <span className="tag">{shortModel(data.session.model)}</span>
+              <SourceTag source={data.session.source} />
               <span className="muted">{when(data.session.first_ts)}</span>
             </div>
             <Facts
@@ -79,7 +90,7 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                 trace={data.trace}
                 selected={selected}
                 onSelect={(round) => setSelected(round.round)}
-                onOpenTask={(task) => go(href.task(slug, session, task))}
+                onOpenTask={(task) => go(withSource(href.task(slug, session, task), source))}
               />
             </section>
 
@@ -104,11 +115,11 @@ export function Session({ slug, session }: { slug: string; session: string }): R
                     <tr
                       key={task.task}
                       className="row"
-                      onClick={() => go(href.task(slug, session, task.task))}
+                      onClick={() => go(withSource(href.task(slug, session, task.task), source))}
                     >
                       <td className="mono muted">{task.task}</td>
                       <td className="clip">
-                        <a {...linkProps(href.task(slug, session, task.task))}>
+                        <a {...linkProps(withSource(href.task(slug, session, task.task), source))}>
                           {clip(task.asked, 110) || <span className="muted">(no prompt)</span>}
                         </a>
                       </td>

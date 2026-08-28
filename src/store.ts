@@ -17,15 +17,16 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { isAgentSource, safeSessionFilename, sessionIdFromFilename } from './agents/paths.js'
+import { isAgentSource, isRoundSource, safeSessionFilename, sessionIdFromFilename } from './agents/paths.js'
 import { readToolResults } from './result.js'
+import { extractCodexSession, isCodexRecord } from './extract-codex.js'
 import { extractCursorSession } from './extract-cursor.js'
 import { extractSession } from './extract.js'
 import { readHeadHistory } from './git.js'
 import { CONTROL } from './import.js'
-import type { AgentSource, Project, Round, SessionFile } from './types.js'
+import type { AgentSource, Project, Round, RoundSource, SessionFile } from './types.js'
 
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 export interface Summary {
   project: string
@@ -216,7 +217,7 @@ export async function findStored(dataDir: string, slug: string): Promise<StoredP
 interface SessionState {
   size: number
   mtimeMs: number
-  source?: AgentSource
+  source?: RoundSource
 }
 
 interface State {
@@ -340,6 +341,11 @@ async function readJson<T>(file: string): Promise<T | null> {
   }
 }
 
+/** A round whose source field is missing or unrecognised is unknown, not Claude. */
+function asStoredRound(round: Round): Round {
+  return isRoundSource(round.source ?? '') ? round : { ...round, source: 'unknown' }
+}
+
 /** Stream rounds.jsonl once, calling back with each parsed round. */
 export async function eachRound(file: string, visit: (round: Round) => void): Promise<void> {
   let stream
@@ -353,7 +359,7 @@ export async function eachRound(file: string, visit: (round: Round) => void): Pr
     for await (const line of lines) {
       if (line.trim() === '') continue
       try {
-        visit(JSON.parse(line) as Round)
+        visit(asStoredRound(JSON.parse(line) as Round))
       } catch {
         // a torn line from an interrupted write; skip it
       }
@@ -415,7 +421,7 @@ export async function readRoundsAt(dir: string, wanted: Set<number>): Promise<Ma
   await eachRoundLine(join(dir, 'rounds.jsonl'), (at, line) => {
     if (!wanted.has(at)) return
     try {
-      found.set(at, JSON.parse(line) as Round)
+      found.set(at, asStoredRound(JSON.parse(line) as Round))
     } catch {
       // a torn line from an interrupted write; the index already records it as matching nothing
     }
@@ -453,7 +459,7 @@ export async function readRoundsAtOffsets(
       const read = await handle.read(buffer, 0, one.bytes, one.offset)
       if (read.bytesRead !== one.bytes) continue
       try {
-        found.set(one.at, JSON.parse(buffer.toString('utf8')) as Round)
+        found.set(one.at, asStoredRound(JSON.parse(buffer.toString('utf8')) as Round))
       } catch {
         // the file moved under the index; the caller's staleness check catches it next time
       }
@@ -597,14 +603,20 @@ const SNIFF_BYTES = 64 * 1024
  * Which agent wrote an archived session, for the one case the store cannot simply look up.
  *
  * Normally the source is recorded beside the size and mtime. It is missing only for a copy whose
- * state entry is gone, and the id cannot settle it: both agents name a subagent's transcript for
- * the path it sits at, so a `/` in the id says a subagent wrote it and nothing about which agent
- * did. The records themselves are unambiguous — Claude rows are typed and carry a `sessionId`,
- * Cursor rows carry a `role` and nothing else — so read one.
+ * state entry is gone, and the id cannot settle it: Claude and Cursor name a subagent's transcript
+ * for the path it sits at, so a `/` in the id says a subagent wrote it and nothing about which
+ * agent did. The records themselves are unambiguous — Codex lines are typed envelopes with a
+ * `payload`, Claude rows are typed and carry a `sessionId`, Cursor rows carry a `role` and
+ * nothing else — so read one. Codex is checked first because every rollout line has a `type`,
+ * which is also how Claude rows announce themselves.
+ *
+ * Format detection is the legitimate way to recover a source. Guessing from missing tokens, a
+ * model name or a tool is not. When the file is not a transcript of any known agent, the answer
+ * is `unknown` rather than Claude.
  */
-async function sniffSource(file: string): Promise<AgentSource> {
+export async function sniffSource(file: string): Promise<RoundSource> {
   const handle = await open(file, 'r').catch(() => null)
-  if (handle === null) return 'claude-code'
+  if (handle === null) return 'unknown'
   let text: string
   try {
     const buffer = Buffer.alloc(SNIFF_BYTES)
@@ -624,10 +636,11 @@ async function sniffSource(file: string): Promise<AgentSource> {
     }
     if (!record || typeof record !== 'object') continue
     const row = record as Record<string, unknown>
+    if (isCodexRecord(row)) return 'codex'
     if (typeof row.type === 'string' || typeof row.sessionId === 'string') return 'claude-code'
     if (typeof row.role === 'string') return 'cursor'
   }
-  return 'claude-code'
+  return 'unknown'
 }
 
 /**
@@ -661,8 +674,8 @@ async function withArchived(
     const info = await stat(file).catch(() => null)
     if (info === null) continue
     const recorded = stored?.sessions[id]?.source
-    const source: AgentSource =
-      recorded !== undefined && isAgentSource(recorded) ? recorded : await sniffSource(file)
+    const source: RoundSource =
+      recorded !== undefined && isRoundSource(recorded) ? recorded : await sniffSource(file)
     out.push({ id, file, size: info.size, mtimeMs: info.mtimeMs, source })
     known.add(id)
   }
@@ -739,13 +752,17 @@ export async function collectProject(
     const rounds =
       session.source === 'cursor'
         ? await extractCursorSession(session.file, session.id, head)
-        : await extractSession(session.file, session.id, head)
+        : session.source === 'codex'
+          ? await extractCodexSession(session.file, session.id, head)
+          : await extractSession(session.file, session.id, head)
     const lines: string[] = []
     for (const round of rounds) {
       const key = `${round.session}\u0000${round.id}`
       if (seenKeys.has(key)) continue
       seenKeys.add(key)
-      lines.push(JSON.stringify(round))
+      // Stamped here rather than inside each extractor, so Claude, Cursor and Codex cannot drift
+      // about what the field means, and an extractor does not have to know `AgentSource`.
+      lines.push(JSON.stringify({ ...round, source: session.source }))
     }
     if (lines.length > 0) {
       await appendFile(target, lines.join('\n') + '\n', { encoding: 'utf8', mode: FILE_MODE })
@@ -807,7 +824,9 @@ export async function collectProject(
         out_tokens: summary.out_tokens,
         first_ts: summary.first_ts,
         last_ts: summary.last_ts,
-        sources: project.sources ?? [...new Set(project.sessions.map((session) => session.source))],
+        sources: (project.sources ?? [...new Set(project.sessions.map((session) => session.source))]).filter(
+          isAgentSource,
+        ),
       },
       null,
       2,
@@ -885,6 +904,7 @@ export async function importProject(
 
   const sessions = new Set<string>()
   const tasks = new Set<string>()
+  const agents = new Set<string>()
   let inTokens = 0
   let uncached = 0
   let cacheWrite = 0
@@ -897,6 +917,7 @@ export async function importProject(
   for (const round of rounds) {
     sessions.add(round.session)
     tasks.add(`${round.session} ${round.task}`)
+    if (isAgentSource(round.source ?? '')) agents.add(round.source!)
     inTokens += round.in_tokens || 0
     uncached += round.in_uncached || 0
     cacheWrite += round.in_cache_write || 0
@@ -939,6 +960,7 @@ export async function importProject(
         out_tokens: outTokens,
         first_ts: first,
         last_ts: last,
+        sources: [...agents].filter(isAgentSource),
       },
       null,
       2,

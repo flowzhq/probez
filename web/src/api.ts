@@ -31,6 +31,12 @@ export class ApiError extends Error {
   }
 }
 
+function withSource(path: string, source?: string | null): string {
+  if (source === undefined || source === null || source === '') return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}source=${encodeURIComponent(source)}`
+}
+
 async function get<T>(path: string): Promise<T> {
   const response = await fetch(`/api${path}`, {
     headers: token === null ? {} : { 'x-probez-token': token },
@@ -125,7 +131,7 @@ export interface StoredProject {
   collected_at: string | null
   /** When this arrived as an export, or null when it was collected on this machine. */
   imported_at: string | null
-  sources: Array<'claude-code' | 'cursor'>
+  sources: Array<'claude-code' | 'cursor' | 'codex'>
 }
 
 export interface TraceRound {
@@ -280,6 +286,8 @@ export interface ViewSession extends Totals {
   session: string
   /** "sub" when a subagent ran this session, matching the field a round carries. */
   agent: 'main' | 'sub'
+  /** Which product produced this session. Mirrors `SessionRow.source`. */
+  source: 'claude-code' | 'cursor' | 'codex' | 'unknown'
   rounds: number
   /** Rounds whose model has no rate, and which therefore added nothing to `cost`. */
   unpriced: number
@@ -708,6 +716,7 @@ export interface SearchHit {
   ts?: string | null
   model?: string | null
   agent?: 'main' | 'sub'
+  source?: 'claude-code' | 'cursor' | 'codex' | 'unknown'
   ms?: number | null
   cost?: number | null
   in_tokens?: number | null
@@ -780,21 +789,25 @@ export const api = {
   rename: (slug: string, name: string) =>
     post<RenameResult>(`/projects/${slug}/rename`, { name }),
   remove: (slug: string) => post<RemoveResult>(`/projects/${slug}/delete`),
-  projects: () => get<ProjectsPayload>('/projects'),
-  project: (slug: string) => get<ProjectPayload>(`/projects/${slug}`),
+  projects: (source?: string | null) => get<ProjectsPayload>(withSource('/projects', source)),
+  project: (slug: string, source?: string | null) =>
+    get<ProjectPayload>(withSource(`/projects/${slug}`, source)),
   session: (slug: string, session: string) =>
     get<SessionPayload>(`/projects/${slug}/sessions/${encodeURIComponent(session)}`),
   task: (slug: string, session: string, task: number) =>
     get<TaskPayload>(`/projects/${slug}/sessions/${encodeURIComponent(session)}/tasks/${task}`),
   round: (slug: string, session: string, round: number) =>
     get<RoundPayload>(`/projects/${slug}/sessions/${encodeURIComponent(session)}/rounds/${round}`),
-  tools: (slug: string) => get<ToolsPayload>(`/projects/${slug}/tools`),
+  tools: (slug: string, source?: string | null) =>
+    get<ToolsPayload>(withSource(`/projects/${slug}/tools`, source)),
   // Reads every archived session in the project, so like `tools` it is fetched on the tab rather
   // than on the way to the page.
-  trails: (slug: string) => get<TrailsPayload>(`/projects/${slug}/trails`),
+  trails: (slug: string, source?: string | null) =>
+    get<TrailsPayload>(withSource(`/projects/${slug}/trails`, source)),
   // Read from `rounds.jsonl` alone, unlike `trails`, but over every round in the project — so it
   // is fetched on the tab for the same reason.
-  questions: (slug: string) => get<QuestionsPayload>(`/projects/${slug}/questions`),
+  questions: (slug: string, source?: string | null) =>
+    get<QuestionsPayload>(withSource(`/projects/${slug}/questions`, source)),
   // Deliberately not folded into `round`: the bodies are the bulk of a session file, and the
   // inspector opens without paying for any of them.
   result: (slug: string, session: string, toolUseId: string) =>

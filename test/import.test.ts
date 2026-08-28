@@ -38,6 +38,19 @@ function bundle(rounds: Round[], manifest: Record<string, unknown> = {}): string
   return JSON.stringify({ manifest: { project: 'sent', slug: 'sent-11112222', ...manifest }, rounds })
 }
 
+test('a round without a source field is unknown, not Claude', () => {
+  const { source: _dropped, ...bare } = round()
+  const parsed = parseExport(JSON.stringify(bare))
+  assert.equal(parsed.rounds[0]?.source, 'unknown')
+})
+
+test('an imported claude alias is persisted as claude-code', () => {
+  const raw = JSON.parse(JSON.stringify(round())) as Record<string, unknown>
+  raw.source = 'claude'
+  const parsed = parseExport(JSON.stringify(raw))
+  assert.equal(parsed.rounds[0]?.source, 'claude-code')
+})
+
 test('a bundle and the same rounds as jsonl read to the same thing', () => {
   const rounds = [round(), round({ round: 1, id: 'msg_2' })]
   const fromBundle = parseExport(bundle(rounds))
@@ -57,6 +70,7 @@ test('a round survives the trip with every field intact', () => {
     mcp_server: 'figma',
     mcp_tool: 'get_file',
     skill: 'graphify',
+    source: 'codex',
     thinking_chars: 512,
     tools: [
       {

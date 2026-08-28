@@ -4,15 +4,17 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 
 import {
   defaultClaudeDir,
+  defaultCodexDir,
   defaultCursorDir,
   pathFromCursorSlug,
   wantsClaude,
+  wantsCodex,
   wantsCursor,
 } from './agents/paths.js'
 import type { SourceFilter } from './agents/paths.js'
 import type { AgentSource, Project, SessionFile } from './types.js'
 
-export { defaultClaudeDir, defaultCursorDir }
+export { defaultClaudeDir, defaultCodexDir, defaultCursorDir }
 export type { SourceFilter }
 
 /** How much of a session file to scan for the record carrying `cwd`. */
@@ -21,6 +23,7 @@ const CWD_SCAN_BYTES = 256 * 1024
 export interface DiscoverOptions {
   claudeDir: string
   cursorDir: string
+  codexDir: string
   source?: SourceFilter
 }
 
@@ -174,6 +177,99 @@ export async function discoverClaudeProjects(claudeDir: string): Promise<Project
   return projects
 }
 
+/**
+ * The cwd a Codex rollout recorded on its `session_meta` line.
+ *
+ * Unlike Claude, Codex does not put `cwd` at the top of the JSON object — it lives on
+ * `payload.cwd` — so the Claude scanner cannot find it. Only `session_meta` is trusted: a later
+ * `turn_context` can name a different directory after a `cd`, which is not the project.
+ */
+async function readCodexCwd(file: string): Promise<string | null> {
+  let handle
+  try {
+    handle = await open(file, 'r')
+  } catch {
+    return null
+  }
+  try {
+    const buffer = Buffer.alloc(CWD_SCAN_BYTES)
+    const { bytesRead } = await handle.read(buffer, 0, CWD_SCAN_BYTES, 0)
+    const text = buffer.subarray(0, bytesRead).toString('utf8')
+    for (const line of text.split('\n')) {
+      if (!line.includes('"session_meta"') || !line.includes('"cwd"')) continue
+      try {
+        const record: unknown = JSON.parse(line)
+        if (!record || typeof record !== 'object') continue
+        const row = record as { type?: unknown; payload?: unknown }
+        if (row.type !== 'session_meta' || !row.payload || typeof row.payload !== 'object') continue
+        const cwd = (row.payload as { cwd?: unknown }).cwd
+        if (typeof cwd === 'string' && cwd) return cwd
+      } catch {
+        // partial or malformed line
+      }
+    }
+    return null
+  } finally {
+    await handle.close()
+  }
+}
+
+async function walkRollouts(dir: string, root: string, out: SessionFile[]): Promise<void> {
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      await walkRollouts(path, root, out)
+      continue
+    }
+    if (!entry.isFile() || !entry.name.startsWith('rollout-') || !entry.name.endsWith('.jsonl')) {
+      continue
+    }
+    await addSession(path, root, 'codex', out)
+  }
+}
+
+/**
+ * Codex CLI rollouts: a global dated tree, one file per session, grouped by the cwd they recorded.
+ *
+ * There is no per-project folder to walk. Subagents are separate rollouts in the same tree, and
+ * discovery does not try to nest them — the extractor reads `session_meta` for that.
+ */
+export async function discoverCodexProjects(codexDir: string): Promise<Project[]> {
+  const sessions: SessionFile[] = []
+  await walkRollouts(codexDir, codexDir, sessions)
+  if (sessions.length === 0) return []
+
+  const byPath = new Map<string, SessionFile[]>()
+  for (const session of sessions) {
+    const cwd = await readCodexCwd(session.file)
+    if (cwd === null) continue
+    const key = resolve(cwd)
+    const bucket = byPath.get(key)
+    if (bucket === undefined) byPath.set(key, [session])
+    else bucket.push(session)
+  }
+
+  const projects: Project[] = []
+  for (const [path, files] of byPath) {
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs)
+    projects.push({
+      key: basename(path),
+      path,
+      dir: codexDir,
+      sessions: files,
+      lastActivity: files[files.length - 1]!.mtimeMs,
+      sources: ['codex'],
+    })
+  }
+  return projects
+}
+
 export async function discoverCursorProjects(cursorDir: string): Promise<Project[]> {
   let entries
   try {
@@ -211,10 +307,10 @@ function mergeSources(a: AgentSource[] | undefined, b: AgentSource[] | undefined
 }
 
 /**
- * Fold Claude and Cursor discoveries that name the same checkout into one project.
+ * Fold discoveries that name the same checkout into one project.
  *
  * A measured `cwd` outranks a path decoded from a Cursor slug. Sessions are concatenated; the
- * store hashes the path, so both agents land in the same directory.
+ * store hashes the path, so every agent that ran there lands in the same directory.
  */
 export function mergeProjects(projects: Project[]): Project[] {
   const byPath = new Map<string, Project>()
@@ -260,12 +356,13 @@ export function mergeProjects(projects: Project[]): Project[] {
   return merged
 }
 
-/** Every project either agent has recorded, newest activity first. */
+/** Every project any requested agent has recorded, newest activity first. */
 export async function discoverProjects(options: DiscoverOptions): Promise<Project[]> {
   const source = options.source ?? 'both'
   const found: Project[] = []
   if (wantsClaude(source)) found.push(...(await discoverClaudeProjects(options.claudeDir)))
   if (wantsCursor(source)) found.push(...(await discoverCursorProjects(options.cursorDir)))
+  if (wantsCodex(source)) found.push(...(await discoverCodexProjects(options.codexDir)))
   return mergeProjects(found)
 }
 

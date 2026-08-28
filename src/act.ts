@@ -15,7 +15,7 @@
  * yields `unknown` rather than a guess, since a wrong bucket is worse than a named hole.
  */
 
-import { commandOf, parseCommands, parsePlaced, UNPARSED } from './bash.js'
+import { commandOf, isShellTool, parseCommands, parsePlaced, UNPARSED } from './bash.js'
 import type { Command } from './bash.js'
 import type { ToolCall } from './types.js'
 
@@ -499,13 +499,20 @@ const TOOL_VERBS: Record<string, Verb> = {
   MultiEdit: 'write',
   NotebookEdit: 'write',
   StrReplace: 'write',
+  apply_patch: 'write',
+  read_file: 'read',
+  view_image: 'read',
+  grep_files: 'search',
+  list_dir: 'search',
+  web_search: 'read',
+  update_plan: 'plan',
   WebSearch: 'read',
   WebFetch: 'read',
 }
 
 /** Tools whose target is the query, not a file, however path-shaped their input looks. */
-const TARGETLESS = new Set(['Grep', 'Glob', 'AskUserQuestion', 'TaskCreate', 'TaskUpdate',
-  'TodoWrite', 'Agent', 'Task', 'EnterPlanMode', 'ExitPlanMode'])
+const TARGETLESS = new Set(['Grep', 'Glob', 'grep_files', 'list_dir', 'AskUserQuestion', 'TaskCreate', 'TaskUpdate',
+  'TodoWrite', 'Agent', 'Task', 'EnterPlanMode', 'ExitPlanMode', 'update_plan', 'web_search'])
 
 /**
  * A tool served by an MCP server.
@@ -530,7 +537,7 @@ function act(verb: Verb, path: string, source: string, creating = false): Act {
 export function actsOf(tool: ToolCall): Act[] {
   const name = typeof tool.name === 'string' ? tool.name : ''
   if (name === '') return [act('unknown', '', '(unnamed)')]
-  if (name === 'Bash') return bashActs(tool)
+  if (isShellTool(name)) return bashActs(tool)
 
   const verb = TOOL_VERBS[name]
   // An MCP tool is recognized by its namespace, not by a table: the name after `mcp__` is whatever
@@ -542,7 +549,7 @@ export function actsOf(tool: ToolCall): Act[] {
   if (verb === undefined) return [act('unknown', '', name)]
 
   const path = TARGETLESS.has(name) ? '' : pathOf(tool.input)
-  const external = name === 'WebSearch' || name === 'WebFetch'
+  const external = name === 'WebSearch' || name === 'WebFetch' || name === 'web_search'
   const one = act(verb, path, name, name === 'Write')
   if (external) one.target = 'external'
   return [one]

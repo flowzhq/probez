@@ -4,12 +4,14 @@ import { api } from '../api'
 import type { Question, ToolRow, Trail } from '../api'
 import { Actions } from '../components/Actions'
 import { Chrome, Facts, Info, Loading, Problem } from '../components/Chrome'
+import { SourceMarks, SourceTag } from '../components/SourceMarks'
 import { InTokens, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
 import { MixBar, WorkBars } from '../components/WorkBars'
 import { QUESTIONS_ARIA, QuestionsTable, questionsExplained } from '../components/QuestionPanel'
 import { TRAILS_ARIA, trailsExplained } from '../components/TrailPanel'
 import { ago, count, duration, money, percent, shortId, shortModel, tokens, when } from '../format'
-import { go, href, linkProps } from '../router'
+import { go, href, linkProps, withSource } from '../router'
+import type { SourceChoice } from '../router'
 import { useData } from '../useData'
 import type { ReactElement } from 'react'
 
@@ -19,16 +21,22 @@ import type { ReactElement } from 'react'
  * The distribution comes first because it is the answer to the question the project is here to
  * ask. The session list is how you get from that answer to the work it describes.
  */
-export function Project({ slug }: { slug: string }): ReactElement {
+export function Project({
+  slug,
+  source = null,
+}: {
+  slug: string
+  source?: SourceChoice | null
+}): ReactElement {
   // Bumped after a sync, which is what makes every table on this page re-read the store.
   const [read, setRead] = useState(0)
-  const { data, error, loading } = useData(() => api.project(slug), [slug, read])
+  const { data, error, loading } = useData(() => api.project(slug, source), [slug, read, source])
   const [tab, setTab] = useState<'work' | 'tools'>('work')
   const [list, setList] = useState<'sessions' | 'trails' | 'questions'>('sessions')
 
   return (
     <>
-      <Chrome crumbs={[{ label: data?.project.project ?? slug }]} search={{ slug }} />
+      <Chrome crumbs={[{ label: data?.project.project ?? slug }]} search={{ slug, source }} />
       <main className="page">
         {error !== null && data === null ? (
           <Problem message={error} />
@@ -43,14 +51,7 @@ export function Project({ slug }: { slug: string }): ReactElement {
                   imported
                 </span>
               )}
-              {(data.project.sources ?? []).includes('cursor') ? (
-                <span
-                  className="mark"
-                  title="Includes Cursor sessions. Cursor transcripts do not record token usage or cost."
-                >
-                  cursor
-                </span>
-              ) : null}
+              <SourceMarks sources={data.project.sources} />
               <span className="muted mono clip">{data.project.path ?? data.project.key}</span>
               <span className="spacer" style={{ flex: 1 }} />
               {/*
@@ -71,11 +72,11 @@ export function Project({ slug }: { slug: string }): ReactElement {
                 slug={slug}
                 project={data.project.project}
                 renamed={data.project.renamed}
-                rounds={data.project.rounds}
+                rounds={source === null ? data.project.rounds : null}
                 onSynced={() => setRead(read + 1)}
                 onRenamed={() => setRead(read + 1)}
                 // The page is about a project that no longer exists; the list is where to be next.
-                onRemoved={() => go(href.projects())}
+                onRemoved={() => go(href.projects(source))}
               />
             </div>
             <Facts
@@ -87,13 +88,16 @@ export function Project({ slug }: { slug: string }): ReactElement {
                 ['in', <InTokens of={data.project} />],
                 ['reused', <Reused of={data.project} />, "Share of this project's input tokens that were served from the prompt cache rather than processed fresh. Agents resend the whole conversation every round, so almost all of it is a repeat — and a cache read is billed at about a tenth of the input rate, which is why a huge 'read' figure can still be cheap."],
                 ['out', tokens(data.project.out_tokens)],
-                ['cost', money(data.cost), "What this cost at the rates under Settings, worked out per round from its own model's prices and summed. Rounds whose model has no rate are left out."],
+                ['cost', `${money(data.cost)}${data.unpriced > 0 ? '+' : ''}`, "What this cost at the rates under Settings, worked out per round from its own model's prices and summed. Rounds whose model has no rate are left out, and the figure is marked +."],
               ]}
             />
-            {(data.project.sources ?? []).includes('cursor') ? (
+            {data.unpriced > 0 || (data.project.sources ?? []).includes('cursor') ? (
               <p className="note">
-                Cursor transcripts do not record token usage or model names, so those rounds have no
-                cost. Shares are of the Claude rounds that do.
+                Cost and token totals only include rounds whose model has a rate. Cursor transcripts
+                do not record usage. A + on a cost means some rounds in the total could not be
+                priced. Filtering by source (the Source control, or <span className="mono">source:</span> in
+                the query bar) does not change what Sync collects. The control filters this page;
+                typing <span className="mono">source:</span> in the bar is still a search.
               </p>
             ) : null}
 
@@ -112,7 +116,7 @@ export function Project({ slug }: { slug: string }): ReactElement {
                   </button>
                 </div>
               </div>
-              {tab === 'work' ? <WorkBars analysis={data.analysis} /> : <Tools slug={slug} read={read} />}
+              {tab === 'work' ? <WorkBars analysis={data.analysis} /> : <Tools slug={slug} read={read} source={source} />}
             </section>
 
             <section>
@@ -142,7 +146,17 @@ export function Project({ slug }: { slug: string }): ReactElement {
                   </button>
                 </div>
               </div>
-              {list === 'questions' ? <Questions slug={slug} read={read} /> : list === 'trails' ? <Trails slug={slug} read={read} /> : (
+              {list === 'questions' ? (
+                <Questions slug={slug} read={read} source={source} />
+              ) : list === 'trails' ? (
+                <Trails slug={slug} read={read} source={source} />
+              ) : data.sessions.length === 0 ? (
+                <p className="note">
+                  {source === null
+                    ? 'No sessions in this project.'
+                    : `No ${source === 'claude' ? 'Claude' : source === 'cursor' ? 'Cursor' : 'Codex'} sessions in this project.`}
+                </p>
+              ) : (
               <table>
                 <thead>
                   <tr>
@@ -169,16 +183,18 @@ export function Project({ slug }: { slug: string }): ReactElement {
                     <tr
                       key={session.session}
                       className="row"
-                      onClick={() => go(href.session(slug, session.session))}
+                      onClick={() => go(href.session(slug, session.session, source))}
                     >
                       <td className="mono">
-                        <a {...linkProps(href.session(slug, session.session))}>
+                        <a {...linkProps(href.session(slug, session.session, source))}>
                           {shortId(session.session)}
                         </a>
                         {/* The id already carries the session it ran under, but says so only to
                             someone who knows the shape. The tag is what makes the row readable
                             at a glance as work the agent handed off. */}
                         {session.agent === 'sub' ? <> <span className="tag">sub</span></> : null}
+                        {' '}
+                        <SourceTag source={session.source} />
                       </td>
                       <td className="muted">{when(session.first_ts)}</td>
                       <td className="dim">{shortModel(session.model)}</td>
@@ -252,8 +268,8 @@ export function Project({ slug }: { slug: string }): ReactElement {
  * Both halves are in the URL, so the row lands on the trail itself rather than on a round that
  * happens to start one — the page opens exactly as it would had you clicked the bracket there.
  */
-function trailHref(slug: string, trail: Trail): string {
-  return href.task(slug, trail.session, trail.task, trail.steps[0]?.round, trail.ref)
+function trailHref(slug: string, trail: Trail, source?: string | null): string {
+  return withSource(href.task(slug, trail.session, trail.task, trail.steps[0]?.round, trail.ref), source)
 }
 
 /**
@@ -264,8 +280,16 @@ function trailHref(slug: string, trail: Trail): string {
  * bracket on that trace would. There is no trail page, because a trail is a shape over rounds and
  * the trace is where rounds are shown.
  */
-function Trails({ slug, read }: { slug: string; read: number }): ReactElement {
-  const { data, error } = useData(() => api.trails(slug), [slug, read])
+function Trails({
+  slug,
+  read,
+  source,
+}: {
+  slug: string
+  read: number
+  source?: SourceChoice | null
+}): ReactElement {
+  const { data, error } = useData(() => api.trails(slug, source), [slug, read, source])
 
   if (error !== null && data === null) return <Problem message={error} />
   if (data === null) return <Loading what="the trails" />
@@ -308,10 +332,10 @@ function Trails({ slug, read }: { slug: string; read: number }): ReactElement {
             <tr
               key={`${trail.session}-${trail.ref}`}
               className="row"
-              onClick={() => go(trailHref(slug, trail))}
+              onClick={() => go(trailHref(slug, trail, source))}
             >
               <td className="mono">
-                <a {...linkProps(trailHref(slug, trail))}>
+                <a {...linkProps(trailHref(slug, trail, source))}>
                   {shortId(trail.session)}#{trail.ref}
                 </a>
               </td>
@@ -358,14 +382,17 @@ function Trails({ slug, read }: { slug: string; read: number }): ReactElement {
   )
 }
 
-function questionHref(slug: string, question: Question): string {
-  return href.task(
-    slug,
-    question.session,
-    question.task,
-    question.calls[0]?.round,
-    null,
-    question.at,
+function questionHref(slug: string, question: Question, source?: string | null): string {
+  return withSource(
+    href.task(
+      slug,
+      question.session,
+      question.task,
+      question.calls[0]?.round,
+      null,
+      question.at,
+    ),
+    source,
   )
 }
 
@@ -380,8 +407,16 @@ function questionHref(slug: string, question: Question): string {
  * question open and its first call selected. There is no question page, for the same reason there
  * is no trail page — both are readings of rounds, and the trace is where rounds are shown.
  */
-function Questions({ slug, read }: { slug: string; read: number }): ReactElement {
-  const { data, error } = useData(() => api.questions(slug), [slug, read])
+function Questions({
+  slug,
+  read,
+  source,
+}: {
+  slug: string
+  read: number
+  source?: SourceChoice | null
+}): ReactElement {
+  const { data, error } = useData(() => api.questions(slug, source), [slug, read, source])
 
   if (error !== null && data === null) return <Problem message={error} />
   if (data === null) return <Loading what="the questions" />
@@ -397,9 +432,9 @@ function Questions({ slug, read }: { slug: string; read: number }): ReactElement
       questions={data.questions}
       readings={data.readings}
       onOpen={(picked) => {
-        if (picked !== null) go(questionHref(slug, picked))
+        if (picked !== null) go(questionHref(slug, picked, source))
       }}
-      hrefFor={(one) => questionHref(slug, one)}
+      hrefFor={(one) => questionHref(slug, one, source)}
       note={
         <p className="note" style={{ marginTop: 12 }}>
           {data.questions.length} questions over {data.calls} calls that were finding something out
@@ -418,8 +453,16 @@ function Questions({ slug, read }: { slug: string; read: number }): ReactElement
 }
 
 /** What Bash actually ran, which is the one tool whose name is not its operation. */
-function Tools({ slug, read }: { slug: string; read: number }): ReactElement {
-  const { data, error } = useData(() => api.tools(slug), [slug, read])
+function Tools({
+  slug,
+  read,
+  source,
+}: {
+  slug: string
+  read: number
+  source?: SourceChoice | null
+}): ReactElement {
+  const { data, error } = useData(() => api.tools(slug, source), [slug, read, source])
   const [by, setBy] = useState<'command' | 'kind'>('command')
 
   if (error !== null && data === null) return <Problem message={error} />

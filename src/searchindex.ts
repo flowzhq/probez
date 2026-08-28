@@ -38,6 +38,7 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { aliasOfSource, roundSourceOf } from './agents/paths.js'
 import { subCommands } from './bash.js'
 import { asked, labelRounds } from './inspect.js'
 import type { RoundLabel } from './inspect.js'
@@ -49,7 +50,7 @@ import { DIR_MODE, eachRoundLine, FILE_MODE, tighten } from './store.js'
 import type { Round } from './types.js'
 
 /** Bumped whenever a field changes meaning. An older index is rebuilt rather than read. */
-export const INDEX_VERSION = 1
+export const INDEX_VERSION = 2
 
 /** The file, beside `analysis.jsonl` in the project's own store directory. */
 export function indexFile(dir: string): string {
@@ -101,6 +102,7 @@ interface Dicts {
   skill: string[]
   mcp: string[]
   commit: string[]
+  source: string[]
   tool: string[]
   command: string[]
   kind: string[]
@@ -121,7 +123,8 @@ export function isFacet(key: string): key is DictName {
     key === 'model' ||
     key === 'skill' ||
     key === 'mcp' ||
-    key === 'commit'
+    key === 'commit' ||
+    key === 'source'
   )
 }
 
@@ -134,6 +137,7 @@ interface Columns {
   skill: Array<number | null>
   mcp: Array<number | null>
   commit: Array<number | null>
+  source: Array<number | null>
   ts: Array<number | null>
   ms: Array<number | null>
   gen: Array<number | null>
@@ -266,6 +270,7 @@ export async function writeIndex(
     skill: new Dictionary(),
     mcp: new Dictionary(),
     commit: new Dictionary(),
+    source: new Dictionary(),
     tool: new Dictionary(),
     command: new Dictionary(),
     kind: new Dictionary(),
@@ -274,7 +279,7 @@ export async function writeIndex(
   }
 
   const columns: Columns = {
-    session: [], task: [], round: [], model: [], skill: [], mcp: [], commit: [], ts: [],
+    session: [], task: [], round: [], model: [], skill: [], mcp: [], commit: [], source: [], ts: [],
     ms: [], gen: [], wait: [], input: [], output: [], cached: [], uncached: [], write5m: [],
     write1h: [], thinking: [], calls: [], errors: [], files: [], added: [], removed: [], flags: [],
     offset: [], bytes: [],
@@ -306,7 +311,7 @@ export async function writeIndex(
       columns.session[at] = 0
       columns.task[at] = 0
       columns.round[at] = 0
-      for (const key of ['model', 'skill', 'mcp', 'commit', 'ts', 'ms', 'gen', 'wait', 'input', 'output', 'cached', 'uncached', 'write5m', 'write1h'] as const) {
+      for (const key of ['model', 'skill', 'mcp', 'commit', 'source', 'ts', 'ms', 'gen', 'wait', 'input', 'output', 'cached', 'uncached', 'write5m', 'write1h'] as const) {
         columns[key][at] = null
       }
       for (const key of ['thinking', 'calls', 'errors', 'files', 'added', 'removed', 'flags'] as const) {
@@ -360,6 +365,7 @@ export async function writeIndex(
     columns.skill[at] = id('skill', round.skill)
     columns.mcp[at] = id('mcp', round.mcp_server)
     columns.commit[at] = id('commit', round.commit)
+    columns.source[at] = id('source', aliasOfSource(roundSourceOf(round)))
     columns.ts[at] = round.ts === null ? null : Date.parse(round.ts)
     columns.ms[at] = round.ms
     columns.gen[at] = round.gen_ms
@@ -762,7 +768,7 @@ export class SearchIndex {
         for (const at of list ?? []) counts.set(at, (counts.get(at) ?? 0) + 1)
       }
     } else {
-      const single = this.cols[key as 'session' | 'model' | 'skill' | 'mcp' | 'commit']
+      const single = this.cols[key as 'session' | 'model' | 'skill' | 'mcp' | 'commit' | 'source']
       for (const at of single) if (at !== null) counts.set(at, (counts.get(at) ?? 0) + 1)
     }
     return [...counts.entries()]
@@ -855,6 +861,8 @@ export class SearchIndex {
             return one('session', cols.session[at])
           case 'commit':
             return one('commit', cols.commit[at])
+          case 'source':
+            return one('source', cols.source[at])
           case 'model':
             return one('model', cols.model[at])
           case 'agent':

@@ -66,6 +66,7 @@ function corpus(): Round[] {
         gen_ms: at * 400,
         skill: at % 11 === 0 ? 'code-review' : null,
         commit: at % 9 === 0 ? 'deadbeefdeadbeef' : null,
+        source: at % 5 === 0 ? 'cursor' : at % 5 === 1 ? 'codex' : 'claude-code',
         tools: editing
           ? [tool('Edit', { patch: { files: 1, added: at, removed: 1 } })]
           : [
@@ -112,6 +113,9 @@ test('the index and the rounds answer every kind of query identically', async ()
     'category:reconstruction',
     'target:code',
     'agent:sub',
+    'source:claude',
+    'source:cursor',
+    'source:codex',
     'session:aaaa1111',
     'task:2',
     'round:12',
@@ -353,6 +357,10 @@ test('facet counts are what a typeahead offers, most used first', async () => {
   const tools = index!.facets('tool')
   assert.deepEqual(tools.map((row) => row.value).sort(), ['Bash', 'Edit'])
   assert.ok(tools[0]!.rounds >= tools[1]!.rounds)
+  const sources = index!.facets('source')
+  assert.ok(sources.some((row) => row.value === 'claude'))
+  assert.ok(sources.some((row) => row.value === 'cursor'))
+  assert.ok(sources.some((row) => row.value === 'codex'))
   assert.equal(
     tools.reduce((sum, row) => sum + row.rounds, 0),
     40,
