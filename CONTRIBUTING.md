@@ -164,9 +164,11 @@ output in `dist/test/`, which is why `npm test` builds first.
   without your change.
 - `test/extract-cursor.test.ts` covers Cursor transcripts: one round per assistant row, tasks from
   `<user_query>`, synthetic tool ids, null usage, and subagent paths.
+- `test/extract-codex.test.ts` covers Codex rollouts: one round per model burst, tasks from
+  `user_message`, usage from `token_count`, `shell` argv, `apply_patch`, and subagent metadata.
 - `test/discover.test.ts` covers Cursor nested transcripts, Claude's subagent transcripts under the
-  session that spawned them, and merging Claude and Cursor checkouts of the same path into one
-  project.
+  session that spawned them, Codex's dated tree grouped by cwd, and merging checkouts of the same
+  path into one project.
 - `test/inspect.test.ts` covers the read side — session, task and tool aggregation, the work
   taxonomy's fractional split, the trace and its phase smoothing, round filters, and selector
   parsing — against rounds built in the test file itself, so it needs no fixture.
@@ -178,7 +180,7 @@ output in `dist/test/`, which is why `npm test` builds first.
 - `test/models.test.ts` covers the context-window table and the share derived from it, including
   that a model with no published window reports no share rather than a full one.
 - `test/cli.test.ts` runs the built CLI end to end in a temporary store, so it touches neither
-  `~/.claude`, `~/.cursor` nor `~/.probez`.
+  `~/.claude`, `~/.cursor`, `~/.codex` nor `~/.probez`.
 - `test/reading.test.ts` covers the reader and what it is asked: that the prompt carries the calls
   and neither the person's prompt nor any tool's output, that the command is argv and never reaches
   a shell, that a reader which fails, hangs, vanishes or answers in prose comes back as a message,

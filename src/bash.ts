@@ -417,19 +417,50 @@ export function parseCommands(command: unknown): Command[] {
   return found
 }
 
-/** The command string a `Bash` call carries, wherever the tool input happens to be shaped oddly. */
+/** The command string a shell call carries, wherever the tool input happens to be shaped oddly. */
 export function commandOf(input: unknown): unknown {
   if (input === null || typeof input !== 'object') return null
-  return (input as Record<string, unknown>).command
+  const record = input as Record<string, unknown>
+  const command = record.command ?? record.cmd
+  if (Array.isArray(command) && command.every((part) => typeof part === 'string')) {
+    return joinShell(command)
+  }
+  return command
 }
 
 /**
- * Tools whose calls decompose one level further, and how. `Bash` is the only member: every other
- * tool's name already is its operation. The registry is what keeps adding another. An MCP server's
- * tools or a `Task`'s subagent type get an entry rather than a second design.
+ * `bash -lc 'npm test'` is one command, `npm test`, not three tokens. Codex records argv that
+ * way; joining blindly would make `bash` the thing that ran.
+ */
+function joinShell(parts: string[]): string {
+  if (
+    parts.length >= 3 &&
+    (parts[0] === 'bash' || parts[0] === 'zsh' || parts[0] === 'sh') &&
+    (parts[1] === '-lc' || parts[1] === '-c')
+  ) {
+    return parts.slice(2).join(' ')
+  }
+  return parts.join(' ')
+}
+
+/** Tools whose argument is a shell command rather than a file or a query. */
+const SHELL_TOOLS = new Set(['Bash', 'shell', 'shell_command', 'exec_command', 'local_shell'])
+
+export function isShellTool(name: string): boolean {
+  return SHELL_TOOLS.has(name)
+}
+
+/**
+ * Tools whose calls decompose one level further, and how. Shell tools are the members: every
+ * other tool's name already is its operation. The registry is what keeps adding another. An MCP
+ * server's tools or a `Task`'s subagent type get an entry rather than a second design.
  */
 const SUB_LABELS: Record<string, (input: unknown) => Command[]> = {
   Bash: (input) => parseCommands(commandOf(input)),
+  shell: (input) => parseCommands(commandOf(input)),
+  shell_command: (input) => parseCommands(commandOf(input)),
+  exec_command: (input) => parseCommands(commandOf(input)),
+  local_shell: (input) => parseCommands(commandOf(input)),
 }
 
 /** What one call decomposes into, or an empty list when the tool has no finer level. */

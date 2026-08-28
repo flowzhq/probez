@@ -42,9 +42,13 @@ These are choices, not omissions:
   allowed: a model chooses which rounds to look at, and never what any of them came to. Every
   number stays derived from the rounds. See CONTRIBUTING § rule 2, which names both callers and
   says what would have to be argued to add a third.
-- **Claude Code and Cursor.** Other agents follow once the round schema has proven itself against
-  these two formats. Cursor transcripts do not record token usage or model names; those rounds are
-  collected and classified, and cost stays blank rather than invented.
+- **Claude Code, Cursor, and Codex CLI.** Other agents follow once the round schema has proven
+  itself against these formats. Cursor transcripts do not record token usage or model names; those
+  rounds are collected and classified, and cost stays blank rather than invented. Codex rollouts
+  often do record usage; cost still stays blank until a rate exists for that model. A repository
+  used by more than one agent is one project; `source` on the round is the filterable dimension,
+  not a second store. `--source` on collect selects which directories to scan; on read commands it
+  filters stored rounds and does not restrict discovery.
 
 ## Users
 
@@ -81,7 +85,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 ```json
 {
   "session": "0b2cc149-f9c1-448f-bbac-a4c58b85e5bf",
-  "round": 12, "task": 5, "commit": "9e4e660c1d7a4c2f0b8e5a3d61f27b90cc4e1a55", "agent": "main",
+  "round": 12, "task": 5, "commit": "9e4e660c1d7a4c2f0b8e5a3d61f27b90cc4e1a55", "agent": "main", "source": "claude-code",
   "id": "msg_011CdwVKHe1jaMmvqeWS3tZp",
   "ts": "2026-08-11T19:09:53.830Z", "ms": 8420, "gen_ms": 14903, "wait_ms": null,
   "first_input": "tool_result",
@@ -115,7 +119,8 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | Field | Why it exists |
 | --- | --- |
 | `session`, `task`, `round` | Group rounds into tasks and order them |
-| `agent` | Separate the main agent from subagent work |
+| `agent` | Separate the main agent from subagent work (`main` \| `sub`). Not which product produced the session |
+| `source` | Which product produced the session (`claude-code` \| `cursor` \| `codex` \| `unknown`). Stamped at collect from the session; missing or unrecognised is `unknown`, never assumed Claude. The query language's `source:claude` matches persisted `claude-code` |
 | `commit` | Which state of the tree a task was asked against, read from git's HEAD reflog at collect time |
 | `in_tokens`, `out_tokens`, `ms` | Weight each category, giving the percentages |
 | `in_uncached`, `in_cache_write`, `in_cache_read` | The three price differently, so the sum alone says little about cost |
@@ -132,14 +137,15 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | `tools[].stderr_chars`, `interrupted` | What actually happened, which the harness flag does not report |
 | `tools[].patch` | Lines an edit changed, for attributing work to the files it touched |
 
-**A session id is a path, and that is what says who ran it.** Both agents write a subagent's
+**A session id is a path, and that is what says who ran it.** Claude and Cursor write a subagent's
 transcript to a `subagents/` directory beside the session that spawned it, so a session is named for
 where its transcript sits relative to the project's transcript root: `504799b8` for a run someone
-opened, `504799b8/a8261ff4` for one it handed off. `agent` is read from that name rather than from a
-flag one agent sets and the other does not, which is what keeps a subagent the same thing across
-vendors. A subagent is a separate context with its own model and its own bill, so it is a session
-of its own and its rounds are never folded into the totals of the session that delegated it; what a
-session handed off is reported beside what it did, not inside it.
+opened, `504799b8/a8261ff4` for one it handed off. Codex names a subagent on `session_meta` instead
+(`thread_source`, `parent_thread_id`); those rollouts sit in the same dated tree as the rest, and
+`agent` is read from that metadata rather than from a path. A subagent is a separate context with
+its own model and its own bill, so it is a session of its own and its rounds are never folded into
+the totals of the session that delegated it; what a session handed off is reported beside what it
+did, not inside it.
 
 **Pricing is not in the round.** A round records tokens; what they cost depends on rates that change
 and that differ per contract, so they live in `~/.probez/pricing.json` and are applied at read time.
@@ -547,3 +553,13 @@ at and never what any of them came to, which is the whole of why this is allowed
 no-outbound-network rule and why a result read from a question is reproducible by someone with no
 reader configured. This is the second thing in probez that starts a program; CONTRIBUTING § rule 2
 names both callers and what would have to be argued to add a third.
+
+## Agent source as a dimension
+
+The project boundary is the checkout. Claude Code, Cursor and Codex sessions in the same repository
+are one project; `source` on the round is which product wrote the session. `--source` on collect
+selects which directories to scan. On read commands it filters stored rounds and is not passed
+through to discovery. `source:claude` matches persisted `claude-code`. A sniff that does not
+recognise the transcript, or an import with no field, is `unknown` — never assumed Claude. The
+view's Source control filters the page you are on and does not change what Sync collects.
+Typing `source:` in the query bar is still a search.

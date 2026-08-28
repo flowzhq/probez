@@ -14,6 +14,7 @@ import {
   facetsPayload,
   importExport,
   NotFound,
+  pageSourceOf,
   pricingPayload,
   projectPayload,
   projectsPayload,
@@ -78,6 +79,8 @@ export interface ServeOptions {
   claudeDir: string
   /** Where Cursor project folders live. Same as `claudeDir`: only `sync` reads it. */
   cursorDir: string
+  /** Where Codex CLI rollouts live. Same as `claudeDir`: only `sync` reads it. */
+  codexDir: string
   /** Port to listen on. 0 lets the OS choose, which is what the tests want. */
   port?: number
   /** Fail rather than move to another port. True when `--port` was typed. */
@@ -337,10 +340,10 @@ async function serveApi(
   // /api/compile                                              POST
   // /api/search?q=&project=&in=&limit=
   // /api/facets?key=&project=
-  // /api/projects
-  // /api/projects/<slug>
-  // /api/projects/<slug>/tools
-  // /api/projects/<slug>/trails, /api/projects/<slug>/questions
+  // /api/projects?source=
+  // /api/projects/<slug>?source=
+  // /api/projects/<slug>/tools?source=
+  // /api/projects/<slug>/trails?source=, /api/projects/<slug>/questions?source=
   // /api/projects/<slug>/readings
   // /api/projects/<slug>/prompt?session=&task=&at=
   // /api/projects/<slug>/explain                                POST
@@ -458,17 +461,18 @@ async function serveApi(
     sendJson(res, 404, { error: `no endpoint /api/${parts.join('/')}` })
     return
   }
+  const source = pageSourceOf(url.searchParams.get('source'))
   if (slug === undefined) {
-    sendJson(res, 200, await projectsPayload(dataDir))
+    sendJson(res, 200, await projectsPayload(dataDir, source))
     return
   }
   if (kind === undefined) {
-    sendJson(res, 200, await projectPayload(dataDir, slug))
+    sendJson(res, 200, await projectPayload(dataDir, slug, source))
     return
   }
   if (kind === 'sync' && id === undefined) {
     // Reachable only as POST; the method check upstream has already refused a GET here.
-    sendJson(res, 200, await syncProject(dataDir, options.claudeDir, options.cursorDir, slug))
+    sendJson(res, 200, await syncProject(dataDir, options.claudeDir, options.cursorDir, options.codexDir, slug))
     return
   }
   if (kind === 'rename' && id === undefined) {
@@ -506,15 +510,15 @@ async function serveApi(
     return
   }
   if (kind === 'tools' && id === undefined) {
-    sendJson(res, 200, await toolsPayload(dataDir, slug))
+    sendJson(res, 200, await toolsPayload(dataDir, slug, source))
     return
   }
   if (kind === 'questions' && id === undefined) {
-    sendJson(res, 200, await questionsPayload(dataDir, slug))
+    sendJson(res, 200, await questionsPayload(dataDir, slug, source))
     return
   }
   if (kind === 'trails' && id === undefined) {
-    sendJson(res, 200, await trailsPayload(dataDir, slug))
+    sendJson(res, 200, await trailsPayload(dataDir, slug, source))
     return
   }
   if (kind === 'readings' && id === undefined) {

@@ -7,9 +7,14 @@ import type { MouseEvent } from 'react'
  * A round is a query parameter rather than a path segment because it is a *selection* inside a
  * task, not a place: clicking through rounds in the inspector should not fill the back button with
  * one entry per round. Selecting replaces; navigating pushes.
+ *
+ * `source` on browse routes is a page filter, not a search: the layout stays, the rounds change.
+ * The search route keeps `source:` inside `q`.
  */
+export type SourceChoice = 'claude' | 'cursor' | 'codex'
+
 export type Route =
-  | { name: 'projects' }
+  | { name: 'projects'; source: SourceChoice | null }
   | { name: 'settings' }
   /**
    * A query, and what it is counted as.
@@ -32,8 +37,8 @@ export type Route =
        */
       from: string | null
     }
-  | { name: 'project'; slug: string }
-  | { name: 'session'; slug: string; session: string }
+  | { name: 'project'; slug: string; source: SourceChoice | null }
+  | { name: 'session'; slug: string; session: string; source: SourceChoice | null }
   | {
       name: 'task'
       slug: string
@@ -58,6 +63,11 @@ export type Route =
        * different and much less useful picture than a trace with rounds greyed out.
        */
       q: string | null
+      /**
+       * Page filter carried from the project, so crumbs and the Source control stay on that agent.
+       * Does not hide rounds in the trace — a session is one source.
+       */
+      source: SourceChoice | null
     }
   | { name: 'missing'; path: string }
 
@@ -86,9 +96,22 @@ function asEntity(value: string | null): Entity | null {
   return value !== null && (ENTITIES as string[]).includes(value) ? (value as Entity) : null
 }
 
+function asSource(value: string | null): SourceChoice | null {
+  return value === 'claude' || value === 'cursor' || value === 'codex' ? value : null
+}
+
+/** Carry a page-filter `source` on a path that may already have a query. */
+export function withSource(path: string, source?: string | null): string {
+  if (source === undefined || source === null || source === '') return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}source=${encodeURIComponent(source)}`
+}
+
 export function parse(pathname: string, search: string): Route {
   const parts = pathname.split('/').filter((part) => part !== '')
-  if (parts.length === 0) return { name: 'projects' }
+  if (parts.length === 0) {
+    return { name: 'projects', source: asSource(new URLSearchParams(search).get('source')) }
+  }
   if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
   if (parts.length === 1 && parts[0] === 'search') {
     const query = new URLSearchParams(search)
@@ -106,9 +129,10 @@ export function parse(pathname: string, search: string): Route {
   // A subagent's session id is a path, so it travels percent-encoded in a single segment.
   const session = encoded === undefined ? undefined : decodeSegment(encoded)
   if (p !== 'p' || slug === undefined) return { name: 'missing', path: pathname }
-  if (s === undefined) return { name: 'project', slug }
+  const source = asSource(new URLSearchParams(search).get('source'))
+  if (s === undefined) return { name: 'project', slug, source }
   if (s !== 's' || session === undefined) return { name: 'missing', path: pathname }
-  if (t === undefined) return { name: 'session', slug, session }
+  if (t === undefined) return { name: 'session', slug, session, source }
   if (t !== 't' || task === undefined) return { name: 'missing', path: pathname }
 
   const number = Number(task)
@@ -129,11 +153,12 @@ export function parse(pathname: string, search: string): Route {
     trail: trail === null || trail === '' ? null : trail,
     question: question === null || Number.isNaN(question) ? null : question,
     q: lit === null || lit === '' ? null : lit,
+    source,
   }
 }
 
 export const href = {
-  projects: () => '/',
+  projects: (source?: string | null) => withSource('/', source),
   settings: () => '/settings',
   search: (
     q: string,
@@ -145,8 +170,9 @@ export const href = {
     if (options.from !== undefined && options.from !== null) query.set('from', options.from)
     return `/search?${query.toString()}`
   },
-  project: (slug: string) => `/p/${slug}`,
-  session: (slug: string, session: string) => `/p/${slug}/s/${encodeURIComponent(session)}`,
+  project: (slug: string, source?: string | null) => withSource(`/p/${slug}`, source),
+  session: (slug: string, session: string, source?: string | null) =>
+    withSource(`/p/${slug}/s/${encodeURIComponent(session)}`, source),
   task: (
     slug: string,
     session: string,
@@ -155,6 +181,7 @@ export const href = {
     trail?: string | null,
     question?: number | null,
     q?: string | null,
+    source?: string | null,
   ) => {
     const query = new URLSearchParams()
     if (round !== undefined) query.set('r', String(round))
@@ -162,7 +189,10 @@ export const href = {
     if (question !== undefined && question !== null) query.set('question', String(question))
     if (q !== undefined && q !== null && q !== '') query.set('q', q)
     const search = query.toString()
-    return `/p/${slug}/s/${encodeURIComponent(session)}/t/${task}${search === '' ? '' : `?${search}`}`
+    return withSource(
+      `/p/${slug}/s/${encodeURIComponent(session)}/t/${task}${search === '' ? '' : `?${search}`}`,
+      source,
+    )
   },
 }
 

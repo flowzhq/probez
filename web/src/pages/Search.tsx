@@ -3,6 +3,7 @@ import type { SearchHit, SearchPayload } from '../api'
 import { styleOf } from '../categories'
 import { Chrome, Facts, Info, Loading, Problem } from '../components/Chrome'
 import { ENTITY_LABEL } from '../components/SearchBar'
+import { SourceTag } from '../components/SourceMarks'
 import { MixBar } from '../components/WorkBars'
 import { ago, clip, count, duration, money, percent, shortId, when } from '../format'
 import { go, href, linkProps } from '../router'
@@ -48,7 +49,7 @@ export function Search({
 
   return (
     <>
-      <Chrome crumbs={crumbs} search={{ slug, initial: q }} />
+      <Chrome crumbs={crumbs} search={{ slug, initial: q, entity, mode: 'search' }} />
       <main className="page">
         {q.trim() === '' ? (
           <Empty />
@@ -376,7 +377,15 @@ function Sessions({ hits, many }: { hits: SearchHit[]; many: boolean }): ReactEl
           return (
             <tr key={at} className={to === null ? undefined : 'row'} onClick={to === null ? undefined : () => go(to)}>
               <Project hit={hit} many={many} />
-              <td className="mono">{shortId(hit.session ?? '')}</td>
+              <td className="mono">
+                {shortId(hit.session ?? '')}
+                {hit.source !== undefined ? (
+                  <>
+                    {' '}
+                    <SourceTag source={hit.source} />
+                  </>
+                ) : null}
+              </td>
               <Matched hit={hit} />
               <td className="r">{hit.unpriced === hit.rounds ? '—' : money(hit.cost ?? 0)}</td>
               <td className="r muted">{ago(hit.last_ts ?? null)}</td>

@@ -18,6 +18,7 @@ import { COMMAND_KINDS } from './bash.js'
 import { CATEGORIES, classifyCall, isCategory, isTarget, TARGETS } from './classify.js'
 import {
   defaultClaudeDir,
+  defaultCodexDir,
   defaultCursorDir,
   discoverProjects,
   isEphemeral,
@@ -25,7 +26,8 @@ import {
   matchProjects,
   projectName,
 } from './discover.js'
-import { parentSession } from './agents/paths.js'
+import { aliasOfSource, isSourceFilter, parentSession, storeSourceAlias, wantsClaude, wantsCodex, wantsCursor } from './agents/paths.js'
+import type { SourceFilter } from './agents/paths.js'
 import { ago, clip, duration, pad, padStart, shortCommit, shorten, shortSession, span, tokens, wrap } from './format.js'
 import { contextShare } from './models.js'
 import {
@@ -145,6 +147,28 @@ const COMMANDS = new Set([
   'help',
 ])
 
+/**
+ * Commands that read stored rounds. `--source` on these filters the store and must not restrict
+ * which agent directories discovery walks. Collect and projects still use it as a scan filter.
+ */
+const STORE_SOURCE_COMMANDS = new Set([
+  'sessions',
+  'session',
+  'tasks',
+  'task',
+  'rounds',
+  'round',
+  'trails',
+  'trail',
+  'questions',
+  'question',
+  'explain',
+  'tools',
+  'analyze',
+  'find',
+  'view',
+])
+
 /** Commands that used to exist, and what to type instead. */
 const RETIRED: Record<string, string> = {
   status: '`status` is gone. `probez <target>` collects and prints the same summary',
@@ -158,6 +182,7 @@ const GLOBAL_FLAGS = new Set([
   'data-dir',
   'claude-dir',
   'cursor-dir',
+  'codex-dir',
   'source',
   'version',
   'help',
@@ -266,6 +291,7 @@ Search
                                query. See below
   --prompt                     With --ask: print what would be sent and run nothing
   --again                      With --ask: ask again rather than using the answer already held
+  --source claude|cursor|codex Same as a \`source:\` atom in the query. Does not collect.
 
   Bare words are free text, over the prompts, the prose, the commands and the paths. A
   \`key:value\` filters, \`-\` negates, one after another means and, \`OR\` is the other one,
@@ -318,12 +344,14 @@ Sessions
   probez sessions [project]    One row per session
   probez session <id>          One session: its tasks, and what each one asked
   --agent <main|sub>           Only sessions someone opened, or only ones handed to a subagent
+  --source claude|cursor|codex Filter already-collected sessions by which agent produced them
   --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT} for the list,
                                all of them for one session; 0 for all)
 
   COST is what the session came to at the rates under Settings in \`probez view\`, worked out per
   round from its own model's prices and summed. A session with rounds whose model has no rate is
   marked \`+\`, since the figure is real but short; one where none of them has a rate shows \`—\`.
+  SOURCE is which product wrote the session (claude, cursor, codex), not main vs subagent.
 
   A subagent's run is a session of its own, named for the one that handed it the work:
   \`504799b8/a8261ff4\`. It is listed and priced separately, because it is a separate context
@@ -334,6 +362,7 @@ Tasks
   probez tasks [project]       One row per task, across every session
   probez task <id>             One task: what it asked, and every round it took
   --session <id>               Only tasks from this session
+  --source claude|cursor|codex Only tasks whose rounds this agent produced
   --limit <n>                  As above
 
   FROM is the commit the checkout was on when the task was asked: where the work started, not
@@ -356,6 +385,7 @@ Rounds
                                ${CATEGORIES.slice(4).map((c) => c.id).join(' · ')}
   --target <name>              Only rounds that worked on this: ${TARGETS.join(' · ')}
   --agent <main|sub>           Only main-agent or only subagent rounds
+  --source claude|cursor|codex Only rounds this agent produced
   --errors                     Only rounds where a tool failed
   --limit <n>                  How many rounds to list (default ${DEFAULT_LIMIT}, 0 for all)
 
@@ -370,6 +400,7 @@ Trails
   --outcome <name>             Only trails that ended this way: ${OUTCOMES.join(' · ')}
   --session <id>               Only this session
   --task <n>                   Only this task number
+  --source claude|cursor|codex Only trails whose rounds this agent produced
   --limit <n>                  How many trails to list (default ${DEFAULT_LIMIT}, 0 for all)
 
   An agent that does not know a repository finds its way around it: it lists the tree, opens
@@ -399,6 +430,7 @@ ${ASKS.map((kind) => `                               ${pad(kind, 10)}${ASK_MEANI
   --min-calls <n>              Only questions that took at least this many calls
   --session <id>               Only this session
   --task <n>                   Only this task number
+  --source claude|cursor|codex Only questions whose rounds this agent produced
   --limit <n>                  How many questions to list (default ${DEFAULT_LIMIT}, 0 for all)
 
   A trail is a walk that went somewhere. A question is one thing the agent needed to know, and
@@ -424,6 +456,7 @@ ${ASKS.map((kind) => `                               ${pad(kind, 10)}${ASK_MEANI
 Tools
   probez tools [project]       Every tool called, and what Bash actually ran
   --kinds                      Group Bash by kind of work instead of by command
+  --source claude|cursor|codex Only calls this agent produced
   --limit <n>                  How many commands to list under each tool
                                (default ${DEFAULT_SUB_LIMIT}, 0 for all)
 
@@ -436,6 +469,7 @@ Analysis
                                that inputs alone cannot show. See \`probez trails\`
   --session <id>               Only this session
   --task <n>                   Only this task number
+  --source claude|cursor|codex Only rounds this agent produced
   --limit <n>                  How many sub-rows to list under each category
 
   Shares are of what the work cost, at the rates under Settings in \`probez view\`. ROUNDS still
@@ -448,9 +482,13 @@ The view
                                then a session, then a task as a timeline of its rounds
   --port <n>                   Which port to listen on (default ${DEFAULT_PORT})
   --no-open                    Print the URL instead of opening a browser
+  --source claude|cursor|codex Open the project page filtered to that agent.
+                               Sync still collects every agent.
 
   There is a query bar in the header, on every page: \`/\` or ⌘K focuses it, it completes fields
   and their values from what the store holds, and it takes the same language \`probez find\` does.
+  The Source control next to it filters the page you are on — same layout, that agent's sessions.
+  Typing \`source:\` in the query bar is still a search. Sync still collects every agent.
   Opening a round from a result lights the rounds that matched inside its trace, with the rest of
   the task still drawn around them.
 
@@ -507,10 +545,16 @@ Collection
                                session outside it is not recorded as read, so a later
                                collect with no window reads it then. Ignored on a rebuild,
                                which writes a new store from what it reads
-  --source claude|cursor|both  Which agents to read (default both)
+  --source claude|cursor|codex|all  Which agent directories to scan (default all;
+                               \`both\` still means all). This is collection, not a
+                               store filter. On sessions, analyze, find, view and
+                               the other read commands the same flag filters rounds
+                               already collected; see Options below.
 
   Claude Code sessions live under ~/.claude/projects. Cursor transcripts live under
-  ~/.cursor/projects/<slug>/agent-transcripts. A repository used by both is one project.
+  ~/.cursor/projects/<slug>/agent-transcripts. Codex CLI rollouts live under
+  ~/.codex/sessions (or \$CODEX_HOME/sessions). A repository used by more than one
+  agent is one project.
 
   A store collected by an older probez is rebuilt on the next collect, from the session copies
   it already keeps. Nothing leaves the machine and nothing is lost, but it is not instant.
@@ -525,7 +569,16 @@ Options (these work on every command)
                                (default ~/.claude/projects)
   --cursor-dir <dir>           Where to read Cursor projects from
                                (default ~/.cursor/projects)
-  --source claude|cursor|both  Which agents to collect (default both)
+  --codex-dir <dir>            Where to read Codex CLI rollouts from
+                               (default ~/.codex/sessions, or \$CODEX_HOME/sessions)
+  --source claude|cursor|codex|all
+                               On collect and projects: which agent directories to
+                               scan (default all; \`both\` still means all).
+                               On read commands (sessions, tasks, rounds, analyze,
+                               tools, find, trails, questions, view): filter stored
+                               rounds. Does not collect, and does not restrict
+                               discovery. \`source:claude\` is the same filter in
+                               the query language; it matches persisted claude-code.
   --version                    Print the version
   -h, --help                   Print this help
 
@@ -911,7 +964,7 @@ function printSessions(all: ReturnType<typeof sessionRows>, limit: number, work:
   // need a column saying so on every row.
   const kinds = rows.some((row) => row.agent === 'sub')
   console.log(
-    `  ${pad('SESSION', idWidth)}${kinds ? pad('AGENT', 6) : ''}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('OUT', 7)}  ${padStart('COST', 9)}  ${pad('WORK', 11)}LAST`,
+    `  ${pad('SESSION', idWidth)}${kinds ? pad('AGENT', 6) : ''}${pad('SOURCE', 9)}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('OUT', 7)}  ${padStart('COST', 9)}  ${pad('WORK', 11)}LAST`,
   )
   for (const row of rows) {
     const calls = `${row.tool_calls}${row.errors > 0 ? ` ✗${row.errors}` : ''}`
@@ -922,7 +975,7 @@ function printSessions(all: ReturnType<typeof sessionRows>, limit: number, work:
     const cost =
       row.unpriced === row.rounds ? '—' : `${money(row.cost)}${row.unpriced > 0 ? '+' : ''}`
     console.log(
-      `  ${pad(shortSession(row.session), idWidth)}${kinds ? pad(row.agent, 6) : ''}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}  ${padStart(cost, 9)}  ${pad(work.session(row.session), 11)}${last}`,
+      `  ${pad(shortSession(row.session), idWidth)}${kinds ? pad(row.agent, 6) : ''}${pad(aliasOfSource(row.source), 9)}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}  ${padStart(cost, 9)}  ${pad(work.session(row.session), 11)}${last}`,
     )
   }
   console.log('')
@@ -1796,6 +1849,7 @@ async function runFind(
     prompt: boolean
     again: boolean
     json: boolean
+    source?: SourceFilter
   },
 ): Promise<void> {
   if (text === undefined || text.trim() === '') {
@@ -1819,8 +1873,10 @@ async function runFind(
   // one that survives being copied out of a shell and into a URL.
   const written = options.entity === undefined ? '' : ` in:${options.entity}`
   const sorted = options.sort === undefined ? '' : ` sort:${options.sort}`
+  const sourced = storeSourceAlias(options.source ?? 'all')
+  const sourceAtom = sourced === null ? '' : ` source:${sourced}`
   // A sentence is not a query, so it is not parsed as one; `--ask` replaces this below.
-  let query = options.ask ? parse('') : parse(`${text}${written}${sorted}`)
+  let query = options.ask ? parse('') : parse(`${text}${written}${sorted}${sourceAtom}`)
 
   if (options.plan) {
     // What was read, and nothing run. The counterpart of `explain --prompt`: a way to find out what
@@ -1874,7 +1930,7 @@ async function runFind(
       if (error instanceof AskingError || error instanceof ReaderError) fail(error.message)
       throw error
     }
-    query = parse(`${queryOf(read)}${written}${sorted}`)
+    query = parse(`${queryOf(read)}${written}${sorted}${sourceAtom}`)
   }
 
   const pricing = await readPricing(dataDir)
@@ -2087,8 +2143,25 @@ function printPlan(plan: ClearPlan, width: number): void {
 async function runClear(
   dataDir: string,
   target: string | undefined,
-  options: { all: boolean; before: string | undefined; yes: boolean; json: boolean },
+  options: {
+    all: boolean
+    before: string | undefined
+    yes: boolean
+    json: boolean
+    /** Typed, not defaulted: `undefined` means nobody asked for it. */
+    source: string | undefined
+  },
 ): Promise<void> {
+  // `--source` narrows what every read command shows, so on a destructive one it reads as "clear
+  // only this agent's sessions" — and quietly meaning something else is the one failure mode a
+  // command with no undo must not have. Refused rather than ignored until it narrows something.
+  if (options.source !== undefined) {
+    fail(
+      '--source does not narrow what `clear` removes. Name a project, or use --before to clear ' +
+        'by age',
+    )
+  }
+
   const named = target !== undefined
   if (!options.all && options.before === undefined && !named) {
     fail(
@@ -2196,8 +2269,9 @@ async function runView(
   dataDir: string,
   claudeDir: string,
   cursorDir: string,
+  codexDir: string,
   target: string | undefined,
-  options: { port?: string; open: boolean; json: boolean },
+  options: { port?: string; open: boolean; json: boolean; source?: SourceFilter },
 ): Promise<void> {
   const port = options.port === undefined ? undefined : asCount(options.port, 'port')
   if (port !== undefined && port > 65535) fail(`--port takes a number under 65536, got ${port}`)
@@ -2230,10 +2304,16 @@ async function runView(
     dataDir,
     claudeDir,
     cursorDir,
+    codexDir,
     port,
     pinned: options.port !== undefined,
   })
-  const url = `http://127.0.0.1:${serving.port}/${at}?t=${serving.token}`
+  // `--source` here is a display filter on the page that opens. Sync still collects every agent.
+  const alias = options.source === undefined ? null : storeSourceAlias(options.source)
+  const params = new URLSearchParams({ t: serving.token })
+  const path = at
+  if (alias !== null) params.set('source', alias)
+  const url = `http://127.0.0.1:${serving.port}/${path}?${params.toString()}`
 
   if (options.json) {
     console.log(JSON.stringify({ url, port: serving.port, token: serving.token }, null, 2))
@@ -2273,6 +2353,7 @@ async function main(): Promise<void> {
         'data-dir': { type: 'string' },
         'claude-dir': { type: 'string' },
         'cursor-dir': { type: 'string' },
+        'codex-dir': { type: 'string' },
         source: { type: 'string' },
         json: { type: 'boolean', default: false },
         all: { type: 'boolean', default: false },
@@ -2385,15 +2466,11 @@ async function main(): Promise<void> {
 
   const claudeDir = values['claude-dir'] ? resolve(values['claude-dir']) : defaultClaudeDir()
   const cursorDir = values['cursor-dir'] ? resolve(values['cursor-dir']) : defaultCursorDir()
-  if (
-    values.source !== undefined &&
-    values.source !== 'claude' &&
-    values.source !== 'cursor' &&
-    values.source !== 'both'
-  ) {
-    fail(`--source takes claude, cursor or both, got "${values.source}"`)
+  const codexDir = values['codex-dir'] ? resolve(values['codex-dir']) : defaultCodexDir()
+  if (values.source !== undefined && !isSourceFilter(values.source)) {
+    fail(`--source takes claude, cursor, codex or all, got "${values.source}"`)
   }
-  const source = (values.source ?? 'both') as 'claude' | 'cursor' | 'both'
+  const source: SourceFilter = values.source === undefined ? 'both' : (values.source as SourceFilter)
 
   // Import reads a file and writes the store, and never looks at the agent's directory at all.
   if (command === 'import') {
@@ -2416,6 +2493,7 @@ async function main(): Promise<void> {
       before: values.before,
       yes: values.yes === true,
       json: values.json === true,
+      source: values.source,
     })
     return
   }
@@ -2433,6 +2511,7 @@ async function main(): Promise<void> {
       prompt: values.prompt === true,
       again: values.again === true,
       json: values.json === true,
+      source,
     })
     return
   }
@@ -2441,25 +2520,31 @@ async function main(): Promise<void> {
   // been collected stays browsable whether or not the sessions it came from still do; the agent's
   // directory is consulted only when you press Sync, and only then can it be missing.
   if (command === 'view') {
-    await runView(dataDir, claudeDir, cursorDir, target, {
+    await runView(dataDir, claudeDir, cursorDir, codexDir, target, {
       port: values.port,
       open: values['no-open'] !== true,
       json: values.json,
+      source,
     })
     return
   }
 
-  const projects = await discoverProjects({ claudeDir, cursorDir, source })
+  const discoverySource: SourceFilter = STORE_SOURCE_COMMANDS.has(command) ? 'all' : source
+  const projects = await discoverProjects({ claudeDir, cursorDir, codexDir, source: discoverySource })
 
   // An empty agent directory is only a dead end if the store is empty too. Someone who was sent an
   // export and has never run an agent has nothing to discover and a project to read all the same.
   if (projects.length === 0 && (await listStored(dataDir)).length === 0) {
+    const parts: string[] = []
+    if (wantsClaude(discoverySource)) parts.push(shorten(claudeDir))
+    if (wantsCursor(discoverySource)) parts.push(shorten(cursorDir))
+    if (wantsCodex(discoverySource)) parts.push(shorten(codexDir))
     const where =
-      source === 'cursor'
-        ? shorten(cursorDir)
-        : source === 'claude'
-          ? shorten(claudeDir)
-          : `${shorten(claudeDir)} or ${shorten(cursorDir)}`
+      parts.length === 0
+        ? shorten(claudeDir)
+        : parts.length === 1
+          ? parts[0]!
+          : `${parts.slice(0, -1).join(', ')} or ${parts[parts.length - 1]!}`
     console.error(`probez: no agent sessions found in ${where}`)
     process.exit(1)
   }
@@ -2631,11 +2716,14 @@ async function main(): Promise<void> {
     }
 
     const output: unknown[] = []
+    const storeAlias = storeSourceAlias(source)
     for (const project of matched) {
-      const rounds = await readRounds(project, dataDir)
+      const collected = await readRounds(project, dataDir)
+      const rounds =
+        storeAlias === null ? collected : filterRounds(collected, { source: storeAlias })
       // An empty store still has a shape in --json: an empty list of whatever was asked for, so a
       // script sees the same fields either way. Only the printed form needs to say what to do.
-      if (rounds.length === 0 && !values.json) {
+      if (collected.length === 0 && !values.json) {
         nothingCollected(project)
         continue
       }

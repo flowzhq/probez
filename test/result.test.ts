@@ -118,3 +118,22 @@ test('no result, no file, and a torn line are all answered rather than thrown', 
   )
   assert.equal((await readToolResult(path, 'tu_1'))!.body, 'survived')
 })
+
+test('a Codex function_call_output is found by call_id', async () => {
+  const file = sessionOf([
+    {
+      timestamp: '2026-01-06T00:00:02.000Z',
+      type: 'response_item',
+      payload: { type: 'function_call', name: 'shell', arguments: '{}', call_id: 'call_read' },
+    },
+    {
+      timestamp: '2026-01-06T00:00:02.400Z',
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'call_read', output: 'loop.ts:1: fetch' },
+    },
+  ])
+  const found = await readToolResult(file, 'call_read')
+  assert.notEqual(found, null)
+  assert.equal(found!.body, 'loop.ts:1: fetch')
+  assert.equal(found!.is_error, false)
+})

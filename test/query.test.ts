@@ -9,6 +9,8 @@ import {
   parse,
   print,
   queryFromFilter,
+  setSourceQuery,
+  sourceQueryOf,
   subjectOf,
 } from '../src/query.js'
 import type { Query } from '../src/query.js'
@@ -264,6 +266,26 @@ test('a session prefix stops at the segment it started in', () => {
   assert.equal(hits(parse('session:504799'), own), true)
 })
 
+test('source:claude matches persisted claude-code, and never guesses from tokens', () => {
+  const claude = round({ session: 'a', round: 1, source: 'claude-code', in_tokens: null })
+  const cursor = round({ session: 'b', round: 1, source: 'cursor', in_tokens: null })
+  const unlabeled = round({ session: 'c', round: 1 })
+  assert.equal(hits(parse('source:claude'), claude), true)
+  assert.equal(hits(parse('source:claude-code'), claude), true)
+  assert.equal(hits(parse('source:claude'), cursor), false)
+  assert.equal(hits(parse('source:cursor'), cursor), true)
+  // A round with no field is unknown, not Claude, even if it also has no tokens.
+  assert.equal(hits(parse('source:claude'), unlabeled), false)
+  assert.equal(hits(parse('source:unknown'), unlabeled), true)
+})
+
+test('setSourceQuery replaces a source token rather than appending another', () => {
+  assert.equal(setSourceQuery('tool:Bash source:claude', 'cursor'), 'tool:Bash source:cursor')
+  assert.equal(setSourceQuery('tool:Bash', 'claude'), 'tool:Bash source:claude')
+  assert.equal(setSourceQuery('source:cursor', null), '')
+  assert.equal(sourceQueryOf('tool:Bash source:claude source:codex'), 'codex')
+})
+
 test('a model is matched anywhere in its name, since nobody types the whole of one', () => {
   const one = round({ session: 'a', round: 1, model: 'claude-opus-5' })
   assert.equal(hits(parse('model:opus'), one), true)
@@ -332,11 +354,15 @@ test('the flags compile to the tree a typed query produces', () => {
     round({ session: 'a', round: 1, tools: [tool('Bash', { input: { command: 'git status' } })] }),
     round({ session: 'a', round: 2, tools: [tool('Read')] }),
     round({ session: 'b', round: 3, agent: 'sub', tools: [tool('Bash', { is_error: true })] }),
+    round({ session: 'c', round: 4, source: 'cursor', tools: [tool('Read')] }),
+    round({ session: 'd', round: 5, source: 'claude-code', tools: [tool('Read')] }),
   ]
   const pairs: Array<[Parameters<typeof filterRounds>[1], string]> = [
     [{ tool: 'Read' }, 'tool:Read'],
     [{ command: 'git' }, 'command:git'],
     [{ agent: 'sub' }, 'agent:sub'],
+    [{ source: 'cursor' }, 'source:cursor'],
+    [{ source: 'claude' }, 'source:claude'],
     [{ errorsOnly: true }, 'is:error'],
     [{ session: 'a' }, 'session:a'],
     [{ kind: 'vcs' }, 'kind:vcs'],

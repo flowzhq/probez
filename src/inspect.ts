@@ -1,4 +1,4 @@
-import { isSubagent, sessionSegments } from './agents/paths.js'
+import { isSubagent, roundSourceOf, sessionSegments } from './agents/paths.js'
 import { subCommands } from './bash.js'
 import { CATEGORIES, categoryInfo, classifyCall } from './classify.js'
 import type { Category, Label } from './classify.js'
@@ -10,7 +10,7 @@ import { fieldsUsed, matches, queryFromFilter, subjectOf } from './query.js'
 import type { Query, RoundFilter } from './query.js'
 import { isFinding, trailsOf } from './trail.js'
 import type { Trail, TrailOptions } from './trail.js'
-import type { Round, ToolCall } from './types.js'
+import type { Round, RoundSource, ToolCall } from './types.js'
 
 /** Moved to `bash.ts`, beside the parser it calls; re-exported so callers need not care. */
 export { subCommands } from './bash.js'
@@ -49,6 +49,8 @@ export interface SessionRow extends Totals {
   session: string
   /** "sub" when a subagent ran this session, matching the field a round carries. */
   agent: 'main' | 'sub'
+  /** Which product produced this session. Taken from its rounds, never guessed from tokens. */
+  source: RoundSource
   rounds: number
   /**
    * Rounds whose model has no published rate, and which therefore added nothing to `cost`.
@@ -206,6 +208,7 @@ export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
         row: {
           session: round.session,
           agent: isSubagent(round.session) ? 'sub' : 'main',
+          source: roundSourceOf(round),
           rounds: 0,
           unpriced: 0,
           tasks: 0,

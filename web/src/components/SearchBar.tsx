@@ -17,8 +17,9 @@ import type { Entity } from '../router'
  * you still have to know the answer to use. That is what the index is for as much as speed: the
  * counts are a pass over a column, so offering them costs nothing.
  *
- * **It never punishes you for being half-way through.** Nothing is submitted until Enter, the
- * suggestions narrow as you type, and a key that is nearly a field is offered rather than refused.
+ * **It never punishes you for being half-way through.** Nothing is submitted until Enter or the
+ * magnifying glass, the suggestions narrow as you type, and a key that is nearly a field is
+ * offered rather than refused. A value already typed in full is not offered again underneath.
  * The parser behind it is written to the same rule — a value that has not arrived yet narrows
  * nothing instead of matching nothing — so a query in progress is always a query.
  *
@@ -47,7 +48,16 @@ function heldMode(): Mode {
   }
 }
 
-export function SearchBar({ slug, initial }: { slug?: string | null; initial?: string }): ReactElement {
+export function SearchBar({
+  slug,
+  initial,
+  source,
+}: {
+  slug?: string | null
+  initial?: string
+  /** Page filter from `?source=`. The clear control drops this along with a typed query. */
+  source?: string | null
+}): ReactElement {
   const [mode, setMode] = useState<Mode>(heldMode)
   const [text, setText] = useState(initial ?? '')
   const [open, setOpen] = useState(false)
@@ -133,7 +143,13 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
     }
   }, [key, slug])
 
-  const options = mode === 'ask' ? [] : suggest(facets, key, typed)
+  const options =
+    mode === 'ask'
+      ? []
+      : suggest(facets, key, typed).filter(
+          // Already typed in full: offering the same atom under the box is noise, not help.
+          (option) => option.insert.toLowerCase() !== word.text.toLowerCase(),
+        )
   useEffect(() => setAt(0), [word.text])
 
   const put = (value: string): void => {
@@ -154,6 +170,25 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
     setRefused(null)
     input.current?.blur()
     go(href.search(asked, { slug }))
+  }
+
+  /**
+   * Drop whatever is narrowing the view: the typed query, a search page, and a `?source=` pin.
+   *
+   * Typed-but-unsubmitted text is just emptied. Anything already in the URL goes back to the
+   * project (or the list) with no filter, which is what a clear next to the box is for.
+   */
+  const clear = (): void => {
+    setText('')
+    setOpen(false)
+    setRefused(null)
+    const onSearch = (initial ?? '') !== ''
+    const pinned = source !== undefined && source !== null && source !== ''
+    if (onSearch || pinned) {
+      go(slug ? href.project(slug) : href.projects())
+      return
+    }
+    input.current?.focus()
   }
 
   /**
@@ -229,10 +264,19 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
         <button
           type="button"
           aria-pressed={mode === 'query'}
-          title="Search with a query"
+          aria-label={mode === 'query' ? 'Search' : 'Search with a query'}
+          title={mode === 'query' ? 'Search' : 'Search with a query'}
           onClick={() => {
-            flip('query')
-            input.current?.focus()
+            if (mode !== 'query') {
+              flip('query')
+              input.current?.focus()
+              return
+            }
+            if (text.trim() === '') {
+              input.current?.focus()
+              return
+            }
+            submit(text)
           }}
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
@@ -275,7 +319,21 @@ export function SearchBar({ slug, initial }: { slug?: string | null; initial?: s
         onKeyDown={onKeyDown}
       />
       {asking ? <span className="find-busy">asking…</span> : null}
-      {text === '' && !asking ? <kbd className="find-key">/</kbd> : null}
+      {asking ? null : text !== '' || (initial ?? '') !== '' || (source ?? '') !== '' ? (
+        <button
+          type="button"
+          className="find-clear"
+          aria-label="Clear filter"
+          title="Clear filter"
+          onClick={clear}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
+            <path d="M2 2 L8 8 M8 2 L2 8" strokeLinecap="round" />
+          </svg>
+        </button>
+      ) : (
+        <kbd className="find-key">/</kbd>
+      )}
       {refused === null ? null : (
         <p className="find-refused" role="alert">
           {refused}

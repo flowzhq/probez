@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { applyClear, listStored, planClear } from '../src/store.js'
+import { applyClear, listStored, planClear, SCHEMA_VERSION } from '../src/store.js'
 import type { Round } from '../src/types.js'
 import { ROUND_DEFAULTS } from './support.js'
 
@@ -45,12 +45,18 @@ function store(rounds: Round[], extra: { orphan?: { id: string; mtimeMs: number 
     writeFileSync(join(dir, 'sessions', `${extra.orphan.id}.jsonl`), 'x'.repeat(500))
     sessions[extra.orphan.id] = { size: 500, mtimeMs: extra.orphan.mtimeMs }
   }
-  writeFileSync(join(dir, 'state.json'), JSON.stringify({ schema_version: 6, sessions }, null, 2))
+  writeFileSync(
+    join(dir, 'state.json'),
+    JSON.stringify({ schema_version: SCHEMA_VERSION, sessions }, null, 2),
+  )
   writeFileSync(
     join(dir, 'manifest.json'),
     JSON.stringify(
       {
-        schema_version: 6,
+        // The current one, read from the source rather than typed here: a manifest at an older
+        // version is not read back at all, and a fixture that pinned one would stop testing
+        // anything the moment the schema moved.
+        schema_version: SCHEMA_VERSION,
         project: 'demo',
         path: '/work/demo',
         key: 'demo',
@@ -67,7 +73,7 @@ function store(rounds: Round[], extra: { orphan?: { id: string; mtimeMs: number 
       2,
     ),
   )
-  writeFileSync(join(dir, 'analysis.jsonl'), '{"schema_version":6}\n')
+  writeFileSync(join(dir, 'analysis.jsonl'), `{"schema_version":${SCHEMA_VERSION}}\n`)
   writeFileSync(join(dir, 'search.jsonl'), '{"index_version":1}\n')
   return dataDir
 }

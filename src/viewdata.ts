@@ -7,6 +7,7 @@ import {
   analysisRecords,
   categoryTally,
   dominant,
+  filterRounds,
   findTask,
   labelRounds,
   sessionRows,
@@ -310,13 +311,96 @@ export class NotFound extends Error {}
 /** Something the caller sent is wrong, as opposed to something here being broken. */
 export class BadRequest extends Error {}
 
+/**
+ * The three agents the view's Source control can pin a page to.
+ *
+ * `unknown` is a query value (`source:unknown`), not a page filter: the dropdown does not offer it,
+ * and a `?source=` that names it is refused the same way any other misspelling is.
+ */
+export const PAGE_SOURCES = ['claude', 'cursor', 'codex'] as const
+export type PageSource = (typeof PAGE_SOURCES)[number]
+
+/**
+ * The agent a `?source=` query names, or null when the page is unfiltered.
+ *
+ * Absent, empty and `all` are the same: every agent. Anything else that is not one of the three
+ * dropdown values is a bad request rather than silently showing All.
+ */
+export function pageSourceOf(value: string | null | undefined): PageSource | null {
+  if (value === null || value === undefined || value === '') return null
+  const wanted = value.trim().toLowerCase()
+  if (wanted === 'all') return null
+  if (wanted === 'claude' || wanted === 'cursor' || wanted === 'codex') return wanted
+  throw new BadRequest(`source must be claude, cursor or codex, got "${value}"`)
+}
+
+/**
+ * Manifest totals rewritten over a slice of rounds, so a page filter changes the Facts the same
+ * way it changes the tables. `sources` stays the project's full set: the badges name what is
+ * there to filter, not what is currently shown.
+ */
+function shaped(stored: StoredProject, rounds: Round[]): StoredProject {
+  const sessions = new Set<string>()
+  const tasks = new Set<string>()
+  let in_tokens = 0
+  let in_uncached = 0
+  let in_cache_write = 0
+  let in_cache_write_5m = 0
+  let in_cache_write_1h = 0
+  let in_cache_read = 0
+  let out_tokens = 0
+  let first_ts: string | null = null
+  let last_ts: string | null = null
+  for (const round of rounds) {
+    sessions.add(round.session)
+    tasks.add(`${round.session}:${round.task}`)
+    in_tokens += round.in_tokens || 0
+    in_uncached += round.in_uncached || 0
+    in_cache_write += round.in_cache_write || 0
+    in_cache_write_5m += round.in_cache_write_5m || 0
+    in_cache_write_1h += round.in_cache_write_1h || 0
+    in_cache_read += round.in_cache_read || 0
+    out_tokens += round.out_tokens || 0
+    if (typeof round.ts === 'string') {
+      if (first_ts === null || round.ts < first_ts) first_ts = round.ts
+      if (last_ts === null || round.ts > last_ts) last_ts = round.ts
+    }
+  }
+  return {
+    ...stored,
+    sessions: sessions.size,
+    tasks: tasks.size,
+    rounds: rounds.length,
+    in_tokens,
+    in_uncached,
+    in_cache_write,
+    in_cache_write_5m,
+    in_cache_write_1h,
+    in_cache_read,
+    out_tokens,
+    first_ts,
+    last_ts,
+  }
+}
+
+function shownProject(
+  stored: StoredProject,
+  rounds: Round[],
+  source: PageSource | null,
+): StoredProject {
+  return shown(source === null ? stored : shaped(stored, rounds))
+}
+
 async function open(
   dataDir: string,
   slug: string,
+  source: PageSource | null = null,
 ): Promise<{ stored: StoredProject; rounds: Round[]; pricing: Pricing }> {
   const stored = await findStored(dataDir, slug)
   if (stored === null) throw new NotFound(`no project ${slug} in this store`)
-  return { stored, rounds: await roundsOf(stored.dir), pricing: await readPricing(dataDir) }
+  const collected = await roundsOf(stored.dir)
+  const rounds = source === null ? collected : filterRounds(collected, { source })
+  return { stored, rounds, pricing: await readPricing(dataDir) }
 }
 
 /**
@@ -384,22 +468,35 @@ function callsIn(rounds: Round[]): { tool_calls: number; errors: number } {
  * The mix costs a full labelling pass per project, which is why the rounds cache exists: the first
  * request pays for the whole machine, and every later one is a map lookup.
  */
-export async function projectsPayload(dataDir: string): Promise<ProjectsPayload> {
+export async function projectsPayload(
+  dataDir: string,
+  source: PageSource | null = null,
+): Promise<ProjectsPayload> {
   const stored = await listStored(dataDir)
   const pricing = await readPricing(dataDir)
   const projects = []
   for (const project of stored) {
-    const rounds = await roundsOf(project.dir)
+    const collected = await roundsOf(project.dir)
+    const rounds = source === null ? collected : filterRounds(collected, { source })
+    if (source !== null && rounds.length === 0) continue
     const analysis = categoryTally(rounds, pricing)
     const all: RoundLabel[] = []
     for (const labels of labelRounds(rounds).values()) all.push(...labels)
-    projects.push({ ...shown(project), work: dominant(all), mix: mixOf(analysis) })
+    projects.push({
+      ...shownProject(project, rounds, source),
+      work: dominant(all),
+      mix: mixOf(analysis),
+    })
   }
   return { data_dir: shorten(dataDir), projects }
 }
 
-export async function projectPayload(dataDir: string, slug: string): Promise<ProjectPayload> {
-  const { stored, rounds, pricing } = await open(dataDir, slug)
+export async function projectPayload(
+  dataDir: string,
+  slug: string,
+  source: PageSource | null = null,
+): Promise<ProjectPayload> {
+  const { stored, rounds, pricing } = await open(dataDir, slug, source)
   const work = workIndex(rounds)
   const bySession = new Map<string, Round[]>()
   for (const round of rounds) {
@@ -429,7 +526,7 @@ export async function projectPayload(dataDir: string, slug: string): Promise<Pro
   }
 
   return {
-    project: shown(stored),
+    project: shownProject(stored, rounds, source),
     cost,
     unpriced,
     ...callsIn(rounds),
@@ -633,8 +730,12 @@ export async function resultPayload(
  * it does find further forward, so a project page showing it would understate the thing the page
  * exists to show — and unlike the CLI, there is no flag here to have got wrong.
  */
-export async function trailsPayload(dataDir: string, slug: string): Promise<TrailsPayload> {
-  const { stored, rounds } = await open(dataDir, slug)
+export async function trailsPayload(
+  dataDir: string,
+  slug: string,
+  source: PageSource | null = null,
+): Promise<TrailsPayload> {
+  const { stored, rounds } = await open(dataDir, slug, source)
   const results = await readResultsIn(stored.dir, idsToRead(rounds))
   const root = stored.path ?? ''
   const share = trailShare(rounds, { results, root })
@@ -653,8 +754,12 @@ export async function trailsPayload(dataDir: string, slug: string): Promise<Trai
  * they were asked buries the thirteen-call question under three hundred single-call reads, and the
  * tail is the whole reason to look.
  */
-export async function questionsPayload(dataDir: string, slug: string): Promise<QuestionsPayload> {
-  const { stored, rounds } = await open(dataDir, slug)
+export async function questionsPayload(
+  dataDir: string,
+  slug: string,
+  source: PageSource | null = null,
+): Promise<QuestionsPayload> {
+  const { stored, rounds } = await open(dataDir, slug, source)
   const share = questionShare(rounds, { root: stored.path ?? '' })
   const questions = questionsOf(rounds, { root: stored.path ?? '' }).sort(
     (a, b) => b.calls.length - a.calls.length || a.session.localeCompare(b.session) || a.task - b.task,
@@ -1137,8 +1242,12 @@ export async function clearStore(dataDir: string, body: unknown): Promise<ClearP
   return { plan, done: await applyClear(dataDir, plan) }
 }
 
-export async function toolsPayload(dataDir: string, slug: string): Promise<ToolsPayload> {
-  const { stored, rounds, pricing } = await open(dataDir, slug)
+export async function toolsPayload(
+  dataDir: string,
+  slug: string,
+  source: PageSource | null = null,
+): Promise<ToolsPayload> {
+  const { stored, rounds } = await open(dataDir, slug, source)
   return { project: shown(stored), tools: toolTally(rounds, 'command'), kinds: toolTally(rounds, 'kind') }
 }
 
@@ -1184,6 +1293,7 @@ export async function syncProject(
   dataDir: string,
   claudeDir: string,
   cursorDir: string,
+  codexDir: string,
   slug: string,
 ): Promise<SyncResult> {
   const held = running.get(slug)
@@ -1193,7 +1303,9 @@ export async function syncProject(
     const stored = await findStored(dataDir, slug)
     if (stored === null) throw new NotFound(`no project ${slug} in this store`)
 
-    const projects = await discoverProjects({ claudeDir, cursorDir })
+    // Every agent, always. A page `?source=` or a `source:` query is a display filter and must
+    // not decide what this collects.
+    const projects = await discoverProjects({ claudeDir, cursorDir, codexDir })
     const source = projects.find((project) => slugFor(project) === slug) ?? null
 
     let collected: CollectResult | null = null

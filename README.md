@@ -38,11 +38,12 @@ cd ~/any/project-you-work-in
 probez collect
 ```
 
-It reads [Claude Code](https://claude.com/claude-code) sessions from `~/.claude/projects` and [Cursor](https://cursor.com) transcripts from `~/.cursor/projects`, then writes
+It reads [Claude Code](https://claude.com/claude-code) sessions from `~/.claude/projects`, [Cursor](https://cursor.com) transcripts from `~/.cursor/projects`, and [Codex](https://github.com/openai/codex) CLI rollouts from `~/.codex/sessions` (or `$CODEX_HOME/sessions`), then writes
 one record per LLM round under `~/.probez`. Run it again whenever you want to catch up — it reads
 only what changed. `probez collect --all` does every project on the machine at once. A repository
-used in both agents is one project. Cursor transcripts do not include token usage, so those rounds
-have no cost.
+used in more than one agent is one project. Cursor transcripts do not include token usage, so those rounds
+have no cost. Each round records which product produced it; filter with `--source` or `source:` rather than
+treating agents as separate projects.
 
 **3. Look at what came back**, in the browser or in the terminal:
 
@@ -78,7 +79,10 @@ re-runnable by anyone with no LLM configured.
 Clicking a round opens its task with the query still in the URL, so the trace arrives with the
 rounds that matched lit and the rest of the task drawn around them — the point being *where in the
 task* the matches fall, which a filtered list cannot show. The bar starts scoped to whatever page
-you were on; the chip beside the query is what widens it to the whole store.
+you were on; the chip beside the query is what widens it to the whole store. The Source control
+next to the bar filters the page you are on — same project, that agent's sessions. Typing
+`source:claude` (or cursor, or codex) in the query bar is still a search. Neither changes what Sync
+collects.
 
 **A project** — where its work went, what each kind of work cost, and the sessions it happened in.
 The list under it is three tabs: *sessions*, each row carrying the whole spread of its work as a bar
@@ -200,8 +204,11 @@ Lists take `--limit` and always say how many rows they withheld. `rounds` filter
 `analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
 `--outcome`. `questions` takes `--kind` and `--min-calls`, and `explain` takes `--again` and `--prompt`.
 `clear` takes `--all`, `--before` and `--yes`, and `collect` takes `--since`.
-`--source` selects Claude Code, Cursor, or
-both. `--json` works everywhere. `probez --help` lists every flag under the command it belongs to.
+`--source` on `collect` and `projects` selects which agent directories to scan (Claude Code, Cursor,
+Codex, or all). On the read commands — `sessions`, `tasks`, `rounds`, `analyze`, `tools`, `find`,
+`trails`, `questions`, `view` — the same flag filters already-collected rounds and does not restrict
+discovery. `source:claude` is that filter in a query, and matches persisted `claude-code`. `--json`
+works everywhere. `probez --help` lists every flag under the command it belongs to.
 
 ```console
 $ probez
@@ -225,15 +232,15 @@ $ probez sessions flowz-mcp
 
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
-  SESSION    ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  0bfa7fe3      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   16 days ago
-  0b2cc149       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   16 days ago
-  51cced08      134      4  131          24.3M   138.1K     $22.57  Impl 39%   16 days ago
-  be254122       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  16 days ago
-  bfd594d9       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  16 days ago
-  6ffef9bc       33      4  30            2.2M    17.5K      $2.19  Recon 52%  11 days ago
-  c21c7448      146      2  145 ✗5       22.8M   112.6K     $18.83  Recon 43%  11 days ago
-  069d8593       31      1  30 ✗3         1.9M    11.3K      $1.76  Recon 72%  10 days ago
+  SESSION    SOURCE   ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
+  0bfa7fe3   claude      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   17 days ago
+  0b2cc149   claude       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   17 days ago
+  51cced08   claude      134      4  131          24.3M   138.1K     $22.57  Impl 39%   16 days ago
+  be254122   claude       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  16 days ago
+  bfd594d9   claude       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  16 days ago
+  6ffef9bc   claude       33      4  30            2.2M    17.5K      $2.19  Recon 52%  12 days ago
+  c21c7448   claude      146      2  145 ✗5       22.8M   112.6K     $18.83  Recon 43%  11 days ago
+  069d8593   claude       31      1  30 ✗3         1.9M    11.3K      $1.76  Recon 72%  10 days ago
 
   8 sessions · 652 rounds · $82.58
   `probez session <id>` shows one of them, task by task.
@@ -248,13 +255,13 @@ $ probez sessions flowz-agentic-sdlc --limit 6
 
   flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
-  SESSION            AGENT ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  6b45d8d7/a5420a73  sub        7      1  17          182.4K     5.8K      $0.84  Recon 83%  27 days ago
-  6b45d8d7/ab80aaad  sub        8      1  16          197.9K     5.4K      $0.86  Recon 86%  27 days ago
-  6b45d8d7           main     122      8  234 ✗3       58.6M   139.5K     $76.13  Docs 29%   27 days ago
-  15ac167d/a29da1c6  sub        7      1  19          135.0K     9.1K      $0.94  Recon 93%  27 days ago
-  15ac167d/ad108a22  sub       18      1  38          515.5K    17.7K      $1.99  Plan 65%   27 days ago
-  15ac167d           main     150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   27 days ago
+  SESSION            AGENT SOURCE   ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
+  6b45d8d7/a5420a73  sub   claude        7      1  17          182.4K     5.8K      $0.84  Recon 83%  28 days ago
+  6b45d8d7/ab80aaad  sub   claude        8      1  16          197.9K     5.4K      $0.86  Recon 86%  28 days ago
+  6b45d8d7           main  claude      122      8  234 ✗3       58.6M   139.5K     $76.13  Docs 29%   28 days ago
+  15ac167d/a29da1c6  sub   claude        7      1  19          135.0K     9.1K      $0.94  Recon 93%  28 days ago
+  15ac167d/ad108a22  sub   claude       18      1  38          515.5K    17.7K      $1.99  Plan 65%   28 days ago
+  15ac167d           main  claude      150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   28 days ago
 
   showing 6 of 23 sessions · 3744 rounds · $941.53, --limit 0 for all
   `probez session <id>` shows one of them, task by task.
@@ -374,9 +381,9 @@ $ probez find 'category:reconstruction cost:>0.30 -tool:Read' flowz-mcp
 
   ROUND           WORK                COST     TIME         WHEN  SAYS
   c21c7448#2.64   Environment        $1.16    842ms  11 days ago  Bash 1
-  c21c7448#1.0    Reconstruction     $0.39     1.5s  11 days ago  implement next task
+  c21c7448#1.0    Reconstruction     $0.39     1.5s  12 days ago  implement next task
   bfd594d9#2.24   Reconstruction     $0.42    866ms  16 days ago  Bash 1
-  0b2cc149#1.0    Reconstruction     $0.36    794ms  16 days ago  did we implemented T001?
+  0b2cc149#1.0    Reconstruction     $0.36    794ms  17 days ago  did we implemented T001?
 
   4 rounds
 ```
@@ -444,9 +451,9 @@ $ probez find --ask 'which sessions had the most failing shell commands' flowz-m
 
     tool:Bash is:error in:sessions sort:errors
 
-  claude: "failing shell commands" is a round whose Bash call the harness reported as
-  failed, and "which sessions had the most" is a count per session ranked by that error
-  count
+  claude: "failing shell commands" reads as rounds whose Bash calls the harness reported
+  as failed, grouped by session and ranked by error count — the language can't tie the
+  error to the Bash call specifically, only to the round
 
   Run the query above to answer this again without asking.
 
@@ -456,11 +463,11 @@ $ probez find --ask 'which sessions had the most failing shell commands' flowz-m
 
   SESSION      ROUNDS     OF       COST     TIME  LAST
   069d8593          3     31      $0.18    29.4s  10 days ago
-  0bfa7fe3          1    127      $0.21    26.5s  16 days ago
+  0bfa7fe3          1    127      $0.21    26.5s  17 days ago
   bfd594d9          1     73      $0.11     4.6s  16 days ago
-  c21c7448          1    146      $0.10    23.8s  11 days ago
+  c21c7448          1    146      $0.10    23.8s  12 days ago
   be254122          1     21      $0.05     2.2s  16 days ago
-  0b2cc149          1     87      $0.04     8.2s  16 days ago
+  0b2cc149          1     87      $0.04     8.2s  17 days ago
 
   6 sessions
 ```
@@ -474,8 +481,9 @@ the command in `<data-dir>/reader.json`, the same one [`explain`](#explain-the-s
 uses, and `--prompt` prints exactly what would go while running nothing.
 
 `probez --help` lists every field a query can name, with what each one reads. The filters on
-`rounds` are the same language underneath — `--tool Bash` is `tool:Bash`, down to the comparison —
-so the two cannot come to disagree about what a tool name is or how a command is matched.
+`rounds` are the same language underneath — `--tool Bash` is `tool:Bash`, `--source cursor` is
+`source:cursor`, down to the comparison — so the two cannot come to disagree about what a tool name
+is or how a command is matched. `source:claude` matches persisted `claude-code`.
 
 **Free text matches a word, or the start of one.** `tok` finds `tokens`; `oken` does not, and
 `"npm test"` does not find `pnpm test`. That boundary is what makes the search fast enough to be
@@ -819,7 +827,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 ```json
 {
   "session": "0bfa7fe3-f9c1-448f-bbac-a4c58b85e5bf",
-  "round": 87, "task": 3, "commit": null, "agent": "main",
+  "round": 87, "task": 3, "commit": null, "agent": "main", "source": "claude-code",
   "id": "msg_011CdwSqg3tdZwYQ7vw69XdB",
   "ts": "2026-08-11T18:37:28.976Z", "ms": 12571, "gen_ms": 16407, "wait_ms": null,
   "first_input": "tool_result",

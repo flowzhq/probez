@@ -16,6 +16,7 @@ import { TrailPanel } from '../components/TrailPanel'
 import { WorkBars } from '../components/WorkBars'
 import { duration, money, percent, shortCommit, shortId, tokens, when } from '../format'
 import { go, href, linkProps } from '../router'
+import type { SourceChoice } from '../router'
 import { useData } from '../useData'
 import type { Question, Reading } from '../api'
 import type { ReactElement } from 'react'
@@ -39,6 +40,7 @@ export function Task({
   trail: trailRef,
   question: questionRef,
   q,
+  source = null,
 }: {
   slug: string
   session: string
@@ -50,6 +52,7 @@ export function Task({
   question: number | null
   /** A query whose matching rounds are lit in the trace, when one brought you here. */
   q: string | null
+  source?: SourceChoice | null
 }): ReactElement {
   const { data, error } = useData(() => api.task(slug, session, task), [slug, session, task])
 
@@ -106,12 +109,12 @@ export function Task({
     ) => {
       go(
         index === null
-          ? href.task(slug, session, task, undefined, ontoTrail, ontoQuestion)
-          : href.task(slug, session, task, index, ontoTrail, ontoQuestion),
+          ? href.task(slug, session, task, undefined, ontoTrail, ontoQuestion, q, source)
+          : href.task(slug, session, task, index, ontoTrail, ontoQuestion, q, source),
         true,
       )
     },
-    [slug, session, task, trailRef, questionRef],
+    [slug, session, task, trailRef, questionRef, q, source],
   )
 
   // Opening a task with no round named selects its first one, so the inspector is never an
@@ -135,11 +138,11 @@ export function Task({
     <>
       <Chrome
         crumbs={[
-          { label: data?.project.project ?? slug, to: href.project(slug) },
-          { label: `Session ${shortId(session)}`, to: href.session(slug, session) },
+          { label: data?.project.project ?? slug, to: href.project(slug, source) },
+          { label: `Session ${shortId(session)}`, to: href.session(slug, session, source) },
           { label: `Task ${task}` },
         ]}
-        search={{ slug }}
+        search={{ slug, source }}
       />
       <main className="page">
         {error !== null && data === null ? (
@@ -217,7 +220,7 @@ export function Task({
                     ? 'Finding the rounds that matched…'
                     : `${matched.size} of these rounds matched `}
                   <code className="mono">{q}</code>.{' '}
-                  <a {...linkProps(href.task(slug, session, task, round ?? undefined, trailRef, questionRef))}>
+                  <a {...linkProps(href.task(slug, session, task, round ?? undefined, trailRef, questionRef, q, source))}>
                     Show the whole task
                   </a>
                   {' · '}

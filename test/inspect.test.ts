@@ -62,6 +62,16 @@ test('sessions group, and tasks are counted within each session', () => {
   )
 })
 
+test('a session row carries its source, and missing is unknown not Claude', () => {
+  const unlabeled = sessionRows([round({ session: 'aaaa1111', round: 0 })], PRICING)
+  assert.equal(unlabeled[0]!.source, 'unknown')
+  const cursor = sessionRows(
+    [round({ session: 'bbbb2222', round: 0, source: 'cursor', in_tokens: null })],
+    PRICING,
+  )
+  assert.equal(cursor[0]!.source, 'cursor')
+})
+
 test('a session row counts its tool calls, errors and tokens', () => {
   const [first] = sessionRows(rounds, PRICING)
   assert.ok(first)
