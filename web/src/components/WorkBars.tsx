@@ -3,7 +3,7 @@ import { Bar } from '@visx/shape'
 import { useState } from 'react'
 
 import type { Analysis, CategoryRow } from '../api'
-import { fillOf, orderOf, styleOf } from '../categories'
+import { fillOf, orderOf, shadeOf, styleOf } from '../categories'
 import { duration, money, percent, tokens } from '../format'
 import { href, linkProps } from '../router'
 import { Tip, useTip } from './Tip'
@@ -44,8 +44,14 @@ export function WorkBars({
   const widest = Math.max(...rows.map((row) => row.rounds))
   const scale = scaleLinear({ domain: [0, widest], range: [0, 100] })
 
-  const bar = (row: CategoryRow, sub: boolean): ReactElement => {
-    const style = styleOf(sub ? null : row.name)
+  /**
+   * One bar. A sub-row is drawn in its parent's hue rather than a flat neutral, so that two ways of
+   * doing the same work — `locate` and `graph` are both Reconstruction — are told apart without
+   * either of them looking like a different kind of work.
+   */
+  const bar = (row: CategoryRow, parent: string | null): ReactElement => {
+    const sub = parent !== null
+    const style = styleOf(sub ? parent : row.name)
     return (
       <svg width="100%" height={sub ? 8 : 12} style={{ display: 'block' }} aria-hidden>
         <Bar
@@ -54,7 +60,8 @@ export function WorkBars({
           width={`${scale(row.rounds)}%`}
           height={sub ? 8 : 12}
           rx={3}
-          fill={sub ? 'var(--axis)' : fillOf(style)}
+          fill={fillOf(style)}
+          opacity={sub ? shadeOf(parent, row.name) : 1}
         />
       </svg>
     )
@@ -127,7 +134,7 @@ export function WorkBars({
                   />
                   {row.label}
                 </td>
-                <td>{bar(row, false)}</td>
+                <td>{bar(row, null)}</td>
                 <td className="r num">{percent(spent === 0 ? 0 : row.cost / spent, 1)}</td>
                 <td className="r num dim">{row.rounds.toFixed(1)}</td>
                 <td className="r num dim">{duration(row.ms)}</td>
@@ -143,7 +150,7 @@ export function WorkBars({
                       <td className="dim" style={{ paddingLeft: 28 }}>
                         {child.label}
                       </td>
-                      <td>{bar(child, true)}</td>
+                      <td>{bar(child, row.name)}</td>
                       <td className="r num dim">
                         {percent(spent === 0 ? 0 : child.cost / spent, 1)}
                       </td>

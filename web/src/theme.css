@@ -1692,3 +1692,15 @@ button:disabled {
   flex: 1;
   min-width: 240px;
 }
+
+/* The kind picker beside a command name. Same weight as a rate input two sections up. */
+section select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}

@@ -42,14 +42,15 @@ ways:
   DNS rebinding, where a page you visit resolves its own domain to `127.0.0.1` and talks to the
   server from inside your browser. The token alone would not stop that, because the browser would
   send it.
-- `GET` is the only method with an implementation, apart from nine: `POST .../sync`, which runs a
+- `GET` is the only method with an implementation, apart from ten: `POST .../sync`, which runs a
   collection on that project, `POST .../rename`, which sets the name a project is shown under,
   `POST .../delete`, which removes a project from the store, `POST /api/clear`, which removes many
   of them, `POST .../explain`, which runs the
   reader on one question, `POST /api/compile`, which runs the reader on one question you typed into
   the search box, `POST /api/pricing`, which saves the token rates, `POST /api/reader`,
-  which sets the command those two run, and `POST /api/import`, which takes in a project someone
-  sent you. Nothing else accepts anything but `GET`, and all nine refuse `GET` themselves — a URL
+  which sets the command those two run, `POST /api/commands`, which names a command this machine
+  knows, and `POST /api/import`, which takes in a project someone
+  sent you. Nothing else accepts anything but `GET`, and all ten refuse `GET` themselves — a URL
   that collects, renames, deletes, imports or starts a program when it is merely visited is a URL
   that can be put in an `<img>` tag on any page you happen to open. Pricing and the reader are
   readable with `GET` because reading a setting changes nothing. **Searching is a `GET`** — it
@@ -65,8 +66,9 @@ writes, because that is what it is for: it runs `collect` and then rebuilds the 
 same two things the commands of those names do. **Rename** rewrites one field of one manifest.
 **Delete** removes one project's directory. Saving under **Settings** writes the rate table and the
 reader, **Explain** writes what a reader answered about one question, **ask** writes what one
-answered about a question you typed, the **danger zone** removes projects, and **Import** writes a
-new project. Those nine are the only writes the view can make.
+answered about a question you typed, naming a command writes `commands.json`, the **danger zone**
+removes projects, and **Import** writes a new project. Those ten are the only writes the view can
+make.
 
 Those buttons change what the token protects. Before them, the token and the `Host` check stood
 between a page you did not open and *reading* your prompts; now they also stand between it and
@@ -211,6 +213,14 @@ Eight things bound both:
   rounds and goes when the project goes; what it answers about a sentence is kept in `asked.json`
   beside `pricing.json`, keyed by the store it was asked of, so the same question is not paid for
   twice. Neither is ever shown in place of probez's own measurement.
+
+**Naming a command classifies and nothing else.** `commands.json` sits beside `pricing.json` and
+maps a command name to a kind of work, for the names probez cannot ship — a repository's own script
+arrives as its last path segment, and `q` is too generic to put in a table everyone shares. Nothing
+in it can make probez run a program, read anything outside its own data directory, or send anything
+anywhere; the worst a wrong entry does is count some rounds in the wrong column, which the coverage
+line and `analyze --unclassified` already exist to make visible. Names are bounded in length and
+number and must match the same shape a shipped name does, so nothing in the file can reach a path.
 
 **One more file, and one more write.** `pricing.json` sits beside `projects/` and holds the token
 rates the analysis uses. It is written owner-only like everything else, contains no personal data,

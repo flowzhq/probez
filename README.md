@@ -142,6 +142,14 @@ Three things worth knowing:
 - **Rounds no tool saw are drawn hatched**, not dropped. They carry no label and sit outside every
   share, but a timeline missing 5% of its rounds would lie about how long the task took.
 
+**What this machine calls things.** probez classifies a command by name, and it only ever sees the
+last part of a path — a repository's own `bin/check` arrives as `check`. A name that generic cannot go in
+the table probez ships, where it would relabel an unrelated `check` on somebody else's machine, so
+Settings has a list of the commands *this store has run and nothing has classified*, most-used
+first, and a kind to give each. It is stored in `~/.probez/commands.json` and read over the shipped
+table, so it can correct a name as well as add one. Anything left unnamed stays unclassified, which
+is reported rather than guessed at.
+
 **Settings** holds the token rates every cost is computed from — one row per model, five rates
 each, at published list prices and yours to change. Stored in `~/.probez/pricing.json`, owner-only.
 Under them sits the **reader**: the command *explain* runs, which is the only program probez ever

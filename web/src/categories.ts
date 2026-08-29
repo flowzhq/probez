@@ -20,6 +20,15 @@ export interface CategoryStyle {
   id: string
   label: string
   short: string
+  /**
+   * The sub-kinds this category can emit, in the order `classify.ts` declares them.
+   *
+   * Carried so a sub-row can be shaded within its parent's hue. The order is what decides the
+   * shade, and it is the declared order rather than the size order for the same reason a category's
+   * colour is: a bar that repainted when the data moved would be a bar you could not compare
+   * against yesterday's.
+   */
+  subs: string[]
   /** The variable holding this category's colour in both themes. */
   fill: string
   /** Drawn as a hatch over a neutral rather than a flat fill. */
@@ -27,17 +36,18 @@ export interface CategoryStyle {
 }
 
 export const CATEGORIES: CategoryStyle[] = [
-  { id: 'planning', label: 'Planning', short: 'Plan', fill: 'var(--series-1)' },
-  { id: 'reconstruction', label: 'Reconstruction', short: 'Recon', fill: 'var(--series-2)' },
-  { id: 'implementation', label: 'Implementation', short: 'Impl', fill: 'var(--series-3)' },
-  { id: 'testing', label: 'Testing', short: 'Test', fill: 'var(--series-4)' },
-  { id: 'documentation', label: 'Documentation', short: 'Docs', fill: 'var(--series-5)' },
-  { id: 'delivery', label: 'Delivery', short: 'Deliv', fill: 'var(--series-6)' },
-  { id: 'environment', label: 'Environment', short: 'Env', fill: 'var(--series-7)' },
+  { id: 'planning', label: 'Planning', short: 'Plan', subs: ['read', 'clarify', 'decompose', 'design'], fill: 'var(--series-1)' },
+  { id: 'reconstruction', label: 'Reconstruction', short: 'Recon', subs: ['locate', 'graph', 'read', 'inspect', 'mcp'], fill: 'var(--series-2)' },
+  { id: 'implementation', label: 'Implementation', short: 'Impl', subs: ['create', 'modify'], fill: 'var(--series-3)' },
+  { id: 'testing', label: 'Testing', short: 'Test', subs: ['test', 'run'], fill: 'var(--series-4)' },
+  { id: 'documentation', label: 'Documentation', short: 'Docs', subs: ['system', 'change', 'agent'], fill: 'var(--series-5)' },
+  { id: 'delivery', label: 'Delivery', short: 'Deliv', subs: ['build', 'commit', 'publish', 'branch'], fill: 'var(--series-6)' },
+  { id: 'environment', label: 'Environment', short: 'Env', subs: ['deps', 'env', 'infra'], fill: 'var(--series-7)' },
   {
     id: 'unclassified',
     label: 'Unclassified',
     short: 'Uncl',
+    subs: ['incidental', 'unknown'],
     fill: 'var(--series-none)',
     hatched: true,
   },
@@ -50,6 +60,7 @@ export const PROSE: CategoryStyle = {
   id: 'prose',
   label: 'Prose only',
   short: 'Prose',
+  subs: [],
   fill: 'var(--series-none)',
   hatched: true,
 }
@@ -57,6 +68,26 @@ export const PROSE: CategoryStyle = {
 export function styleOf(id: string | null | undefined): CategoryStyle {
   if (id === null || id === undefined) return PROSE
   return BY_ID.get(id) ?? PROSE
+}
+
+/**
+ * How strongly a sub-row is drawn, from its place in its parent's declared list.
+ *
+ * A sub is the same kind of work as its parent by a different means — `graph` and `locate` are both
+ * Reconstruction — so it is drawn in the parent's hue rather than a hue of its own. Giving each sub
+ * a colour from the palette would break the one thing the palette guarantees: that a colour names a
+ * category. `read` appears under three of them, and would then mean three different things.
+ *
+ * From the declared index and never the row's size, for the reason at the top of this file.
+ */
+export function shadeOf(parent: string | null | undefined, sub: string): number {
+  const at = styleOf(parent).subs.indexOf(sub)
+  // A narrow ladder on purpose. The trace draws these at a pixel and a half, where the difference
+  // between two shades has to be visible and the *fainter* of them still has to be. A wider spread
+  // told the subs apart beautifully in the work table and turned most of the strip into a wash,
+  // because the common subs are the ones far down the list.
+  const steps = [1, 0.78, 0.62, 0.5, 0.42]
+  return at === -1 ? 0.62 : (steps[at] ?? 0.38)
 }
 
 export function orderOf(id: string): number {

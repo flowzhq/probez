@@ -151,7 +151,7 @@ export interface TraceRound {
   errors: number
   dominant: Dominant | null
   phase: Dominant | null
-  weights: Array<{ category: string; weight: number }>
+  weights: Array<{ category: string; sub: string; weight: number }>
 }
 
 export interface TraceRun {
@@ -777,6 +777,13 @@ export interface CompilePayload {
   ran: boolean
 }
 
+export interface CommandsPayload {
+  file: string
+  commands: Record<string, string>
+  kinds: string[]
+  unnamed: Array<{ name: string; calls: number }>
+}
+
 export interface ClearPlanProject {
   slug: string
   project: string
@@ -852,6 +859,9 @@ export const api = {
     ),
   pricing: () => get<PricingPayload>('/pricing'),
   reader: () => get<ReaderPayload>('/reader'),
+  commands: () => get<CommandsPayload>('/commands'),
+  saveCommands: (commands: Record<string, string>) =>
+    post<CommandsPayload>('/commands', { commands }),
   saveReader: (command: string[], timeoutMs: number) =>
     post<ReaderPayload>('/reader', { command, timeout_ms: timeoutMs }),
   savePricing: (models: Record<string, Rates>) => post<PricingPayload>('/pricing', { models }),

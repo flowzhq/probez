@@ -15,6 +15,16 @@ import type { ToolCall } from './types.js'
 /** The kind of work a command does. `other` means "not in the table", not "unclassifiable". */
 export type CommandKind =
   | 'search'
+  /**
+   * Asked a model of the code rather than the files: a code-graph or code-query tool.
+   *
+   * Kept apart from `search` because it is the same question answered a different way, and the
+   * whole point of measuring it is to see one displace the other. It is still finding out about a
+   * repository, so it stays inside Reconstruction rather than beside it — a tool that pulled its
+   * own usage out into a category of its own would make Reconstruction fall the moment anybody
+   * installed it, which is the one number it exists to move.
+   */
+  | 'graph'
   | 'read'
   | 'edit'
   | 'vcs'
@@ -31,6 +41,7 @@ export type CommandKind =
 
 export const COMMAND_KINDS: CommandKind[] = [
   'search',
+  'graph',
   'read',
   'edit',
   'vcs',
@@ -106,6 +117,19 @@ const FLAGS_WITH_VALUES = new Set([
 /** Commands that wrap another command and say nothing themselves. */
 const WRAPPERS = new Set(['sudo', 'env', 'time', 'nohup', 'exec', 'command', 'builtin', 'xargs'])
 
+/**
+ * Shells that are a wrapper when they are handed a script, and a command when they are not.
+ *
+ * `bash bin/check graph` and `./bin/check graph` are the same work, and before this they were counted
+ * as two different things: the first as `bash`, the second as `q`. Reading through to the script
+ * makes them agree, and makes them agree at the script — which is the part that says what was
+ * actually done.
+ *
+ * Not stripped when what follows is a flag. `bash -c "…"` runs a command inside a string this
+ * reader does not open, and `bash` on its own started a shell; both are still `bash`.
+ */
+const SHELLS = new Set(['bash', 'sh', 'zsh', 'ksh', 'dash'])
+
 /** Shell keywords that may lead a segment; what follows them is the command. */
 const LEADING_KEYWORDS = new Set(['do', 'then', 'else'])
 
@@ -119,6 +143,11 @@ const KIND_BY_NAME: Record<string, CommandKind> = {
   grep: 'search', egrep: 'search', fgrep: 'search', rg: 'search', ag: 'search', ack: 'search',
   find: 'search', fd: 'search', ls: 'search', tree: 'search', which: 'search', locate: 'search',
   'git grep': 'search',
+
+  // graph: code-query tools, which answer about the code rather than about the files. Only names
+  // general enough to mean the same thing on anyone's machine belong here; a repository's own
+  // script is named in `<data-dir>/commands.json` instead. See `readCommandKinds`.
+  codeql: 'graph', semgrep: 'graph', comby: 'graph', 'ast-grep': 'graph', 'sg': 'graph',
 
   // read
   cat: 'read', head: 'read', tail: 'read', wc: 'read', less: 'read', more: 'read', jq: 'read',
@@ -205,8 +234,28 @@ function editsInPlace(argv: string[]): boolean {
  * `label` is the token the work is really named after: the script for `npm run test:unit`, the
  * subcommand for `git commit`. That is not always the token the row is named after.
  */
+/**
+ * Names this machine knows and the shipped table does not. See `commands.ts`.
+ *
+ * The one piece of state in this file, and it is here because everything else in it is a pure
+ * reader called from a dozen places: threading a lookup table through `subCommands`, `classifyCall`,
+ * `actsOf`, `labelRounds` and the index builder would put a parameter nobody reads into five
+ * signatures to serve one. It is set once, from the data directory, before anything is classified.
+ */
+let local: Record<string, CommandKind> = {}
+
+/** Hand `bash.ts` the local table. Called at startup by the CLI and by the server, and by tests. */
+export function useCommandKinds(kinds: Record<string, CommandKind>): void {
+  local = kinds
+}
+
 function kindOf(name: string, head: string, label: string | null, argv: string[]): CommandKind {
   if (head === 'sed' || head === 'perl') return editsInPlace(argv) ? 'edit' : 'read'
+
+  // Over the shipped table rather than under it, so a name can correct one probez ships as well as
+  // add one it has never heard of — a `make` that only ever runs tests, say.
+  const named = local[name] ?? local[head]
+  if (named !== undefined) return named
 
   const exact = KIND_BY_NAME[name]
   if (exact !== undefined) return exact
@@ -245,6 +294,14 @@ function nameSegment(segment: string): Command | null {
     if (LEADING_KEYWORDS.has(first) || WRAPPERS.has(first) || /^[A-Za-z_]\w*=/.test(first)) {
       tokens = tokens.slice(1)
       continue
+    }
+    // A shell handed a script is a wrapper around it. `bash -c` and a bare shell are not.
+    if (SHELLS.has(first.includes('/') ? (first.split('/').pop() ?? '') : first)) {
+      const next = tokens[1]
+      if (next !== undefined && !isFlag(next) && !KEYWORDS.has(next)) {
+        tokens = tokens.slice(1)
+        continue
+      }
     }
     if (first === 'timeout') {
       // `timeout 30 node x.js`: the duration is not a command either.

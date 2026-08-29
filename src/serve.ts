@@ -5,9 +5,12 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { extname, join, resolve, sep } from 'node:path'
 
+import { useCommandKinds } from './bash.js'
+import { readCommandKinds } from './commands.js'
 import {
   BadRequest,
   clearStore,
+  commandsPayload,
   compileSentenceFor,
   explainOne,
   exportProject,
@@ -23,6 +26,7 @@ import {
   renameStored,
   resultPayload,
   roundPayload,
+  saveCommandKinds,
   savePricing,
   searchPayload,
   sessionPayload,
@@ -248,6 +252,11 @@ function isReaderPath(parts: string[]): boolean {
   return parts.length === 1 && parts[0] === 'reader'
 }
 
+/** What this machine calls its own commands: readable with GET, writable with POST, like pricing. */
+function isCommandsPath(parts: string[]): boolean {
+  return parts.length === 1 && parts[0] === 'commands'
+}
+
 /**
  * Clearing the store. POST only, because it destroys data.
  *
@@ -281,6 +290,7 @@ function isWritePath(parts: string[]): boolean {
     isProjectWritePath(parts) ||
     isPricingPath(parts) ||
     isReaderPath(parts) ||
+    isCommandsPath(parts) ||
     isCompilePath(parts) ||
     isClearPath(parts) ||
     isImportPath(parts)
@@ -336,6 +346,7 @@ async function serveApi(
   url: URL,
 ): Promise<void> {
   const method = req.method ?? 'GET'
+  // /api/commands                                             GET, POST
   // /api/clear                                                POST
   // /api/compile                                              POST
   // /api/search?q=&project=&in=&limit=
@@ -438,6 +449,22 @@ async function serveApi(
       return
     }
     sendJson(res, 200, await pricingPayload(dataDir))
+    return
+  }
+
+  if (group === 'commands' && slug === undefined) {
+    if (method === 'POST') {
+      let body: unknown
+      try {
+        body = await readJsonBody(req)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+        return
+      }
+      sendJson(res, 200, await saveCommandKinds(dataDir, body))
+      return
+    }
+    sendJson(res, 200, await commandsPayload(dataDir))
     return
   }
 
@@ -605,6 +632,9 @@ function listen(server: Server, port: number): Promise<number> {
 }
 
 export async function startServer(options: ServeOptions): Promise<Serving> {
+  // The same local command table the CLI reads, so a name classified one way on the command line is
+  // classified that way in the browser. Read once per run, like the rest of the store's settings.
+  useCommandKinds(await readCommandKinds(options.dataDir))
   const token = randomUUID()
   const wanted = options.port ?? DEFAULT_PORT
   let port = wanted

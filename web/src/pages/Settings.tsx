@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { PricedModel, PricingPayload, Rates, ReaderPayload } from '../api'
 import { Chrome, Loading, Problem } from '../components/Chrome'
+import { CommandKinds } from '../components/CommandKinds'
 import { DangerZone } from '../components/DangerZone'
 import { count } from '../format'
 import { href } from '../router'
@@ -251,6 +252,7 @@ export function Settings(): ReactElement {
             </section>
 
             <hr />
+            <CommandKinds />
             <Reader />
             <DangerZone onCleared={() => setRead((was) => was + 1)} />
           </>

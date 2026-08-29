@@ -467,6 +467,16 @@ test('the view’s copy of the taxonomy matches this one', () => {
     ids.slice(0, CATEGORIES.length),
     CATEGORIES.map((info) => info.id),
   )
+
+  // The sub lists too, and in order: the view shades a sub-row by its position in them, so a drift
+  // here is not a grey chart but a sub drawn at the wrong strength, or at the fallback.
+  const subs = [...table.matchAll(/subs: \[([^\]]*)\]/g)].map((match) =>
+    [...match[1]!.matchAll(/'([a-z]+)'/g)].map((one) => one[1]),
+  )
+  assert.deepEqual(
+    subs.slice(0, CATEGORIES.length),
+    CATEGORIES.map((info) => info.subs),
+  )
 })
 
 test('a subcommand is not a directory, however much it looks like one', () => {

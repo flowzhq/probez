@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [Unreleased]
+
+### Added
+
+- **A `graph` kind of command, counted as Reconstruction by another means.** `codeql`, `semgrep`,
+  `ast-grep` and `comby` ask a model of the code rather than reading the files, and now land on
+  `reconstruction · graph` instead of `other`. It is a *sub* of Reconstruction and deliberately not
+  a category beside it: a tool that pulled its own usage into a category of its own would make
+  Reconstruction fall the moment anybody installed it, which is the one number such a tool exists to
+  move. As a sub, the total stays comparable between a project that uses one and a project that
+  greps, and `analyze --split sub` shows which mechanism did the finding.
+
+- **`<data-dir>/commands.json`: command names this machine knows and probez does not.** probez
+  classifies a command by name and only ever sees the last part of a path, so a repository's own
+  `bin/check` arrives as `q` — far too generic to put in the shipped table, where it would relabel an
+  unrelated `q` on somebody else's machine. Names that mean something *here* go in a file beside
+  `pricing.json` instead, or in a new Settings section that lists what this store has actually run
+  and nothing has classified, most-used first. The local table is read *over* the shipped one, so it
+  can correct a name as well as add one — a `make` that only ever runs tests, say.
+
+  It classifies and nothing else: an entry cannot make probez run, read or send anything, and the
+  worst a wrong one does is count some rounds in the wrong column, which the coverage line and
+  `analyze --unclassified` already make visible.
+
+- **A sub is drawn as a shade of its category, in the work table and in the trace.** Sub-rows were
+  a flat neutral and the trace did not carry a sub at all, so a round that queried a code graph was
+  the same orange as a round that grepped — in the one view whose whole job is to say *where in a
+  task* something happened. Both now shade within the parent's hue, at a strength fixed by the
+  sub's position in the category's declared list rather than by its size in the current chart, for
+  the same reason a category's colour is. Hovering a round names the bands, since a shade is a
+  distinction the legend cannot make: the legend names the eight colours.
+
+  Giving each sub a hue of its own would have broken the one thing the palette guarantees, that a
+  colour names a category — `read` appears under three of them. The ladder is deliberately narrow:
+  the trace draws these at a pixel and a half, where the difference between two shades has to be
+  visible and the fainter of them still has to be.
+
+  `TraceRound.weights` now carries `sub` beside `category`, so a round doing two kinds of
+  reconstruction is two bands rather than one.
+
+### Fixed
+
+- **`bash script` and `./script` were counted as two different things.** A shell handed a script is
+  now read through to the script, so `bash bin/check graph` and `./bin/check graph` are the same
+  command. Before, the first was counted as `bash` and landed on `reconstruction · inspect` by
+  accident — `bash` is a `run` command, and a `run` command outside the project reads as a query —
+  while the second was unclassified. `bash -c "…"` and a bare shell are still `bash`: one runs a
+  command inside a string this reader does not open, and the other started a shell.
+
 ## [0.4.0] - 2026-08-28
 
 ### Added

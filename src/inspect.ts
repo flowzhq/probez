@@ -710,10 +710,15 @@ export interface TraceRound {
   /** What the rounds around it were, which is what a phase is. See `Trace.window`. */
   phase: Dominant | null
   /**
-   * This round's weight split across the categories it earned, summing to 1. Empty for a round of
-   * pure prose, which is a different thing from a round that did nothing.
+   * This round's weight split across the work it earned, summing to 1. Empty for a round of pure
+   * prose, which is a different thing from a round that did nothing.
+   *
+   * Split by category *and* sub, because the trace is where you look to find where in a task
+   * something happened, and a round that queried a code graph is otherwise the same orange as a
+   * round that grepped. The sub is what the strip shades by; the category is still what it is
+   * coloured by, so a bar never stops naming the kind of work.
    */
-  weights: Array<{ category: Category; weight: number }>
+  weights: Array<{ category: Category; sub: string; weight: number }>
 }
 
 /** A stretch of consecutive rounds that were mostly the same kind of work. */
@@ -774,9 +779,12 @@ export function traceOf(rounds: Round[], options: { window?: number } = {}): Tra
 
   const traced: TraceRound[] = ordered.map((round, at) => {
     const labels = perRound[at]!
-    const byCategory = new Map<Category, number>()
+    // Keyed by both, so two ways of doing the same kind of work stay two marks. `/` separates them
+    // because neither half can contain one: both are words from a declared list.
+    const byWork = new Map<string, number>()
     for (const label of labels) {
-      byCategory.set(label.category, (byCategory.get(label.category) ?? 0) + label.weight)
+      const key = `${label.category}/${label.sub}`
+      byWork.set(key, (byWork.get(key) ?? 0) + label.weight)
     }
     // The phase is the dominant of a neighbourhood, centred on this round and clipped at the ends.
     const half = Math.floor(window / 2)
@@ -803,9 +811,18 @@ export function traceOf(rounds: Round[], options: { window?: number } = {}): Tra
       dominant: dominant(labels),
       // A round of pure prose stays prose: a neighbourhood cannot lend it work no tool saw.
       phase: labels.length === 0 ? null : dominant(near),
-      weights: [...byCategory.entries()]
-        .map(([category, weight]) => ({ category, weight }))
-        .sort((a, b) => categoryOrder(a.category) - categoryOrder(b.category)),
+      weights: [...byWork.entries()]
+        .map(([key, weight]) => {
+          const [category, sub] = key.split('/')
+          return { category: category as Category, sub: sub ?? '', weight }
+        })
+        // Category order first, then the sub's declared order inside it — the same order the bars
+        // are shaded by, so a stack reads top to bottom the way the table does.
+        .sort(
+          (a, b) =>
+            categoryOrder(a.category) - categoryOrder(b.category) ||
+            subOrder(a.category, a.sub) - subOrder(b.category, b.sub),
+        ),
     }
   })
 
@@ -896,6 +913,13 @@ function noCategoryTokens(): Pick<
 
 /** One source of truth for the order: the table in `classify.ts` that also defines the sub-kinds. */
 const CATEGORY_ORDER = new Map(CATEGORIES.map((info, at) => [info.id as string, at]))
+
+/** A sub's place in its category's declared list, which is what fixes its shade. */
+function subOrder(category: Category, sub: string): number {
+  const subs = categoryInfo(category).subs
+  const at = subs.indexOf(sub)
+  return at === -1 ? subs.length : at
+}
 
 function categoryOrder(id: string): number {
   return CATEGORY_ORDER.get(id) ?? CATEGORIES.length

@@ -29,6 +29,7 @@ import type { ToolCall } from './types.js'
 export type Verb =
   | 'read'      // opened a file, fetched a URL
   | 'search'    // located without opening — Grep, Glob, rg, find, ls
+  | 'graph'     // asked a model of the code — codeql, semgrep, a repository's own query tool
   | 'query'     // ran something that reports state — git log/status/diff, python3 -c, a script
   | 'write'     // created or changed a file, including via a shell redirect
   | 'move'      // mv, cp, rm, sed -i — changed the tree rather than a file's contents
@@ -49,7 +50,7 @@ export type Verb =
   | 'unknown'   // harness tools nothing recognizes, unparsed commands
 
 export const VERBS: Verb[] = [
-  'read', 'search', 'query', 'write', 'move', 'test', 'run', 'build',
+  'read', 'search', 'graph', 'query', 'write', 'move', 'test', 'run', 'build',
   'commit', 'publish', 'branch', 'install', 'env', 'infra', 'ask', 'track', 'plan',
   'mcp', 'noop', 'unknown',
 ]
@@ -448,6 +449,8 @@ function verbOf(command: Command, writes: string | null, downstream: boolean): V
   switch (command.kind) {
     case 'search':
       return 'search'
+    case 'graph':
+      return 'graph'
     case 'read':
       // A reader with a redirect into a real file is a writer. `cat > notes.md` is not reading.
       return writes === null ? 'read' : 'write'

@@ -119,12 +119,13 @@ Three constraints are not up for negotiation in a PR, because they are the produ
    installed. CI greps for it, so a second reader anywhere else fails the build rather than
    arriving quietly, and a PR that wants one needs to argue for it the way this paragraph does.
 
-   The view's routes that write are all `POST`, and there are nine: `.../sync` writes what `collect`
+   The view's routes that write are all `POST`, and there are ten: `.../sync` writes what `collect`
    and `analyze` write, `.../rename` sets one field of a manifest, `.../delete` removes one project's
    directory, `/clear` removes many of them, `.../explain` keeps what a reader said about one
    question, `/compile` keeps what one
    said about one sentence, `/import` writes a project
-   that arrived as a file, `/pricing` stores rates, and `/reader` stores the command they run.
+   that arrived as a file, `/pricing` stores rates, `/reader` stores the command they run, and
+   `/commands` stores the command names this machine knows.
    Every
    other route is `GET`, and each of these refuses `GET` so that visiting a URL can never collect,
    rename, delete, or start a program. Export is not an exception to the rule: the server hands bytes to the browser
@@ -204,6 +205,11 @@ output in `dist/test/`, which is why `npm test` builds first.
   carries the schema and the question and nothing else, that it is bounded, and that a query with no
   *filter* in it is kept — `in:sessions sort:cost limit:1` is the right answer to "what is the most
   expensive session", and refusing it was a real bug.
+- `test/commands.test.ts` covers naming a command the shipped table has never heard of: that the
+  local table sits *over* the shipped one so it can correct as well as add, that a half-written file
+  is not a taxonomy and one bad row does not take the rest, and that a shell handed a script is
+  counted as the script — `bash bin/check graph` and `./bin/check graph` are the same work and were
+  two different things before.
 - `test/store.test.ts` covers how a transcript's product is recognised: from its format rather than
   from what it happens to be missing, so a Claude row with no token counts is not read as Cursor,
   and anything unrecognised is `unknown` rather than assumed.

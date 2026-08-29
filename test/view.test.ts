@@ -796,6 +796,7 @@ test('browsing a store leaves it exactly as it was', async () => {
       `/api/projects/${slug}/export?format=json`,
       `/api/projects/${slug}/readings`,
       '/api/reader',
+      '/api/commands',
       '/api/search?q=tool:Bash',
       `/api/search?q=is:error&project=${slug}`,
       '/api/facets',
@@ -1263,6 +1264,44 @@ test('a model probez has never seen can be priced, which is the only way to pric
     // And it survives a re-read, since the rate file is what the screen is built from.
     const again = await body(withToken(server, '/api/pricing'))
     assert.ok(again.models.some((one: { model: string }) => one.model === 'gpt-5'))
+  } finally {
+    await server.close()
+  }
+})
+
+test('naming a command is readable, writable, and changes what a round counts as', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const before = await body(withToken(server, '/api/commands'))
+    assert.deepEqual(before.commands, {}, 'probez ships no local command table')
+    assert.ok(before.kinds.includes('graph'))
+    // The screen offers what this store has actually run and nothing has classified.
+    assert.ok(Array.isArray(before.unnamed))
+
+    const saved = await body(
+      get(server, `/api/commands?t=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ commands: { q: 'graph' } }),
+      }),
+    )
+    assert.deepEqual(saved.commands, { q: 'graph' })
+
+    // A kind nothing emits is refused, and the refusal names what a kind can be.
+    const refused = await body(
+      get(server, `/api/commands?t=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ commands: { q: 'archaeology' } }),
+      }),
+    )
+    assert.match(refused.error, /graph/)
+    // And the good table is still there, since nothing was written.
+    assert.deepEqual((await body(withToken(server, '/api/commands'))).commands, { q: 'graph' })
+
+    // Reading a project still works with a local table in play.
+    assert.equal((await withToken(server, `/api/projects/${slug}`)).status, 200)
   } finally {
     await server.close()
   }

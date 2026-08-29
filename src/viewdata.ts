@@ -63,6 +63,9 @@ import { isEntity, parse, print } from './query.js'
 import { FIELDS } from './query.js'
 import { fromStore, search } from './search.js'
 import type { SearchResult, Source } from './search.js'
+import { COMMAND_KINDS, subCommands, useCommandKinds } from './bash.js'
+import type { CommandKind } from './bash.js'
+import { commandsFile, readCommandKinds, writeCommandKinds } from './commands.js'
 import { buildIndex, isFacet, SearchIndex } from './searchindex.js'
 import { applyClear, planClear } from './store.js'
 import type { ClearPlan, ClearResult } from './store.js'
@@ -1240,6 +1243,69 @@ export async function clearStore(dataDir: string, body: unknown): Promise<ClearP
   const plan = await planClear(dataDir, { before })
   if (given.apply !== true) return { plan, done: null }
   return { plan, done: await applyClear(dataDir, plan) }
+}
+
+/* Command names this machine knows and the shipped table does not. ---------------------------- */
+
+export interface CommandsPayload {
+  file: string
+  /** What this machine names, and what it names it. */
+  commands: Record<string, string>
+  /** Every kind a name can be given, so the screen offers them rather than asking you to know. */
+  kinds: string[]
+  /**
+   * Commands the store holds rounds for that nothing has classified, most used first.
+   *
+   * The point of the screen: naming a command you have never run is possible and rarely what
+   * anybody wants, and this is the list of the ones actually costing you an `unclassified` share.
+   */
+  unnamed: Array<{ name: string; calls: number }>
+}
+
+export async function commandsPayload(dataDir: string): Promise<CommandsPayload> {
+  const named = await readCommandKinds(dataDir)
+  const calls = new Map<string, number>()
+  for (const project of await listStored(dataDir)) {
+    for (const round of await roundsOf(project.dir)) {
+      for (const tool of round.tools ?? []) {
+        for (const command of subCommands(tool)) {
+          if (command.kind !== 'other') continue
+          calls.set(command.name, (calls.get(command.name) ?? 0) + 1)
+        }
+      }
+    }
+  }
+  return {
+    file: shorten(commandsFile(dataDir)),
+    commands: named,
+    kinds: [...COMMAND_KINDS],
+    unnamed: [...calls.entries()]
+      .map(([name, count]) => ({ name, calls: count }))
+      .sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name))
+      .slice(0, 30),
+  }
+}
+
+/**
+ * Replace what this machine names.
+ *
+ * A write, and so a POST, for the same reason the rates are: it changes what every share on every
+ * page is a share of. It cannot make probez run, read or send anything — the worst a wrong entry
+ * does is put some rounds in the wrong column, which the coverage line already makes visible.
+ */
+export async function saveCommandKinds(dataDir: string, body: unknown): Promise<CommandsPayload> {
+  const given = (body as { commands?: unknown } | null)?.commands
+  if (!given || typeof given !== 'object' || Array.isArray(given)) {
+    throw new BadRequest('expected { commands: { "<name>": "<kind>" } }')
+  }
+  try {
+    await writeCommandKinds(dataDir, given as Record<string, CommandKind>)
+  } catch (error) {
+    throw new BadRequest(error instanceof Error ? error.message : 'that is not a command table')
+  }
+  // Everything classified from here on reads the new table, including this process.
+  useCommandKinds(await readCommandKinds(dataDir))
+  return commandsPayload(dataDir)
 }
 
 export async function toolsPayload(

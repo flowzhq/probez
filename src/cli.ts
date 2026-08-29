@@ -14,7 +14,8 @@ import {
   vocabularyOf,
 } from './asking.js'
 import type { Asked } from './asking.js'
-import { COMMAND_KINDS } from './bash.js'
+import { COMMAND_KINDS, useCommandKinds } from './bash.js'
+import { commandsFile, readCommandKinds } from './commands.js'
 import { CATEGORIES, classifyCall, isCategory, isTarget, TARGETS } from './classify.js'
 import {
   defaultClaudeDir,
@@ -476,6 +477,14 @@ Analysis
   says how much of the work it was; the two disagree, which is the point. Rounds of pure prose
   carry no label and are reported instead of guessed at, and so is every tool with no entry in
   the table and every model with no rate. All three are on the coverage line.
+
+  A command is classified by name, and probez only ever sees the last part of a path — a
+  repository's own \`bin/check\` arrives as \`q\`. Names that generic cannot go in the table
+  probez ships, where they would relabel an unrelated \`q\` on somebody else's machine, so they
+  go in \`<data-dir>/commands.json\` instead — \`{"commands": {"check": "graph"}}\` — or under
+  Settings in \`probez view\`, which lists what this store has run and nothing has classified.
+  The local table is read over the shipped one, so it can correct a name as well as add one.
+  Anything left unnamed stays unclassified, which \`--unclassified\` reports rather than guesses at.
 
 The view
   probez view                  Open the local profiler in your browser: every project,
@@ -2463,6 +2472,10 @@ async function main(): Promise<void> {
   }
 
   const dataDir = values['data-dir'] ? resolve(values['data-dir']) : defaultDataDir()
+
+  // Names this machine knows, before anything is classified. Absent is the ordinary case: probez
+  // ships no such file, and without one every command is read by the shipped table alone.
+  useCommandKinds(await readCommandKinds(dataDir))
 
   const claudeDir = values['claude-dir'] ? resolve(values['claude-dir']) : defaultClaudeDir()
   const cursorDir = values['cursor-dir'] ? resolve(values['cursor-dir']) : defaultCursorDir()

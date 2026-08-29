@@ -6,7 +6,7 @@ import { Bar } from '@visx/shape'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import type { Question, Trace as TraceData, TraceRound, Trail } from '../api'
-import { fillOf, orderOf, styleOf } from '../categories'
+import { fillOf, orderOf, shadeOf, styleOf } from '../categories'
 import { duration, percent, tokens } from '../format'
 import { Tip, useTip } from './Tip'
 import type { ReactElement } from 'react'
@@ -532,6 +532,18 @@ function RoundCell({
             <span className="tip-key">tools </span>
             {round.tools === 0 ? 'none' : round.tools}
             {round.errors > 0 ? ` · ${round.errors} failed` : ''}
+            {/* What the bands in this cell are. A shade is only readable if something says which
+                sub it is, and the legend cannot: it names the eight colours, and a shade is a
+                distinction inside one of them. */}
+            {parts.length === 0 ? null : (
+              <>
+                <br />
+                <span className="tip-key">counted as </span>
+                {parts
+                  .map((part) => `${part.sub} ${percent(part.weight / (total || 1), 0)}`)
+                  .join(' · ')}
+              </>
+            )}
             {onOpenTask === undefined ? null : (
               <>
                 <br />
@@ -548,13 +560,17 @@ function RoundCell({
       ) : (
         parts.map((part) => (
           <Bar
-            key={part.category}
+            key={`${part.category}/${part.sub}`}
             x={x}
             y={part.y}
             width={w}
             height={Math.max(0.5, part.h)}
             rx={w > 5 ? 2 : 0}
             fill={fillOf(styleOf(part.category))}
+            // Shaded within the category's colour, the same way the work table shades a sub-row.
+            // The strip is where you look to find *where in a task* something happened, and a
+            // round that queried a code graph is otherwise the same orange as one that grepped.
+            opacity={shadeOf(part.category, part.sub)}
           />
         ))
       )}

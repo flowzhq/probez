@@ -93,7 +93,7 @@ export const CATEGORIES: CategoryInfo[] = [
     id: 'reconstruction',
     label: 'Reconstruction',
     short: 'Recon',
-    subs: ['locate', 'read', 'inspect', 'mcp'],
+    subs: ['locate', 'graph', 'read', 'inspect', 'mcp'],
   },
   { id: 'implementation', label: 'Implementation', short: 'Impl', subs: ['create', 'modify'] },
   { id: 'testing', label: 'Testing', short: 'Test', subs: ['test', 'run'] },
@@ -145,6 +145,7 @@ export interface Label {
 const LABELS: Record<Verb, [Category, string]> = {
   read: ['reconstruction', 'read'],
   search: ['reconstruction', 'locate'],
+  graph: ['reconstruction', 'graph'],
   query: ['reconstruction', 'inspect'],
   write: ['implementation', 'modify'],
   move: ['implementation', 'modify'],
