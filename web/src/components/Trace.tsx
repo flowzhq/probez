@@ -6,7 +6,7 @@ import { Bar } from '@visx/shape'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import type { Question, Trace as TraceData, TraceRound, Trail } from '../api'
-import { fillOf, orderOf, shadeOf, styleOf } from '../categories'
+import { fillOf, orderOf, shadeOf, styleOf, texturedSub } from '../categories'
 import { duration, percent, tokens } from '../format'
 import { Tip, useTip } from './Tip'
 import type { ReactElement } from 'react'
@@ -559,19 +559,34 @@ function RoundCell({
         <Bar x={x} y={0} width={w} height={height} rx={2} fill="url(#probez-hatch)" opacity={0.5} />
       ) : (
         parts.map((part) => (
-          <Bar
-            key={`${part.category}/${part.sub}`}
-            x={x}
-            y={part.y}
-            width={w}
-            height={Math.max(0.5, part.h)}
-            rx={w > 5 ? 2 : 0}
-            fill={fillOf(styleOf(part.category))}
-            // Shaded within the category's colour, the same way the work table shades a sub-row.
-            // The strip is where you look to find *where in a task* something happened, and a
-            // round that queried a code graph is otherwise the same orange as one that grepped.
-            opacity={shadeOf(part.category, part.sub)}
-          />
+          // Two marks where the sub is textured: the colour, and the diagonals over it. A pattern
+          // cannot be tinted, so the only way to keep a band its category's hue *and* give it a
+          // texture is to lay one over the other.
+          <Group key={`${part.category}/${part.sub}`}>
+            <Bar
+              x={x}
+              y={part.y}
+              width={w}
+              height={Math.max(0.5, part.h)}
+              rx={w > 5 ? 2 : 0}
+              fill={fillOf(styleOf(part.category))}
+              // Shaded within the category's colour, the same way the work table shades a sub-row.
+              // The strip is where you look to find *where in a task* something happened, and a
+              // round that queried a code graph is otherwise the same orange as one that grepped.
+              opacity={shadeOf(part.category, part.sub)}
+            />
+            {texturedSub(part.category, part.sub) ? (
+              <Bar
+                x={x}
+                y={part.y}
+                width={w}
+                height={Math.max(0.5, part.h)}
+                rx={w > 5 ? 2 : 0}
+                fill="url(#probez-lines)"
+                style={{ pointerEvents: 'none' }}
+              />
+            ) : null}
+          </Group>
         ))
       )}
       {round.errors > 0 ? (

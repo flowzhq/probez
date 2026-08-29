@@ -33,11 +33,30 @@ export interface CategoryStyle {
   fill: string
   /** Drawn as a hatch over a neutral rather than a flat fill. */
   hatched?: boolean
+  /**
+   * Subs drawn with diagonals laid over the category's colour, as well as its shade.
+   *
+   * A shade separates subs that differ by degree. `graph` does not: it answers the same question —
+   * where is this, what reaches it — off a model of the code rather than off the files, and telling
+   * the two apart at a glance is the entire reason for counting them separately. A texture survives
+   * being drawn at a pixel and a half, which is what the trace does to a difference in lightness.
+   *
+   * Kept a list rather than a flag on the sub so it stays a deliberate, short one. A chart where
+   * every other band is striped is a chart with no emphasis left to spend.
+   */
+  textured?: string[]
 }
 
 export const CATEGORIES: CategoryStyle[] = [
   { id: 'planning', label: 'Planning', short: 'Plan', subs: ['read', 'clarify', 'decompose', 'design'], fill: 'var(--series-1)' },
-  { id: 'reconstruction', label: 'Reconstruction', short: 'Recon', subs: ['locate', 'graph', 'read', 'inspect', 'mcp'], fill: 'var(--series-2)' },
+  {
+    id: 'reconstruction',
+    label: 'Reconstruction',
+    short: 'Recon',
+    subs: ['locate', 'graph', 'read', 'inspect', 'mcp'],
+    textured: ['graph'],
+    fill: 'var(--series-2)',
+  },
   { id: 'implementation', label: 'Implementation', short: 'Impl', subs: ['create', 'modify'], fill: 'var(--series-3)' },
   { id: 'testing', label: 'Testing', short: 'Test', subs: ['test', 'run'], fill: 'var(--series-4)' },
   { id: 'documentation', label: 'Documentation', short: 'Docs', subs: ['system', 'change', 'agent'], fill: 'var(--series-5)' },
@@ -88,6 +107,11 @@ export function shadeOf(parent: string | null | undefined, sub: string): number 
   // because the common subs are the ones far down the list.
   const steps = [1, 0.78, 0.62, 0.5, 0.42]
   return at === -1 ? 0.62 : (steps[at] ?? 0.38)
+}
+
+/** Whether a sub is drawn with diagonals over its category's colour. See `CategoryStyle.textured`. */
+export function texturedSub(parent: string | null | undefined, sub: string): boolean {
+  return (styleOf(parent).textured ?? []).includes(sub)
 }
 
 export function orderOf(id: string): number {

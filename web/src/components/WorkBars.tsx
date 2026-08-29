@@ -3,7 +3,7 @@ import { Bar } from '@visx/shape'
 import { useState } from 'react'
 
 import type { Analysis, CategoryRow } from '../api'
-import { fillOf, orderOf, shadeOf, styleOf } from '../categories'
+import { fillOf, orderOf, shadeOf, styleOf, texturedSub } from '../categories'
 import { duration, money, percent, tokens } from '../format'
 import { href, linkProps } from '../router'
 import { Tip, useTip } from './Tip'
@@ -52,17 +52,21 @@ export function WorkBars({
   const bar = (row: CategoryRow, parent: string | null): ReactElement => {
     const sub = parent !== null
     const style = styleOf(sub ? parent : row.name)
+    const height = sub ? 8 : 12
     return (
-      <svg width="100%" height={sub ? 8 : 12} style={{ display: 'block' }} aria-hidden>
+      <svg width="100%" height={height} style={{ display: 'block' }} aria-hidden>
         <Bar
           x={0}
           y={0}
           width={`${scale(row.rounds)}%`}
-          height={sub ? 8 : 12}
+          height={height}
           rx={3}
           fill={fillOf(style)}
           opacity={sub ? shadeOf(parent, row.name) : 1}
         />
+        {sub && texturedSub(parent, row.name) ? (
+          <Bar x={0} y={0} width={`${scale(row.rounds)}%`} height={height} rx={3} fill="url(#probez-lines)" />
+        ) : null}
       </svg>
     )
   }

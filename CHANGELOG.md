@@ -43,6 +43,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   the trace draws these at a pixel and a half, where the difference between two shades has to be
   visible and the fainter of them still has to be.
 
+  **`graph` also gets diagonals**, laid over its category's colour rather than replacing it, so it
+  is picked out of Reconstruction without being mistaken for the hatched neutral that means
+  unclassified. Shade alone separates subs that differ by degree; `graph` does not — it answers the
+  same question off a model of the code rather than off the files, and telling the two apart at a
+  glance is the whole reason for counting them apart. It reads clearly at ordinary trace density and
+  in the work table. At the narrowest cells a very long task produces it does not, and neither does
+  a shade: there is no room at two pixels for a distinction inside a colour, which is what the
+  trace's brush is for.
+
   `TraceRound.weights` now carries `sub` beside `category`, so a round doing two kinds of
   reconstruction is two bands rather than one.
 
