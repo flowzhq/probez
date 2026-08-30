@@ -224,16 +224,16 @@ works everywhere. `probez --help` lists every flag under the command it belongs 
 ```console
 $ probez
 
-probez  flowz-mcp  ~/Dev/workspace/flowz-mcp
+probez  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
-  sessions   8         rounds   652      tasks  24
-  tokens     94.4M in · 646.3K out
-             1.2K new · 2.0M cached · 92.4M reused  (98% reused)
-  span       Aug 11 – Aug 18, 2026
-  top tools  Bash 292 · Edit 125 · Write 91 · Read 84 · mcp__codebase-memory-mcp__query_graph 12
+  sessions   26        rounds   3864     tasks  156
+  tokens     1.3B in · 3.1M out
+             19.3K new · 18.2M cached · 1.3B reused  (99% reused)
+  span       Jul 31 – Aug 30, 2026
+  top tools  Bash 2634 · Edit 1121 · Write 330 · Read 294 · WebSearch 28
 
-  up to date, 9 sessions unchanged
-  → ~/.probez/projects/flowz-mcp-75ad21ac/rounds.jsonl
+  up to date, 28 sessions unchanged
+  → ~/.probez/projects/flowz-agentic-sdlc-bd3def99/rounds.jsonl
 ```
 
 Sessions of a project, newest last:
@@ -329,44 +329,49 @@ collected — no `git` runs — and it is blank for a project that is not a chec
 And what the work actually was:
 
 ```console
-$ probez analyze flowz-mcp
+$ probez analyze flowz-agentic-sdlc
 
-  flowz-mcp  ~/Dev/workspace/flowz-mcp
+  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
   WORK                  ROUNDS    SHARE      COST  ERRORS      TIME      OUT
-  Planning                49.2    10.4%     $8.38     1.0     58.4s    19.2K
-    read                  37.2     8.7%     $6.96     1.0     16.9s    10.0K
-    design                 8.0     1.1%     $0.86       ·       0ms      248
-    clarify                4.0     0.7%     $0.55       ·     41.5s     9.0K
-  Reconstruction           203    24.4%    $19.55    13.0      4.3m   107.2K
-    read                  96.5    10.6%     $8.46     2.0     46.4s    41.7K
-    locate                81.0     9.7%     $7.80     7.0      1.4m    38.8K
-    mcp                   16.0     1.9%     $1.53     4.0     21.0s    13.2K
-    inspect                9.1     2.2%     $1.75       ·      1.8m    13.5K
-  Implementation           188    33.8%    $27.10     8.0     30.6m   341.8K
-    modify                 132    20.9%    $16.77     8.0      8.2m   128.1K
-    create                56.0    12.9%    $10.33       ·     22.4m   213.7K
-  Testing                 34.3     5.2%     $4.14       ·     13.7s     7.2K
-    test                  34.3     5.2%     $4.14       ·     13.7s     7.2K
-  Documentation           73.0    13.2%    $10.56       ·     10.5m   105.5K
-    system                59.0    10.4%     $8.36       ·      6.3m    75.2K
-    agent                 14.0     2.7%     $2.20       ·      4.2m    30.3K
-  Delivery                41.9     5.3%     $4.23     1.0     36.8s    16.0K
-    build                 36.9     4.6%     $3.71     1.0     18.1s     9.1K
-    branch                 4.5     0.6%     $0.47       ·     16.0s     6.5K
-    commit                 0.5     0.0%     $0.04       ·      2.7s      385
-  Environment             12.4     3.4%     $2.73     3.0     18.8s     6.7K
-    env                   10.4     3.2%     $2.56     3.0     15.1s     5.3K
-    deps                   2.0     0.2%     $0.16       ·      3.7s     1.4K
-  Unclassified            31.5     4.4%     $3.53     1.0     45.4s    18.5K
-    unknown               30.5     4.3%     $3.44     1.0     44.2s    18.1K
-    incidental             1.0     0.1%     $0.09       ·      1.1s      378
+  Planning                 202     4.5%    $40.60     4.0      8.1m   116.0K
+    read                   170     3.4%    $30.54     2.0      3.2m    73.1K
+    clarify               14.0     0.4%     $3.30       ·      2.8m    25.1K
+    decompose             10.1     0.5%     $4.24       ·      2.1m    15.4K
+    design                 8.0     0.3%     $2.52     2.0       1ms     2.4K
+  Reconstruction          1367    38.8%   $350.10    83.0     40.6m   912.4K
+    locate                 593    16.1%   $145.44    38.0     11.8m   312.6K
+    read                   459    11.9%   $107.53    27.0      7.8m   233.7K
+    inspect                309    10.6%    $95.71    18.0     21.0m   364.3K
+    mcp                    6.0     0.1%     $1.14       ·      1.5s     1.3K
+    graph                  1.0     0.0%     $0.27       ·      2.4s      451
+  Implementation           865    22.5%   $202.46    12.0      1.2h   968.6K
+    modify                 741    17.3%   $155.57     8.0     40.5m   638.6K
+    create                 123     5.2%    $46.89     4.0     30.2m   330.0K
+  Testing                  318     7.8%    $70.59    12.0      5.5m   137.6K
+    run                    178     4.7%    $41.95     9.0      4.4m   104.3K
+    test                   140     3.2%    $28.65     3.0      1.0m    33.3K
+  Documentation            496    12.7%   $114.27     6.0     47.4m   561.6K
+    system                 437    10.5%    $94.89     6.0     41.2m   487.0K
+    agent                 55.9     2.1%    $18.94       ·      6.2m    70.5K
+    change                 3.0     0.0%     $0.44       ·      2.9s     4.1K
+  Delivery                 365     9.4%    $84.82    19.0      7.1m   170.4K
+    build                  182     4.3%    $38.91     4.0      2.2m    52.5K
+    commit                 116     3.2%    $28.51     4.0      2.4m    73.8K
+    branch                40.2     1.4%    $12.51    10.0      1.5m    29.9K
+    publish               26.9     0.5%     $4.89     1.0     56.0s    14.2K
+  Environment             53.3     2.7%    $24.44     8.0      1.3m    28.2K
+    env                   47.9     2.6%    $23.23     8.0      1.2m    26.4K
+    deps                   5.4     0.1%     $1.21       ·      6.0s     1.7K
+  Unclassified            50.2     1.6%    $14.19     2.0      2.5m    44.6K
+    unknown               41.2     1.4%    $12.42     2.0      2.2m    36.3K
+    incidental             9.0     0.2%     $1.77       ·     19.1s     8.3K
 
-  633 rounds did something a tool can see, out of 652. Shares are of the $80.21 they cost
-  19 rounds of prose only (2.9%) · 5.0% unclassified · 69.4% of work has a known target
-  Unclassified is mostly codebase-memory-mcp, ToolSearch, Skill. --unclassified lists it
-  28.6% of the finding was inside 10 trails, 4 of which ended in a change
-  The deepest went 3 hops from a listing: `probez trail 069d8593#1.1`
+  3717 rounds did something a tool can see, out of 3864. Shares are of the $901.48 they cost
+  147 rounds of prose only (3.8%) · 1.4% unclassified · 70.5% of work has a known target
+  Unclassified is mostly ToolSearch, pnpm, (unparsed). --unclassified lists it
+  23.1% of the finding was inside 75 trails, 40 of which ended in a change
+  The deepest went 5 hops from a listing: `probez trail b2922aea#2.66`
 ```
 
 **A share is a share of money.** `ROUNDS` says how much of the work a category was; `SHARE` says how
@@ -517,21 +522,21 @@ Reconstruction, and a tally of Reconstruction cannot tell five hops of one searc
 file opens. A **trail** is that search:
 
 ```console
-$ probez trails flowz-mcp --deep --limit 8
+$ probez trails flowz-agentic-sdlc --deep --limit 8
 
-  flowz-mcp  ~/Dev/workspace/flowz-mcp
+  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
-  TRAIL           STEPS  DEPTH  WIDE  PATHS  ROOT     OUTCOME        IN    TIME
-  069d8593#1.0        6      5     2      7  listing  abandoned  268.5K    6.0s
-  0b2cc149#1.0        5      4     2      3  listing  abandoned  188.4K    3.0s
-  0b2cc149#3.8        3      2     2      3  listing  test       131.8K    1.6s
-  0b2cc149#3.13       4      4     1      4  path     test       214.1K    2.8s
-  0bfa7fe3#1.0        3      2     2      2  listing  test       105.7K    1.0s
-  51cced08#2.1       16      6    11     23  listing  edit       999.1K    8.6s
-  51cced08#2.70       3      3     1      4  doc      test       567.2K   500ms
-  6ffef9bc#1.0        5      4     2      9  listing  abandoned  204.2K    6.7s
+  TRAIL                   STEPS  DEPTH  WIDE  PATHS  ROOT     OUTCOME        IN    TIME
+  15ac167d#1.0                8      4     5     10  path     edit       123.0K   15.9s
+  15ac167d#9.55              16      6     9     27  listing  edit         1.4M   12.1s
+  15ac167d/a29da1c6#1.0       8      2     7      7  listing  abandoned   48.2K    4.9s
+  15ac167d/a29da1c6#1.0       5      2     4      4  listing  abandoned   20.3K    3.5s
+  15ac167d/ad108a22#1.5       4      2     3      4  doc      abandoned   38.1K    1.4s
+  15ac167d/ad108a22#1.5       6      5     2     10  doc      abandoned  200.5K    8.1s
+  19ae887e#2.1               13      6     5     11  listing  edit         2.9M   20.1s
+  19ae887e#2.6                6      4     3      8  probe    edit         1.8M    9.7s
 
-  showing 8 of 14 trails, --limit 0 for all · 13 proven from result bodies
+  showing 8 of 94 trails, --limit 0 for all · 86 proven from result bodies
   `probez trail <id>` draws one of them, hop by hop.
 ```
 
@@ -541,19 +546,21 @@ started from and `OUTCOME` whether it ended in a change to somewhere it had been
 the round it starts at, and asking for any round it passed through finds it:
 
 ```console
-$ probez trail flowz-mcp 069d8593#1.0 --deep
+$ probez trail flowz-agentic-sdlc '15ac167d/a29da1c6#1.0' --deep
 
-  trail 069d8593#1.0 → 1.10 · 6 steps · proven
-  depth 5 · breadth 2 · 7 paths · 1 revisited
-  from a listing · abandoned · 268.5K in · 1.5K out · 6.0s
+  trail 15ac167d/a29da1c6#1.0 → 1.4 · 8 steps · proven
+  depth 2 · breadth 7 · 7 paths
+  from a listing · abandoned · 48.2K in · 1.6K out · 4.9s
 
   ROUND   REACHED FOLLOWED                CALL
-  1.0     dir     started here            ls -la && echo "--- git ---" && git log --oneli…
-  1.1     dir     listed docs               find docs -type f | sort && echo "--- interna…
-  1.2     dir     listed docs/tasks/RE…       cat docs/tasks/README.md && echo "===== ada…
-  1.4     file    listed cmd/livemodel…         cat internal/graph/codebasememory/engine.…
-  1.5     dir     listed .flowz                   which codebase-memory-mcp; echo "---env…
-  1.10    tree    listed docs/tasks/T-…       find ~/.cache/codebase-memory-mcp -maxdepth…
+  1.0     tree    started here            Glob packages/**/src/**/*.ts
+  1.1     file    listed packages/cont…     Read packages/contracts/src/run.ts
+  1.1     file    listed packages/agen…     Read packages/agents/src/provider.ts
+  1.1     file    listed packages/agen…     Read packages/agents/src/fake-provider.ts
+  1.3     file    listed packages/cont…     Read packages/contracts/src/mission.ts
+  1.3     file    listed packages/cont…     Read packages/contracts/src/agent.ts
+  1.4     file    listed packages/doma…     Read packages/domain/src/router.ts
+  1.4     file    listed packages/cont…     Read packages/contracts/src/common.ts
 
   `probez round 1.0` shows any one of these calls in full.
 ```
@@ -583,7 +590,7 @@ A **question** is the other reading of the same calls: one thing the agent neede
 call it spent finding out, whether or not any of them got anywhere.
 
 ```console
-$ probez questions flowz-mcp --min-calls 2 --limit 8
+$ probez questions flowz-mcp --min-calls 2 --limit 6
 
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
@@ -594,14 +601,11 @@ $ probez questions flowz-mcp --min-calls 2 --limit 8
   6ffef9bc#4.17       5      1      2      1  flow      395.1K    3.1s  facets type const confidence …
   069d8593#1.1        4      0      3      0  touches   179.6K    3.8s  —
   be254122#2.15       4      0      3      0  touches   230.2K   682ms  —
-  069d8593#1.15       3      1      0      0  refs      188.1K    6.3s  codebase memory
-  0b2cc149#1.2        3      1      0      0  refs      116.1K    2.2s  enqueuer status
 
-  showing 8 of 31 questions, --limit 0 for all
+  showing 6 of 31 questions, --limit 0 for all
   152 asked in all · 220 calls · 1.45 per question · 31 took more than one
   AGAIN is the same words asked of the same places over again.
   KIND, in these rows:
-    refs      where is this used
     outline   what does this file declare
     flow      where does this value travel across layers
     touches   every artifact naming a concept, code and prose alike

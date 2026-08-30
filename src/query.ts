@@ -136,7 +136,7 @@ export const FIELDS: Field[] = [
   { key: 'agent', kind: 'enum', group: 'where', says: 'who ran it: main agent or subagent, not which product', values: ['main', 'sub'] },
   { key: 'source', kind: 'enum', group: 'where', says: 'which product wrote it: claude, cursor, or codex (claude matches persisted claude-code)', values: [...SOURCE_ALIASES] },
   { key: 'skill', kind: 'text', group: 'where', match: 'loose', says: 'the skill the work was attributed to', example: 'code-review' },
-  { key: 'mcp', kind: 'text', group: 'where', match: 'loose', says: 'the MCP server the work was attributed to', example: 'gitnexus' },
+  { key: 'mcp', kind: 'text', group: 'where', match: 'loose', says: 'the MCP server the work was attributed to', example: 'github' },
 
   // What the round did.
   { key: 'tool', kind: 'text', group: 'what', match: 'exact', says: 'a tool the round called', example: 'Bash' },
