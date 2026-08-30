@@ -163,9 +163,12 @@ first press — both show what would go, the largest projects named rather than 
 panel you have to open. Your rates and your reader are settings rather than projects and stay.
 
 Each project carries a **⋮** menu, on its own page and on every row of the projects list. *Sync*
-runs `collect` then `analyze` for that project. *Rename* gives it a name of your own — a label, on
-this machine, that the CLI answers to as well; nothing moves, since a project's directory in the
-store is a hash of the path an agent ran in, and clearing the field puts the derived name back.
+runs `collect` then `analyze` for that project, and is on a session page too, beside the header — a
+run you are still reading is where you notice the agent has kept working, and there is no smaller
+sync to offer there, since an agent writes its log per project and `collect` reads all of it.
+*Rename* gives it a name of your own — a label, on this machine, that the CLI answers to as well;
+nothing moves, since a project's directory in the store is a hash of the path an agent ran in, and
+clearing the field puts the derived name back.
 *Export* hands its rounds or a full bundle to your browser to save. *Delete* removes the project and
 everything probez recorded for it, after asking; the agent's own session files are not touched, so a
 collected project comes back with `probez collect` minus whatever the agent has since pruned, and an

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { api } from '../api'
+import { SyncButton } from '../components/Actions'
 import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
 import type { Fact } from '../components/Chrome'
 import { SourceTag } from '../components/SourceMarks'
@@ -29,7 +30,12 @@ export function Session({
   session: string
   source?: SourceChoice | null
 }): ReactElement {
-  const { data, error } = useData(() => api.session(slug, session), [slug, session])
+  // Bumped after a sync, which is what makes this page re-read the store.
+  const [read, setRead] = useState(0)
+  const { data, error, loading } = useData(
+    () => api.session(slug, session),
+    [slug, session, read],
+  )
   const [selected, setSelected] = useState<number | null>(null)
 
   return (
@@ -47,12 +53,24 @@ export function Session({
         ) : data === null ? (
           <Loading what="the session" />
         ) : (
-          <>
+          <div className={loading ? 'rereading' : undefined}>
             <div className="head">
               <h1 className="mono">{shortId(session)}</h1>
               <span className="tag">{shortModel(data.session.model)}</span>
               <SourceTag source={data.session.source} />
               <span className="muted">{when(data.session.first_ts)}</span>
+              <span className="spacer" style={{ flex: 1 }} />
+              {/*
+                A session is the page you are on when you notice the agent has kept working since
+                you opened it — so the sync is here, and it is the project's, because that is the
+                only kind there is. What it collects lands in this session too when the run it is
+                reading is still going.
+              */}
+              <SyncButton
+                slug={slug}
+                project={data.project.project}
+                onSynced={() => setRead(read + 1)}
+              />
             </div>
             <Facts
               items={[
@@ -174,7 +192,7 @@ export function Session({
                 work <em>Read</em> is usually most of them, and it is billed at a tenth of the rest.
               </p>
             </section>
-          </>
+          </div>
         )}
       </main>
     </>

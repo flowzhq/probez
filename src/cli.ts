@@ -506,6 +506,8 @@ The view
   rounds to your browser to save wherever you point it; and Delete, which asks first and then
   removes the project and everything probez recorded for it. The agent's own session files are
   never touched, so a collected project comes back with \`probez collect\`. An import does not.
+  Sync is on a session page as well, beside the header — the same project-wide sync, reached from
+  the run you are reading, since \`collect\` reads a project's log entire and there is no smaller one.
 
   It listens on 127.0.0.1 and nothing leaves the machine. The URL carries a token that is new
   on every run, without which the data neither answers nor syncs. Reading writes nothing.

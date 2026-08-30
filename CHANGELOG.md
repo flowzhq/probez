@@ -55,6 +55,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   `TraceRound.weights` now carries `sub` beside `category`, so a round doing two kinds of
   reconstruction is two bands rather than one.
 
+- **Sync from inside a session.** The session page carries the same sync the project's `⋮` menu
+  does, so a run you are still reading can be caught up without going back a page and finding the
+  project again — which is exactly where you notice the agent has kept working since you opened it.
+
+  It syncs the *project*, because that is the only kind of sync there is: an agent writes its log
+  per project and `collect` reads all of it. The button says so, and the sentence it leaves behind
+  counts project-wide rounds — the same three outcomes in the same words the menu uses, since
+  "already up to date · 442 rounds" is the common answer and a tick cannot say it. The page re-reads
+  afterwards, so new rounds in this session appear without a reload.
+
 ### Fixed
 
 - **`bash script` and `./script` were counted as two different things.** A shell handed a script is

@@ -2,8 +2,145 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 
 import { api, exportProject } from '../api'
-import type { ExportFormat } from '../api'
+import type { ExportFormat, SyncResult } from '../api'
 import { count, tokens } from '../format'
+
+/** One glyph, drawn the same way as the theme icons so the header reads as one set. */
+function Icon({
+  children,
+  spinning = false,
+}: {
+  children: ReactElement | ReactElement[]
+  spinning?: boolean
+}): ReactElement {
+  return (
+    <svg
+      className={spinning ? 'spin' : undefined}
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {children}
+    </svg>
+  )
+}
+
+/**
+ * The circular arrows a sync draws.
+ *
+ * It doubles as the menu's "working" mark, because every verb behind the `⋮` is something the
+ * store is doing and one turning glyph says that for all of them.
+ */
+function SyncGlyph({ spinning }: { spinning: boolean }): ReactElement {
+  return (
+    <Icon spinning={spinning}>
+      <path d="M14 8a6 6 0 0 1-10.2 4.2M2 8a6 6 0 0 1 10.2-4.2" />
+      <path d="M12.2 1.2v2.6h-2.6M3.8 14.8v-2.6h2.6" />
+    </Icon>
+  )
+}
+
+/**
+ * What a sync did, in words.
+ *
+ * Both controls that can start one report through this, so the menu on a project page and the
+ * button on a session page say the same outcome in the same sentence. Three outcomes and not one
+ * tick: "already up to date" and "+12 rounds" are different answers, and the first is the common
+ * one.
+ */
+export function syncSaid(result: SyncResult): string {
+  if (!result.source_found) {
+    return (
+      `no agent sessions found for this project` +
+      `${result.source_dir === null ? '' : ` at ${result.source_dir}`} — nothing left to ` +
+      `collect from. Re-analysed ${count(result.rounds)} stored rounds`
+    )
+  }
+  if (result.new_rounds === 0) {
+    return `already up to date · ${count(result.rounds)} rounds, ${result.sessions} sessions`
+  }
+  const rounds = `${count(result.new_rounds)} round${result.new_rounds === 1 ? '' : 's'}`
+  const sessions = `${result.read_sessions} session${result.read_sessions === 1 ? '' : 's'}`
+  return `+${rounds} from ${sessions} · ${count(result.rounds)} total`
+}
+
+/**
+ * Sync, on a page that is about one session rather than the project it belongs to.
+ *
+ * There is no such thing as collecting a single session: an agent writes its log per project and
+ * `collect` reads all of it. So this is the project's sync reached from inside a session — the
+ * title says which project it would touch, and the sentence it leaves behind counts project-wide
+ * rounds, not this session's.
+ *
+ * Only the one verb. Rename, Export and Delete are things you do *to* a project and stay on the
+ * project's page; sync is here because a session you are still reading is exactly where you notice
+ * the agent has kept working since you opened it.
+ */
+export function SyncButton({
+  slug,
+  project,
+  onSynced,
+}: {
+  slug: string
+  /** Named in the title, so it is plain that a sync from here is the whole project's. */
+  project: string
+  /** Called after a sync, so the page behind can re-read. */
+  onSynced?: () => void
+}): ReactElement {
+  const [busy, setBusy] = useState(false)
+  const [said, setSaid] = useState<string | null>(null)
+  const [bad, setBad] = useState(false)
+
+  // A message about what just happened is worth reading and not worth keeping.
+  useEffect(() => {
+    if (said === null) return
+    const at = window.setTimeout(() => setSaid(null), 8000)
+    return () => window.clearTimeout(at)
+  }, [said])
+
+  const sync = async (): Promise<void> => {
+    setBusy(true)
+    setSaid(null)
+    setBad(false)
+    try {
+      setSaid(syncSaid(await api.sync(slug)))
+      onSynced?.()
+    } catch (problem) {
+      setBad(true)
+      setSaid((problem as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="actions actions-float">
+      <button
+        className="action icon"
+        onClick={() => void sync()}
+        disabled={busy}
+        title={`Sync ${project} — collect anything new, then re-analyse. The whole project, not just this session.`}
+        aria-label={busy ? 'Working' : `Sync ${project}`}
+      >
+        <SyncGlyph spinning={busy} />
+      </button>
+      {said === null ? null : (
+        <span className={`said${bad ? ' bad' : ''}`} role="status">
+          {said}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** Which panel the `⋮` is showing: the list of verbs, or the one thing a verb needs before it runs. */
+type Panel = 'menu' | 'rename' | 'remove'
 
 /**
  * The things you can do to a project rather than read about it.
@@ -37,35 +174,6 @@ import { count, tokens } from '../format'
  * What each one *did* is written out in words: an icon can say "sync" but it cannot say "already
  * up to date · 442 rounds", and that sentence is the point of pressing it.
  */
-/** One glyph, drawn the same way as the theme icons so the header reads as one set. */
-function Icon({
-  children,
-  spinning = false,
-}: {
-  children: ReactElement | ReactElement[]
-  spinning?: boolean
-}): ReactElement {
-  return (
-    <svg
-      className={spinning ? 'spin' : undefined}
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.3"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      {children}
-    </svg>
-  )
-}
-
-/** Which panel the `⋮` is showing: the list of verbs, or the one thing a verb needs before it runs. */
-type Panel = 'menu' | 'rename' | 'remove'
-
 export function Actions({
   slug,
   project,
@@ -140,18 +248,7 @@ export function Actions({
     setBusy('sync')
     setSaid(null)
     try {
-      const result = await api.sync(slug)
-      if (!result.source_found) {
-        report(
-          `no agent sessions found for this project${result.source_dir === null ? '' : ` at ${result.source_dir}`} — nothing left to collect from. Re-analysed ${count(result.rounds)} stored rounds`,
-        )
-      } else if (result.new_rounds === 0) {
-        report(`already up to date · ${count(result.rounds)} rounds, ${result.sessions} sessions`)
-      } else {
-        const rounds = `${count(result.new_rounds)} round${result.new_rounds === 1 ? '' : 's'}`
-        const sessions = `${result.read_sessions} session${result.read_sessions === 1 ? '' : 's'}`
-        report(`+${rounds} from ${sessions} · ${count(result.rounds)} total`)
-      }
+      report(syncSaid(await api.sync(slug)))
       onSynced?.()
     } catch (problem) {
       report((problem as Error).message, true)
@@ -232,20 +329,15 @@ export function Actions({
           aria-haspopup="menu"
           aria-label={busy === null ? 'Actions for this project' : 'Working'}
         >
-          <Icon spinning={busy !== null}>
-            {busy === null ? (
-              <>
-                <circle cx="8" cy="3.1" r="0.9" fill="currentColor" stroke="none" />
-                <circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none" />
-                <circle cx="8" cy="12.9" r="0.9" fill="currentColor" stroke="none" />
-              </>
-            ) : (
-              <>
-                <path d="M14 8a6 6 0 0 1-10.2 4.2M2 8a6 6 0 0 1 10.2-4.2" />
-                <path d="M12.2 1.2v2.6h-2.6M3.8 14.8v-2.6h2.6" />
-              </>
-            )}
-          </Icon>
+          {busy === null ? (
+            <Icon>
+              <circle cx="8" cy="3.1" r="0.9" fill="currentColor" stroke="none" />
+              <circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none" />
+              <circle cx="8" cy="12.9" r="0.9" fill="currentColor" stroke="none" />
+            </Icon>
+          ) : (
+            <SyncGlyph spinning />
+          )}
         </button>
         {panel === 'menu' ? (
           <div className="menu" role="menu">
