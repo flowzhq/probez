@@ -10,3 +10,7 @@ dist/
 # never commit collected session data
 .probez/
 probez-data/
+
+# flowz code graph (build artifact)
+.flowz/db/
+.flowz/snapshots/
