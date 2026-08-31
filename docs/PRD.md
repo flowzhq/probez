@@ -151,7 +151,9 @@ did, not inside it.
 and that differ per contract, so they live in `~/.probez/pricing.json` and are applied at read time.
 Every share under "where agent work goes" is a share of cost, so a wrong rate is a wrong answer;
 the rates ship at published list prices and are editable in the view's Settings screen. A model with
-no rate is reported as outside the shares rather than counted as free.
+no rate is reported as outside the shares rather than counted as free. Where *nothing* is priced —
+a source that records no tokens at all, as Cursor does — there is no money to divide, so the shares
+are of the rounds instead and say so, rather than reading as a table of zeros.
 
 **How full the window was is derived, not stored.** `in_tokens` is already the size of the context a
 round was sent; what share of the window that is depends on the model, and a window is a published
@@ -193,7 +195,7 @@ tests or on configuration. Those are targets, and the target axis already carrie
 | Category | Sub-kinds |
 | --- | --- |
 | Planning | read · clarify · decompose · design |
-| Reconstruction | locate · read · inspect · mcp |
+| Reconstruction | locate · graph · read · inspect · mcp |
 | Implementation | create · modify |
 | Testing | test · run |
 | Documentation | system · change · agent |

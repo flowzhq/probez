@@ -6,6 +6,7 @@ import type { Analysis, CategoryRow } from '../api'
 import { fillOf, orderOf, shadeOf, styleOf, texturedSub } from '../categories'
 import { duration, money, percent, tokens } from '../format'
 import { href, linkProps } from '../router'
+import { Info } from './Chrome'
 import { Tip, useTip } from './Tip'
 import { TokenCells, TokenHeaders } from './Tokens'
 import type { ReactElement } from 'react'
@@ -35,10 +36,17 @@ export function WorkBars({
   // bar is a picture of how much work a category was, not of how much it cost.
   const total = analysis.coverage.classified
   const spent = analysis.coverage.cost
+  // Unless nothing here is priced at all — a Cursor project carries no token counts, so every
+  // round costs nothing and every share came out `0.0%`, which reads as a measurement rather than
+  // as a missing denominator. With no money to divide, the rounds are the honest denominator, and
+  // the mark on the header says which one the reader is looking at.
+  const byRounds = spent === 0
 
   if (total === 0) {
     return <p className="note">No round in this span called a tool, so there is no work to divide.</p>
   }
+
+  const share = (row: CategoryRow): number => (byRounds ? row.rounds / total : row.cost / spent)
 
   const rows = [...analysis.rows].sort((a, b) => orderOf(a.name) - orderOf(b.name))
   const widest = Math.max(...rows.map((row) => row.rounds))
@@ -78,8 +86,24 @@ export function WorkBars({
           <tr>
             <th style={{ width: 170 }}>Work</th>
             <th style={{ width: '18%' }} />
-            <th className="r" style={{ width: 66 }} title="Share of what the classified rounds cost, at the rates in Settings.">
+            <th
+              className="r"
+              // The `i` is 17px the header did not have room for, so the column widens to hold it
+              // rather than wrapping "Share" onto two lines.
+              style={{ width: byRounds ? 84 : 66 }}
+              title={
+                byRounds
+                  ? undefined
+                  : 'Share of what the classified rounds cost, at the rates in Settings.'
+              }
+            >
               Share
+              {byRounds ? (
+                <Info
+                  says="No round here has a priced model, so there is no cost to divide. These are shares of the classified rounds instead — of how much work a category was, not of what it cost. Set a rate under Settings to get shares of money."
+                  aria="Shares of rounds, not of cost: no round here has a priced model."
+                />
+              ) : null}
             </th>
             <th className="r" style={{ width: 66 }}>
               Rounds
@@ -115,8 +139,12 @@ export function WorkBars({
                       <strong>{row.label}</strong>
                       <br />
                       <span className="tip-key">share </span>
-                      {percent(spent === 0 ? 0 : row.cost / spent, 1)} of the {money(spent)} the
-                      classified rounds cost
+                      {percent(share(row), 1)}
+                      {byRounds ? (
+                        <> of the classified rounds — nothing here is priced, so there is no cost to divide</>
+                      ) : (
+                        <> of the {money(spent)} the classified rounds cost</>
+                      )}
                       <br />
                       <span className="tip-key">weighted rounds </span>
                       {row.rounds.toFixed(1)} of {Math.round(total)}
@@ -139,7 +167,7 @@ export function WorkBars({
                   {row.label}
                 </td>
                 <td>{bar(row, null)}</td>
-                <td className="r num">{percent(spent === 0 ? 0 : row.cost / spent, 1)}</td>
+                <td className="r num">{percent(share(row), 1)}</td>
                 <td className="r num dim">{row.rounds.toFixed(1)}</td>
                 <td className="r num dim">{duration(row.ms)}</td>
                 <TokenCells of={row} />
@@ -155,9 +183,7 @@ export function WorkBars({
                         {child.label}
                       </td>
                       <td>{bar(child, row.name)}</td>
-                      <td className="r num dim">
-                        {percent(spent === 0 ? 0 : child.cost / spent, 1)}
-                      </td>
+                      <td className="r num dim">{percent(share(child), 1)}</td>
                       <td className="r num muted">{child.rounds.toFixed(1)}</td>
                       <td className="r num muted">{duration(child.ms)}</td>
                       <TokenCells of={child} dim="muted" />
@@ -189,7 +215,7 @@ export function Coverage({ analysis }: { analysis: Analysis }): ReactElement {
       {cost > 0 ? (
         <>Shares are of the {money(cost)} they cost.</>
       ) : (
-        <>None of them has a priced model, so there is no cost to divide.</>
+        <>None of them has a priced model, so shares are of the rounds rather than of the cost.</>
       )}
       <br />
       {toolless} {toolless === 1 ? 'round' : 'rounds'} of prose only (
@@ -205,9 +231,22 @@ export function Coverage({ analysis }: { analysis: Analysis }): ReactElement {
       {unpriced === 0 ? null : (
         <>
           <br />
-          {unpriced} {unpriced === 1 ? 'round is' : 'rounds are'} outside that: no rate for{' '}
-          {analysis.unpriced.slice(0, 3).map((row) => row.model).join(', ')}.{' '}
-          <a {...linkProps(href.settings())}>Set one</a>.
+          {/* With every round unpriced there is nothing for them to be outside of — they are the
+              shares. The line says why the denominator is the rounds rather than claiming an
+              exclusion that did not happen. */}
+          {cost === 0 ? (
+            <>
+              Nothing prices{' '}
+              {analysis.unpriced.slice(0, 3).map((row) => row.model).join(', ')}.{' '}
+              <a {...linkProps(href.settings())}>Set a rate</a> and shares become shares of money.
+            </>
+          ) : (
+            <>
+              {unpriced} {unpriced === 1 ? 'round is' : 'rounds are'} outside that: no rate for{' '}
+              {analysis.unpriced.slice(0, 3).map((row) => row.model).join(', ')}.{' '}
+              <a {...linkProps(href.settings())}>Set one</a>.
+            </>
+          )}
         </>
       )}
     </p>

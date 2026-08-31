@@ -1535,10 +1535,18 @@ function amount(value: number): string {
  * The two disagree, and the disagreement is the point: a round of reconstruction reading a large
  * file and a round of implementation writing one line are one round each, and nothing like one
  * dollar each. `ROUNDS` still says how much of the work it was.
+ *
+ * `share` is passed in rather than computed here, because which denominator applies is a property
+ * of the whole table and not of one row: with nothing priced there is no money to divide.
  */
-function categoryLine(name: string, indent: number, row: CategoryRow, whole: number): string {
+function categoryLine(
+  name: string,
+  indent: number,
+  row: CategoryRow,
+  share: (row: CategoryRow) => string,
+): string {
   const width = 22 - indent
-  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(amount(row.rounds), 8)}  ${padStart(percent(row.cost, whole), 7)}  ${padStart(money(row.cost), 8)}  ${padStart(row.errors >= 0.5 ? amount(row.errors) : '·', 6)}  ${padStart(duration(row.ms), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}`
+  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(amount(row.rounds), 8)}  ${padStart(share(row), 7)}  ${padStart(money(row.cost), 8)}  ${padStart(row.errors >= 0.5 ? amount(row.errors) : '·', 6)}  ${padStart(duration(row.ms), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}`
 }
 
 /**
@@ -1569,26 +1577,32 @@ function printAnalysis(
   walks: TrailShare | null,
 ): void {
   const { coverage } = analysis
-  const whole = coverage.cost
+  // Shares are of money, except where there is none. A source that records no token counts —
+  // Cursor — prices every round at nothing, and a SHARE column of `—` beside real ROUNDS says
+  // less than the round share does. So the denominator falls back to the rounds, and the coverage
+  // line below says which of the two the reader is looking at.
+  const byRounds = coverage.cost === 0
+  const share = (row: CategoryRow): string =>
+    byRounds ? percent(row.rounds, coverage.classified) : percent(row.cost, coverage.cost)
   console.log(
     `  ${pad('WORK', 20)}${padStart('ROUNDS', 8)}  ${padStart('SHARE', 7)}  ${padStart('COST', 8)}  ${padStart('ERRORS', 6)}  ${padStart('TIME', 8)}  ${padStart('OUT', 7)}`,
   )
   for (const row of analysis.rows) {
-    console.log(categoryLine(row.label, 2, row, whole))
+    console.log(categoryLine(row.label, 2, row, share))
     const sub = row.sub ?? []
     const shown = subLimit > 0 ? sub.slice(0, subLimit) : sub
-    for (const entry of shown) console.log(categoryLine(entry.name, 4, entry, whole))
+    for (const entry of shown) console.log(categoryLine(entry.name, 4, entry, share))
     if (shown.length < sub.length) {
       console.log(`      … ${sub.length - shown.length} more, --limit 0 for all`)
     }
   }
   console.log('')
-  // With nothing priced there is no denominator, and "shares are of the · they cost" would be a
-  // sentence about a symbol. The line says what is actually true instead.
+  // With nothing priced there is no money to divide, and "shares are of the · they cost" would be
+  // a sentence about a symbol. The line names the denominator SHARE actually used instead.
   const of =
     coverage.cost > 0
       ? `Shares are of the ${money(coverage.cost)} they cost`
-      : 'None of them has a priced model, so there is no cost to divide'
+      : 'None of them has a priced model, so SHARE is of the rounds rather than of the cost'
   console.log(
     `  ${coverage.classified} round${coverage.classified === 1 ? '' : 's'} did something a tool can see, out of ${coverage.rounds}. ${of}`,
   )
@@ -1604,11 +1618,15 @@ function printAnalysis(
   holes.push(`${percent(coverage.targeted, coverage.weight)} of work has a known target`)
   console.log(`  ${holes.join(' · ')}`)
   // A model with no rate costs nothing here and something in reality, so it is named rather than
-  // left to sink the shares by an amount the reader cannot see.
+  // left to sink the shares by an amount the reader cannot see. When *every* round is unpriced
+  // there is nothing for them to be outside of — they are the shares — so the line says why the
+  // denominator is the rounds instead of claiming an exclusion that did not happen.
   if (coverage.unpriced > 0) {
     const models = analysis.unpriced.slice(0, 3).map((row) => row.model).join(', ')
     console.log(
-      `  ${coverage.unpriced} round${coverage.unpriced === 1 ? '' : 's'} are outside that: no rate for ${models}. Set one in \`probez view\` → Settings`,
+      byRounds
+        ? `  Nothing prices ${models}. Set a rate in \`probez view\` → Settings and SHARE becomes a share of money`
+        : `  ${coverage.unpriced} round${coverage.unpriced === 1 ? '' : 's'} are outside that: no rate for ${models}. Set one in \`probez view\` → Settings`,
     )
   }
   if (axis === 'sub' && analysis.unknown.length > 0) {

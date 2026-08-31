@@ -471,12 +471,14 @@ tbody tr.row:hover {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
   max-width: 340px;
   /* A tooltip is anchored inside whatever it explains, and a section heading is uppercase with
-     letters spread out. Inheriting that turned a paragraph of prose into a shouted one. Nothing
-     about where a tip hangs should decide how it reads. */
+     letters spread out. Inheriting that turned a paragraph of prose into a shouted one. A table
+     header adds `nowrap`, which ran a tip off the side of the window past its own max-width.
+     Nothing about where a tip hangs should decide how it reads. */
   text-transform: none;
   letter-spacing: normal;
   font-weight: 400;
   text-align: left;
+  white-space: normal;
 }
 
 .tip-key {

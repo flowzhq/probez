@@ -379,6 +379,10 @@ much of the bill. Cost is worked out per round from its own model's rates, then 
 round's work. The last lines are part of the answer: rounds of pure prose and tools with no entry in
 the table sit outside the shares, and are reported rather than guessed at.
 
+Where *nothing* is priced there is no bill to divide — a Cursor transcript records no token counts at
+all — so `SHARE` falls back to the share of the rounds and the coverage line says which of the two
+you are reading. Set a rate under Settings and it goes back to being a share of money.
+
 ### Search: one query over everything
 
 Every table above answers one question through a fixed hole — one flag per field, and no way to

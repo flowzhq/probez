@@ -35,8 +35,9 @@ const BLANK: Rates = { in: 0, cache_write_5m: 0, cache_write_1h: 0, cache_read: 
 /**
  * What each model charges, per million tokens.
  *
- * These numbers are not decoration: every share on every "where agent work goes" table is a share
- * of what the work cost, so a wrong rate here is a wrong answer there. They ship at the published
+ * These numbers are not decoration: every share on every "where agent work goes" table with a cost
+ * to divide is a share of what the work cost, so a wrong rate here is a wrong answer there. A table
+ * with nothing priced at all falls back to the round share and marks itself. They ship at the published
  * list prices and are editable because list prices change, because negotiated rates exist, and
  * because a model probez has never heard of should not be silently free.
  *
@@ -143,7 +144,8 @@ export function Settings(): ReactElement {
             </div>
             <p className="note">
               Shares under <em>where agent work goes</em> are shares of cost, so these rates decide
-              them. They ship at the published list prices; edit any that are wrong for you — a
+              them — and where nothing is priced there is no cost to divide, so that table falls back
+              to the round share. They ship at the published list prices; edit any that are wrong for you — a
               negotiated rate, a price that has moved, or a model probez does not know. Stored at{' '}
               <span className="mono">{data.file}</span>, owner-only, and never sent anywhere — like
               everything else probez holds, apart from the one thing the reader below sends when you

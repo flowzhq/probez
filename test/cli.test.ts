@@ -312,17 +312,64 @@ test('a share is a share of cost, so it does not track the round count', () => {
 
 test('a model with no rate is reported rather than priced at nothing', () => {
   const env = makeSource(1)
+  // A second session on a model that *is* priced, so the shares have a denominator and the
+  // unpriced rounds are genuinely outside it. With every round unpriced there would be nothing for
+  // them to be outside of, which is the other case and reads differently.
+  writeFileSync(
+    join(env.claudeDir, 'encoded-project-name', '11111111-0000-0000-0000-000000000000.jsonl'),
+    readFileSync(FIXTURE, 'utf8')
+      .replaceAll('/tmp/demo', env.project)
+      .replaceAll('claude-opus-5', 'claude-sonnet-5'),
+  )
   assert.equal(collect(env).status, 0)
 
   // Nothing prices this model, so its rounds sit outside the shares and the table says so.
+  writeFileSync(
+    join(env.dataDir, 'pricing.json'),
+    JSON.stringify(
+      { schema_version: 1, models: { 'claude-sonnet-5': { in: 3, cache_write_5m: 6, cache_write_1h: 12, cache_read: 1, out: 15 } } },
+      null,
+      2,
+    ) + '\n',
+  )
+  const out = read(env, ['analyze'])
+  assert.equal(out.status, 0)
+  assert.match(out.stdout, /rounds are outside that: no rate for claude-opus-5/)
+  assert.match(out.stdout, /Settings/)
+})
+
+test('with nothing priced at all, SHARE is a share of the rounds and says so', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+
+  // A source that records no token counts — Cursor — prices every round at nothing. Dividing by
+  // that is dividing by zero: the column said nothing about work that plainly happened. With no
+  // money to divide, the rounds are the denominator, and the coverage line names which one it is.
   writeFileSync(
     join(env.dataDir, 'pricing.json'),
     JSON.stringify({ schema_version: 1, models: {} }, null, 2) + '\n',
   )
   const out = read(env, ['analyze'])
   assert.equal(out.status, 0)
-  assert.match(out.stdout, /no rate for claude-opus-5/)
-  assert.match(out.stdout, /Settings/)
+  assert.match(out.stdout, /SHARE is of the rounds rather than of the cost/)
+  // With nothing priced there is nothing for the unpriced rounds to be outside of, so the line
+  // says why the denominator moved instead of reporting an exclusion that did not happen.
+  assert.match(out.stdout, /Nothing prices claude-opus-5/)
+  assert.doesNotMatch(out.stdout, /outside that/)
+
+  const rows = out.stdout
+    .split('\n')
+    .map((line) => line.match(/^ {2}(\w[\w ]*?)\s{2,}([\d.]+)\s+([\d.]+)%/))
+    .filter((match): match is RegExpMatchArray => match !== null)
+  assert.ok(rows.length > 0, 'the table must still have rows')
+  const whole = rows.reduce((sum, row) => sum + Number(row[2]), 0)
+  for (const row of rows) {
+    assert.ok(Number(row[3]) > 0, `${row[1]} did work, so its share must not read as zero`)
+    assert.ok(
+      Math.abs(Number(row[3]) - (Number(row[2]) / whole) * 100) < 0.5,
+      `${row[1]} must be its share of the rounds`,
+    )
+  }
 })
 
 test('`analyze` writes its cache owner-only, and writing it again changes nothing', () => {

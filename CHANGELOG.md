@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
-## [Unreleased]
+## [0.5.0] - 2026-08-31
 
 ### Added
 
@@ -66,6 +66,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   afterwards, so new rounds in this session appear without a reload.
 
 ### Fixed
+
+- **A project with no prices had a Share column of `0.0%`.** Cursor records no token counts, so
+  every round in a Cursor project prices at nothing, and "where agent work goes" divided each
+  category's cost by a total of zero. Every row read `0.0%` — a measurement, not a missing
+  denominator, and the one column of that table a reader looks at first.
+
+  With no money to divide, the rounds are the denominator instead: the share is now the share of
+  the classified rounds, and the header carries an `i` saying so, because a share whose denominator
+  changed underneath the reader is worse than the zeros were. In the CLI the same column falls back
+  the same way, and the coverage line under the table says `SHARE is of the rounds rather than of
+  the cost` where it used to say only that there was none.
+
+  Nothing changes for a project that has prices, including one where *some* rounds are unpriced:
+  those rounds still sit outside the shares and are still named underneath, which is a hole in a
+  cost share rather than the absence of one.
 
 - **`bash script` and `./script` were counted as two different things.** A shell handed a script is
   now read through to the script, so `bash bin/check graph` and `./bin/check graph` are the same
@@ -1279,7 +1294,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.3.9...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/flowzhq/probez/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/flowzhq/probez/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/flowzhq/probez/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/flowzhq/probez/compare/v0.3.7...v0.3.8
