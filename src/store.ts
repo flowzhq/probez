@@ -758,7 +758,15 @@ export async function collectProject(
   // Written beside the real file and moved over it at the end, so an interrupted rebuild leaves the
   // old store intact rather than half of a new one.
   const target = rebuild ? `${roundsFile}.rebuild` : roundsFile
-  if (rebuild) await rm(target, { force: true })
+  if (rebuild) {
+    await rm(target, { force: true })
+    // Created empty rather than left to the first append below. A project whose sessions normalize
+    // to no rounds at all — one opened for a question the model never answered in — appends
+    // nothing, and the move at the end had nothing to move: it failed with ENOENT and left the
+    // project pinned to the old schema, so every later collect repeated the same failure. An empty
+    // rebuild is a real answer, and it has to land on the store like any other.
+    await writeFile(target, '', { encoding: 'utf8', mode: FILE_MODE })
+  }
 
   // Read once for the whole project rather than per session: it is one file, and every session
   // here ran in the same checkout. A project that is not in a repository comes back null and every

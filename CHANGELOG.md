@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [0.5.1] - 2026-09-02
+
+### Fixed
+
+- **`collect` crashed on a project with no rounds, once a schema rebuild was due.** A store written
+  by an older probez is rebuilt rather than appended to, and a rebuild writes its rounds beside the
+  real file and moves the result over it at the end, so an interruption cannot leave half a store.
+  The temp file was created by the first write to it — and a project whose sessions normalize to no
+  rounds at all never writes. The move then had nothing to move:
+
+  ```
+  probez: ENOENT: no such file or directory, rename '…/rounds.jsonl.rebuild' -> '…/rounds.jsonl'
+  ```
+
+  A project reaches that state by being opened in an agent for something the model never answered
+  in: real sessions on disk, no LLM round in any of them, and so no `rounds.jsonl` from the first
+  collect either. The rebuild target is now created empty up front, because an empty rebuild is a
+  real answer and has to land on the store like any other.
+
+  **It did not clear on its own.** The failure came before the new state file was written, so the
+  project stayed on the old schema and every later `collect` repeated it — and since `collect --all`
+  stops at the first project that throws, every project ordered after it went uncollected. There is
+  nothing to undo by hand: upgrading and running `collect` again rebuilds the project and records
+  the current schema.
+
+  The rebuild only runs when the stored schema differs from the current one, which since 0.4.0 it
+  does for any store last written by 0.3.x.
+
 ## [0.5.0] - 2026-08-31
 
 ### Added
@@ -1294,7 +1322,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/flowzhq/probez/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/flowzhq/probez/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/flowzhq/probez/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/flowzhq/probez/compare/v0.3.8...v0.3.9

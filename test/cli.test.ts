@@ -491,6 +491,50 @@ test('a store from an older schema is rebuilt, not appended to', () => {
   assert.ok(after.every((round) => round.source === 'claude-code'), 'rebuild stamps source from the session')
 })
 
+test('a rebuild that finds no rounds still lands on the store', () => {
+  const env = makeSource(0)
+  // A session the agent opened and the model never answered in normalizes to no rounds at all, so
+  // the project has a state file and an archived copy and never had a `rounds.jsonl` to begin with.
+  writeFileSync(
+    join(env.claudeDir, 'encoded-project-name', 'aaaaaaaa-0000-0000-0000-000000000000.jsonl'),
+    [
+      JSON.stringify({ type: 'mode', timestamp: '2026-01-01T00:00:00.000Z', sessionId: 'demo' }),
+      JSON.stringify({
+        type: 'user',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        cwd: env.project,
+        message: { role: 'user', content: 'hello' },
+      }),
+    ].join('\n') + '\n',
+  )
+  assert.equal(collect(env).status, 0)
+
+  // Aged the way an upgrade ages it: the version markers move and there are no rounds to rewrite.
+  const store = join(env.dataDir, 'projects', readdirSync(join(env.dataDir, 'projects'))[0]!)
+  for (const name of ['state.json', 'manifest.json']) {
+    const path = join(store, name)
+    const json = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    json.schema_version = 1
+    writeFileSync(path, JSON.stringify(json, null, 2) + '\n')
+  }
+
+  // The rebuild writes nothing, so the file it moves over the old store is one nothing created.
+  // That failed with ENOENT, and because the failure came before the new state was written, the
+  // project stayed on the old schema and every later collect repeated it.
+  const again = collect(env)
+  assert.equal(again.status, 0, again.stderr)
+  assert.equal(storedRounds(store).length, 0)
+  const state = JSON.parse(readFileSync(join(store, 'state.json'), 'utf8')) as {
+    schema_version: number
+  }
+  assert.notEqual(state.schema_version, 1, 'the rebuild has to record the new schema, or it repeats')
+
+  // And the next run is an ordinary no-op rather than another rebuild.
+  const third = collect(env)
+  assert.equal(third.status, 0, third.stderr)
+  assert.doesNotMatch(third.stdout, /rebuilt/)
+})
+
 test('a rebuild keeps rounds whose session the agent has since pruned', () => {
   const env = makeSource(2)
   assert.equal(collect(env).status, 0)
