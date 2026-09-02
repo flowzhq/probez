@@ -549,7 +549,9 @@ Sharing
 
 Collection
   probez collect [project]     Collect one project, or every project under a folder
-  probez collect --all         Collect every project on this machine
+  probez collect --all         Collect every project on this machine. One it cannot collect
+                               is named with its reason and stepped over; the rest are still
+                               collected and the command exits non-zero
   --full                       Re-read every session instead of only what changed
   --since <span>               Only sessions the agent has written to inside this window,
                                as 30d, 12h or 6w. A window on this run and nothing else: a
@@ -3148,23 +3150,47 @@ async function main(): Promise<void> {
   const window = values.since === undefined ? null : Date.now() - windowOf(values.since, 'since')
 
   const results: CollectResult[] = []
+  const failed: Array<{ project: string; path: string | null; error: string }> = []
   for (const project of matched) {
-    const collected = await collectProject(project, dataDir, {
-      full: values.full,
-      ...(window === null ? {} : { since: window }),
-    })
-    results.push(collected)
-    // A project that has just been collected is searchable at once rather than on the next
-    // `analyze`, which is what makes `probez find` fast on a store nobody has analyzed.
-    await buildIndex(projectDir(dataDir, project))
+    try {
+      const collected = await collectProject(project, dataDir, {
+        full: values.full,
+        ...(window === null ? {} : { since: window }),
+      })
+      results.push(collected)
+      // A project that has just been collected is searchable at once rather than on the next
+      // `analyze`, which is what makes `probez find` fast on a store nobody has analyzed.
+      await buildIndex(projectDir(dataDir, project))
+    } catch (error) {
+      // One project is one store, and nothing here reads another's. So a project that throws is
+      // reported and stepped over rather than allowed to end the run: a machine with forty
+      // projects should not lose the other thirty-nine to whichever one is broken, and the
+      // alphabet should not decide which of them get collected. A single-project collect has
+      // nothing to step over, and still fails.
+      if (matched.length === 1) throw error
+      failed.push({
+        project: projectName(project),
+        path: project.path,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
+  // A run that could not do all of it did not succeed, whatever it managed. Said through the exit
+  // code rather than by throwing, so the projects that did collect are still reported.
+  if (failed.length > 0) process.exitCode = 1
 
   if (values.json) {
-    console.log(JSON.stringify(results.length === 1 ? results[0] : results, null, 2))
+    // Keyed on what was asked for, not on what survived: a run over forty projects that collected
+    // one of them is still a list, and a consumer that unwrapped it would read that one as the
+    // whole answer.
+    const all = [...results, ...failed]
+    console.log(JSON.stringify(matched.length === 1 ? all[0] : all, null, 2))
     return
   }
 
-  if (results.length === 1) {
+  // Same rule as the JSON above: one project asked for gets the single-project summary, and a run
+  // over several does not become one because only one of them came back.
+  if (matched.length === 1) {
     printSummary(results[0]!, collectedLine(results[0]!))
     return
   }
@@ -3187,9 +3213,22 @@ async function main(): Promise<void> {
   }
   console.log('')
   const note = rebuilt > 0 ? ` · ${rebuilt} rebuilt for the current schema` : ''
-  console.log(`  ${results.length} projects · ${rounds} rounds · +${added} new${note}`)
+  console.log(
+    `  ${results.length} project${results.length === 1 ? '' : 's'} · ${rounds} rounds · +${added} new${note}`,
+  )
   console.log(`  → ${shorten(dataDir)}/projects`)
   console.log('')
+  // Named one per line with the reason, because "3 projects failed" is a number nobody can act on
+  // and the reason is the whole of what the reader needs.
+  if (failed.length > 0) {
+    console.log(
+      `  ${failed.length} project${failed.length === 1 ? '' : 's'} could not be collected:`,
+    )
+    for (const one of failed) {
+      console.log(`  ${pad(one.project, 24)}${one.error}`)
+    }
+    console.log('')
+  }
   if (skippedTemp > 0) {
     console.log(
       `  skipped ${skippedTemp} scratch project${skippedTemp === 1 ? '' : 's'} in temp directories. Use --include-temp to collect them`,

@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [Unreleased]
+
+### Changed
+
+- **One project that cannot be collected no longer ends a `collect --all`.** Every project is its
+  own store and nothing reading one reads another, so there was never a reason for the run to stop
+  at the first that threw — but it did, and because projects are walked in a fixed order, *which*
+  ones survived was decided by the alphabet rather than by anything about them. A machine with
+  forty projects lost thirty-nine to whichever one was broken.
+
+  Each project is now collected inside its own attempt. What failed is named at the end of the run
+  with the reason, one line each, and the command exits non-zero: a run that could not do all of it
+  did not succeed, whatever it managed. Under `--json` those projects appear in the list they were
+  always going to appear in, carrying an `error` instead of a result, so a script sees the failure
+  rather than inferring it from a count.
+
+  Asking for **one** project is unchanged: there is nothing to step over, and it still fails.
+
+  Two related things fall out of the same rule. The single-project summary is now chosen by what
+  was asked for rather than by what came back, so a run over several projects that collected one of
+  them still prints the list — before this fix it would have printed that one as if it were the
+  whole answer, with no mention of the rest. And the totals line says `1 project` rather than
+  `1 projects`, which a partial run made reachable.
+
 ## [0.5.1] - 2026-09-02
 
 ### Fixed

@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -489,6 +489,93 @@ test('a store from an older schema is rebuilt, not appended to', () => {
   assert.ok(after.every((round) => Array.isArray(round.events)), 'every round is the new shape')
   assert.ok(after.every((round) => typeof round.in_cache_read === 'number'))
   assert.ok(after.every((round) => round.source === 'claude-code'), 'rebuild stamps source from the session')
+})
+
+/**
+ * A second project in the same store: another directory, and a session whose `cwd` is it.
+ *
+ * `collect --all` groups the agent's sessions by the directory they ran in, so this is all it takes
+ * for one store to hold two projects.
+ */
+function secondProject(env: ReturnType<typeof makeSource>, name: string): string {
+  const second = join(dirname(env.project), name)
+  mkdirSync(second, { recursive: true })
+  // Its own encoded directory: the agent writes one per project, and that is what discovery
+  // groups by. Both sessions in one directory would come back as one project with two sessions.
+  const dir = join(env.claudeDir, `encoded-${name}`)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, 'bbbbbbbb-0000-0000-0000-000000000000.jsonl'),
+    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', second),
+  )
+  return second
+}
+
+function collectAll(env: ReturnType<typeof makeSource>, extra: string[] = []): Run {
+  return run([
+    'collect',
+    '--all',
+    // The test projects live under the system temp directory, which discovery treats as scratch.
+    '--include-temp',
+    ...extra,
+    '--data-dir',
+    env.dataDir,
+    '--claude-dir',
+    env.claudeDir,
+    '--cursor-dir',
+    env.cursorDir,
+    '--codex-dir',
+    env.codexDir,
+  ])
+}
+
+/**
+ * Break one project's store past repair by the collector: its `rounds.jsonl` is a directory, which
+ * nothing can append to or read as a file, and its session is made stale so the collect has to try.
+ */
+function breakStore(env: ReturnType<typeof makeSource>, project: string): void {
+  const dir = readdirSync(join(env.dataDir, 'projects')).find((name) =>
+    name.startsWith(`${basename(project)}-`),
+  )!
+  const rounds = join(env.dataDir, 'projects', dir, 'rounds.jsonl')
+  rmSync(rounds)
+  mkdirSync(rounds)
+  const sessions = join(env.claudeDir, `encoded-${basename(project)}`)
+  for (const name of readdirSync(sessions)) {
+    utimesSync(join(sessions, name), new Date(), new Date())
+  }
+}
+
+test('one project that cannot be collected does not end the run', () => {
+  const env = makeSource(1)
+  const other = secondProject(env, 'other')
+  assert.equal(collectAll(env).status, 0)
+  breakStore(env, other)
+
+  const out = collectAll(env)
+  // Reported through the exit code rather than by throwing, so what did collect is still printed.
+  assert.equal(out.status, 1)
+  assert.match(out.stdout, /1 project could not be collected/)
+  assert.match(out.stdout, /other\s+\S/, 'the failing project is named with its reason')
+  // The whole point: the other project was collected rather than lost to this one.
+  assert.match(out.stdout, /\bwork\b/)
+  assert.match(out.stdout, /^\s*1 project · /m)
+})
+
+test('`collect --all --json` carries the projects it could not collect', () => {
+  const env = makeSource(1)
+  const other = secondProject(env, 'other')
+  assert.equal(collectAll(env).status, 0)
+  breakStore(env, other)
+
+  const out = collectAll(env, ['--json'])
+  assert.equal(out.status, 1)
+  const results = JSON.parse(out.stdout) as Array<Record<string, unknown>>
+  assert.equal(results.length, 2, 'every project asked for is accounted for, collected or not')
+  const broken = results.find((one) => typeof one.error === 'string')
+  assert.ok(broken !== undefined, 'the failure is in the output, not only in the exit code')
+  assert.equal(broken.project, 'other')
+  assert.ok(results.some((one) => one.error === undefined && one.project === 'work'))
 })
 
 test('a rebuild that finds no rounds still lands on the store', () => {

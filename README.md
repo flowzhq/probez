@@ -40,7 +40,9 @@ probez collect
 
 It reads [Claude Code](https://claude.com/claude-code) sessions from `~/.claude/projects`, [Cursor](https://cursor.com) transcripts from `~/.cursor/projects`, and [Codex](https://github.com/openai/codex) CLI rollouts from `~/.codex/sessions` (or `$CODEX_HOME/sessions`), then writes
 one record per LLM round under `~/.probez`. Run it again whenever you want to catch up — it reads
-only what changed. `probez collect --all` does every project on the machine at once. A repository
+only what changed. `probez collect --all` does every project on the machine at once, and a
+project it cannot collect is reported and stepped over rather than ending the run — the others are
+still collected, and the command exits non-zero. A repository
 used in more than one agent is one project. Cursor transcripts do not include token usage, so those rounds
 have no cost. Each round records which product produced it; filter with `--source` or `source:` rather than
 treating agents as separate projects.
