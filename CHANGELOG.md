@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
-## [Unreleased]
+## [0.6.0] - 2026-09-02
 
 ### Changed
 
@@ -1346,7 +1346,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/flowzhq/probez/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/flowzhq/probez/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/flowzhq/probez/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/flowzhq/probez/compare/v0.3.9...v0.4.0
