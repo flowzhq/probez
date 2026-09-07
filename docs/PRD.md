@@ -195,13 +195,22 @@ tests or on configuration. Those are targets, and the target axis already carrie
 | Category | Sub-kinds |
 | --- | --- |
 | Planning | read · clarify · decompose · design |
-| Reconstruction | locate · graph · read · inspect · mcp |
+| Reconstruction | locate · graph · read · inspect · infra · mcp |
 | Implementation | create · modify |
 | Testing | test · run |
 | Documentation | system · change · agent |
 | Delivery | build · commit · publish · branch |
 | Environment | deps · env · infra |
 | Unclassified | incidental · unknown |
+
+The two `infra` rows are the same rule as the first one, applied to the machines instead of to the
+files. `kubectl get`, `aws … describe-*` and `terraform plan` report on a cluster and are
+Reconstruction; `kubectl apply`, `terraform apply` and `docker build` change one and are
+Environment. They were a single Environment row until a store turned up with 18.6% of its spend in
+it and about half of that read-only — an agent working out what a cluster was doing, filed as work
+on the cluster. A call that hands a command to another machine (`kubectl exec … -- cat`, `aws ssm
+send-command`) is counted as whatever it ran there, and stays Environment when the payload cannot be
+read.
 
 The one place a path changes a *category* rather than only a target is prose. Reading prose is
 Planning, writing it is Documentation, and everything else is the verb's row. Because that question

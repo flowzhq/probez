@@ -258,15 +258,34 @@ test('kinds follow what the command does', () => {
   assert.equal(cell(bash('flowz scan')), 'unclassified/unknown')
 })
 
-test('working on the machines the code runs on is environment, not nothing', () => {
-  assert.equal(cell(bash('kubectl get pods -n prod')), 'environment/infra')
+test('changing the machines the code runs on is environment, not nothing', () => {
   assert.equal(cell(bash('kubectl apply -f k8s/deploy.yaml')), 'environment/infra')
-  assert.equal(cell(bash('aws sts get-caller-identity')), 'environment/infra')
+  assert.equal(cell(bash('kubectl delete pod api-7d8f9')), 'environment/infra')
   assert.equal(cell(bash('terraform apply')), 'environment/infra')
   assert.equal(cell(bash('docker compose up -d')), 'environment/infra')
   assert.equal(cell(bash('flyctl deploy')), 'environment/infra')
   // Installing a dependency is still the other half of the category, not this one.
   assert.equal(cell(bash('brew install jq')), 'environment/deps')
+})
+
+test('reading those machines is reconstruction, the same as reading the code', () => {
+  // The half of the old `environment/infra` that was an agent finding out what a cluster is doing.
+  // Reading a cluster to work out what is going on is the act reading a repository is.
+  assert.equal(cell(bash('kubectl get pods -n prod')), 'reconstruction/infra')
+  assert.equal(cell(bash('kubectl logs api-7d8f9 --tail 200')), 'reconstruction/infra')
+  assert.equal(cell(bash('aws sts get-caller-identity')), 'reconstruction/infra')
+  assert.equal(cell(bash('terraform plan')), 'reconstruction/infra')
+  // A file read with a cluster in the middle is filed as the file read it is.
+  assert.equal(cell(bash('kubectl exec api-7d8f9 -- cat /opt/app/config.json')), 'reconstruction/read')
+})
+
+test('waiting for a machine is charged to nothing', () => {
+  // Alone, a round that only waited did nothing a tool can see. Beside real work it is dropped,
+  // rather than taking an equal share of the call from the command it was waiting for.
+  assert.equal(cell(bash('sleep 30')), 'unclassified/incidental')
+  const labels = classifyCall(bash('sleep 5 && kubectl get pods -n prod'))
+  assert.deepEqual(labels.map((l) => `${l.category}/${l.sub}`), ['reconstruction/infra'])
+  assert.equal(labels[0]?.weight, 1)
 })
 
 test('the target of an infra command is still read off the path it names', () => {
@@ -348,6 +367,33 @@ test('the planning a tool log can see is the harness moving around it', () => {
   assert.equal(cell(tool('ExitPlanMode', { plan: 'x' })), 'planning/design')
   assert.equal(cell(tool('TaskCreate', { subject: 'x' })), 'planning/decompose')
   assert.equal(cell(tool('Agent', { prompt: 'x' })), 'planning/decompose')
+})
+
+test('a shell tool is read as its command whatever the harness calls it', () => {
+  // Claude Code says `Bash`, Codex `shell` and `local_shell`, Cursor `Shell` and sometimes `bash`.
+  // A spelling missing from the set puts the whole call in as one unreadable act, and `Shell`
+  // alone was a sixth of all labelled weight in a store with Cursor sessions in it.
+  for (const name of ['Bash', 'Shell', 'bash', 'shell', 'local_shell']) {
+    assert.equal(cell(tool(name, { command: 'rg -n useQuery src' })), 'reconstruction/locate')
+  }
+  assert.equal(cell(tool('Shell', { command: 'cat src/a.ts', description: 'read it' })), 'reconstruction/read')
+})
+
+test('the harness tools a store actually holds have a row each', () => {
+  // An unrecognized harness tool is a hole in the store rather than in the taxonomy: it arrives as
+  // a share with nothing behind it, and the fix is one row rather than a rule.
+  assert.equal(cell(tool('ReadFile', { path: '/repo/src/a.ts' })), 'reconstruction/read')
+  assert.equal(cell(tool('ListDir', { path: '/repo/src' })), 'reconstruction/locate')
+  assert.equal(cell(tool('SemanticSearch', { query: 'where is the agent list rendered' })), 'reconstruction/locate')
+  assert.equal(cell(tool('ReadLints', { paths: ['/repo/src/a.ts'] })), 'reconstruction/inspect')
+  assert.equal(cell(tool('ApplyPatch', '*** Begin Patch')), 'implementation/modify')
+  assert.equal(cell(tool('Delete', { path: '/repo/src/a.ts' })), 'implementation/modify')
+  assert.equal(cell(tool('AskQuestion', { title: 'DEV or PROD?' })), 'planning/clarify')
+  assert.equal(cell(tool('CreatePlan', { name: 'Fix OAuth scopes' })), 'planning/design')
+  assert.equal(cell(tool('UpdateCurrentStep', { current_step: 'Exploring' })), 'planning/decompose')
+  assert.equal(cell(tool('CallMcpTool', { server: 'bigbrain', toolName: 'expert' })), 'reconstruction/mcp')
+  // Waiting on a shell that has already been counted is the `sleep` of the tool layer.
+  assert.equal(cell(tool('AwaitShell', { block_until_ms: 35000 })), 'unclassified/incidental')
 })
 
 test('a tool with no table entry is named rather than guessed at', () => {

@@ -49,8 +49,15 @@ import type { Node, Query, Subject } from './query.js'
 import { DIR_MODE, eachRoundLine, FILE_MODE, tighten } from './store.js'
 import type { Round } from './types.js'
 
-/** Bumped whenever a field changes meaning. An older index is rebuilt rather than read. */
-export const INDEX_VERSION = 2
+/**
+ * Bumped whenever a field changes meaning. An older index is rebuilt rather than read.
+ *
+ * 3: the `category`, `kind` and `command` columns are all written by the classifier, so splitting
+ * read-only infra out of `environment` changed what every one of them says about calls already
+ * indexed. Without the bump `find 'category:environment'` would keep answering from the taxonomy
+ * that was current when the store was last walked.
+ */
+export const INDEX_VERSION = 3
 
 /** The file, beside `analysis.jsonl` in the project's own store directory. */
 export function indexFile(dir: string): string {

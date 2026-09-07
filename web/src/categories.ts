@@ -53,7 +53,7 @@ export const CATEGORIES: CategoryStyle[] = [
     id: 'reconstruction',
     label: 'Reconstruction',
     short: 'Recon',
-    subs: ['locate', 'graph', 'read', 'inspect', 'mcp'],
+    subs: ['locate', 'graph', 'read', 'inspect', 'infra', 'mcp'],
     textured: ['graph'],
     fill: 'var(--series-2)',
   },

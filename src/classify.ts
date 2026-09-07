@@ -29,6 +29,12 @@
  * which costs a distinction that was never load-bearing and buys a classifier where a round can be
  * labelled on its own.
  *
+ * `reconstruction/infra` is the newest row, and the one that reverses a decision rather than adding
+ * to it. Read-only cluster and cloud calls used to be `environment/infra` on the argument that
+ * working on the machines is one kind of work whichever direction it runs in. See the note on
+ * `INFRA` in `bash.ts` for why a store measured at a sixth of its spend in that row settled it the
+ * other way.
+ *
  * `reconstruction/mcp` is the one row here that is a placement rather than a reading. `act.ts` can
  * tell that a call went to an MCP server and nothing else: the tool after `mcp__<server>__` is
  * whatever someone configured, so no built-in table can say whether it read a Figma file or filed a
@@ -81,6 +87,13 @@ export interface CategoryInfo {
  * rest of the container and cloud CLIs used to land in `unclassified/unknown`, which said only that
  * nothing recognized them. Working on the machines the code runs on is not the same work as
  * changing the code, and it is not nothing.
+ *
+ * It is now only the half of that work that *changes* those machines. `reconstruction/infra` is the
+ * other half — `kubectl get`, `aws … describe-*`, `terraform plan`, and a `kubectl exec … -- cat`
+ * that is a file read with a cluster in the middle. Reading a cluster to work out what is going on
+ * is the same act as reading a repository to work out what is going on, and the store that forced
+ * the split had environment at 18.6% of spend with about half of it read-only. The category was
+ * large enough that leaving it whole was what hid the finding.
  */
 export const CATEGORIES: CategoryInfo[] = [
   {
@@ -93,7 +106,7 @@ export const CATEGORIES: CategoryInfo[] = [
     id: 'reconstruction',
     label: 'Reconstruction',
     short: 'Recon',
-    subs: ['locate', 'graph', 'read', 'inspect', 'mcp'],
+    subs: ['locate', 'graph', 'read', 'inspect', 'infra', 'mcp'],
   },
   { id: 'implementation', label: 'Implementation', short: 'Impl', subs: ['create', 'modify'] },
   { id: 'testing', label: 'Testing', short: 'Test', subs: ['test', 'run'] },
@@ -157,6 +170,7 @@ const LABELS: Record<Verb, [Category, string]> = {
   branch: ['delivery', 'branch'],
   install: ['environment', 'deps'],
   env: ['environment', 'env'],
+  probe: ['reconstruction', 'infra'],
   infra: ['environment', 'infra'],
   ask: ['planning', 'clarify'],
   track: ['planning', 'decompose'],

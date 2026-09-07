@@ -109,21 +109,56 @@ test('kinds follow what the command does, not who ran it', () => {
   assert.equal(kind('flowz scan'), 'other')
 })
 
-test('a container or cloud CLI is infra whatever its subcommand does', () => {
-  // Reading a cluster and changing one are the same kind here: both are work on the machines the
-  // code runs on. Before this they were `other`, alongside the programs nothing recognized.
-  assert.equal(kind('kubectl get pods -n prod'), 'infra')
+test('a cloud CLI that changes the machines is infra', () => {
   assert.equal(kind('kubectl apply -f k8s/deploy.yaml'), 'infra')
+  assert.equal(kind('kubectl delete pod api-7d8f9'), 'infra')
+  assert.equal(kind('kubectl rollout restart deploy/api'), 'infra')
   assert.equal(kind('aws s3 cp out.json s3://bucket/out.json'), 'infra')
+  assert.equal(kind('aws ecs update-service --service list'), 'infra')
   assert.equal(kind('gcloud auth login'), 'infra')
-  assert.equal(kind('terraform plan -out=tf.plan'), 'infra')
+  assert.equal(kind('gcloud run deploy api'), 'infra')
+  assert.equal(kind('terraform apply -auto-approve'), 'infra')
   assert.equal(kind('docker build -t app .'), 'infra')
+  assert.equal(kind('docker compose up -d'), 'infra')
   assert.equal(kind('helm upgrade --install app ./chart'), 'infra')
   assert.equal(kind('systemctl restart nginx'), 'infra')
-  // Not a multiplexer, so it is named on its own row.
+  // Not a multiplexer, so it is named on its own row. Switching context changes the machine.
   assert.equal(kind('kubectx staging'), 'infra')
-  // A container whose name mentions tests is still not a test run: the head is read first.
-  assert.equal(kind('docker exec test-db psql -c "select 1"'), 'infra')
+  // A verb in neither table falls this way rather than the other: an unread verb is filed as
+  // changing the machines, which is the direction to be wrong in.
+  assert.equal(kind('kubectl config use-context prod'), 'infra')
+  assert.equal(kind('vagrant halt'), 'infra')
+})
+
+test('a cloud CLI that only reports on the machines is a probe', () => {
+  // The same split `read` is to `edit`, one layer out. Reading a cluster to work out what is
+  // going on is reconstruction, and it is where most of a real store's infra calls sit.
+  assert.equal(kind('kubectl get pods -n prod'), 'probe')
+  assert.equal(kind('kubectl logs -f api-7d8f9'), 'probe')
+  assert.equal(kind('kubectl describe pod api-7d8f9'), 'probe')
+  assert.equal(kind('kubectl rollout status deploy/api'), 'probe')
+  assert.equal(kind('aws sts get-caller-identity'), 'probe')
+  assert.equal(kind('aws ec2 describe-instances --region us-east-1'), 'probe')
+  assert.equal(kind('aws s3 ls s3://bucket/'), 'probe')
+  assert.equal(kind('gcloud secrets versions access latest --secret=KEY'), 'probe')
+  assert.equal(kind('terraform plan -out=tf.plan'), 'probe')
+  assert.equal(kind('docker ps -a'), 'probe')
+  assert.equal(kind('helm list -n prod'), 'probe')
+  assert.equal(kind('systemctl status nginx'), 'probe')
+  // These two only ever read.
+  assert.equal(kind('journalctl -u api -n 200'), 'probe')
+  assert.equal(kind('stern api --since 5m'), 'probe')
+})
+
+test('a namespace is not a subcommand', () => {
+  // The commonest shape there is in a store that touches a cluster. Read as a subcommand it gives
+  // one row per namespace and hides the verb that says whether anything changed.
+  assert.deepEqual(names('kubectl -n ocana-agents get pods'), ['kubectl get'])
+  assert.equal(kind('kubectl -n ocana-agents get pods'), 'probe')
+  assert.deepEqual(names('kubectl --context prod -o json get pods'), ['kubectl get'])
+  assert.deepEqual(names('aws --region us-east-1 --profile prod ec2 describe-instances'), ['aws ec2'])
+  // Only for the cloud CLIs: `-n` is a dry run to `make` and swallows nothing.
+  assert.deepEqual(names('make -n build'), ['make build'])
 })
 
 test('a pod or container name does not become a row of its own', () => {
@@ -132,4 +167,61 @@ test('a pod or container name does not become a row of its own', () => {
   assert.deepEqual(names('kubectl exec api-7d8f9 -- sh -c "ls"'), ['kubectl exec'])
   assert.deepEqual(names('docker run -it node:20 bash'), ['docker run'])
   assert.deepEqual(names('npm run build'), ['npm run build'])
+})
+
+test('a command handed to another machine is counted as what it ran there', () => {
+  // The row stays named after the handing-off, so pods still do not each get one, but the kind
+  // comes from the payload: these are a `Read` and a `Grep` with a cluster in the middle.
+  assert.deepEqual(names('kubectl exec -n prod api-7d8f9 -c gateway -- cat /opt/app/config.json'), ['kubectl exec'])
+  assert.equal(kind('kubectl exec -n prod api-7d8f9 -c gateway -- cat /opt/app/config.json'), 'read')
+  assert.equal(kind('kubectl exec api-7d8f9 -- ls /usr/local/lib'), 'search')
+  assert.equal(kind('kubectl exec api-7d8f9 -- rm -rf /tmp/cache'), 'edit')
+  // The scaffolding a script opens with is skipped the same way it is one level up.
+  assert.equal(kind('kubectl exec api-7d8f9 -- sh -c "export HOME=/root && grep -rn boot /var/log"'), 'search')
+  assert.equal(
+    kind(`aws ssm send-command --instance-ids i-079 --document-name AWS-RunShellScript --parameters 'commands=["grep -E \\"Provisioning\\" /opt/app/logs/combined.log"]'`),
+    'search',
+  )
+  assert.equal(
+    kind(`aws ssm send-command --instance-ids i-079 --parameters '{"commands":["export HOME=/home/ec2-user","cat /opt/app/state.json"]}'`),
+    'read',
+  )
+})
+
+test('an unreadable payload leaves the call as what it was', () => {
+  // A container whose name mentions tests is still not a test run, and an inner command nothing
+  // recognizes is not evidence about the outer one.
+  assert.equal(kind('docker exec test-db psql -c "select 1"'), 'infra')
+  assert.equal(kind('kubectl exec api-7d8f9 -- psql -c "select 1"'), 'infra')
+  // Built by a subshell, so there is no literal script to read.
+  assert.equal(
+    kind(`aws ssm send-command --instance-ids i-079 --parameters "{\\"commands\\":[$(python3 -c 'print(1)')]}"`),
+    'infra',
+  )
+  // No payload at all: a session is opened, nothing is said about what happens in it.
+  assert.equal(kind('aws ssm start-session --target i-079'), 'infra')
+})
+
+test('an assignment whose value is a command is that command', () => {
+  // Capturing output into a variable is how a shell script calls anything it needs the result of,
+  // and it is most of what a cluster session looks like. Dropping the assignment token whole took
+  // the program with it and left the subcommand standing alone: rows called `ssm` and `get`.
+  assert.deepEqual(names('CMD_ID=$(aws ssm send-command --instance-ids i-079)'), ['aws ssm'])
+  assert.deepEqual(names('POD=$(kubectl get pod -n ns -o name)'), ['kubectl get'])
+  assert.equal(kind('POD=$(kubectl get pod -n ns -o name)'), 'probe')
+  assert.deepEqual(names('SHA=`git rev-parse HEAD`'), ['git rev-parse'])
+  // Neither of these holds a command, so both still drop to what follows.
+  assert.deepEqual(names('NODE_ENV=test npm test'), ['npm test'])
+  assert.deepEqual(names('DIR=$HOME ls $DIR'), ['ls'])
+})
+
+test('waiting is not work on the machine', () => {
+  // `sleep` was the largest single row in a real store's environment category, almost all of it
+  // the pause between sending a remote command and collecting its output — and at one weight per
+  // command in a call, it was charged half of the work it was waiting for.
+  assert.equal(kind('sleep 30'), 'shell')
+  assert.deepEqual(names('sleep 5 && kubectl get pods'), ['sleep', 'kubectl get'])
+  // Looking at what is running, and stopping it, still are.
+  assert.equal(kind('ps aux'), 'proc')
+  assert.equal(kind('kill -9 4821'), 'proc')
 })

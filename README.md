@@ -336,43 +336,43 @@ $ probez analyze flowz-agentic-sdlc
   flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
   WORK                  ROUNDS    SHARE      COST  ERRORS      TIME      OUT
-  Planning                 202     4.5%    $40.60     4.0      8.1m   116.0K
-    read                   170     3.4%    $30.54     2.0      3.2m    73.1K
+  Planning                 203     4.5%    $40.82     4.0      8.1m   116.3K
+    read                   171     3.4%    $30.77     2.0      3.2m    73.4K
     clarify               14.0     0.4%     $3.30       ·      2.8m    25.1K
     decompose             10.1     0.5%     $4.24       ·      2.1m    15.4K
     design                 8.0     0.3%     $2.52     2.0       1ms     2.4K
-  Reconstruction          1367    38.8%   $350.10    83.0     40.6m   912.4K
-    locate                 593    16.1%   $145.44    38.0     11.8m   312.6K
-    read                   459    11.9%   $107.53    27.0      7.8m   233.7K
-    inspect                309    10.6%    $95.71    18.0     21.0m   364.3K
+  Reconstruction          1440    39.8%   $361.31    86.0     43.3m   963.5K
+    locate                 620    16.5%   $149.51    40.0     12.4m   329.1K
+    read                   481    12.2%   $110.48    28.0      8.8m   250.5K
+    inspect                324    10.8%    $98.32    18.0     21.8m   378.0K
+    graph                  9.5     0.2%     $1.86       ·     13.0s     4.6K
     mcp                    6.0     0.1%     $1.14       ·      1.5s     1.3K
-    graph                  1.0     0.0%     $0.27       ·      2.4s      451
-  Implementation           865    22.5%   $202.46    12.0      1.2h   968.6K
-    modify                 741    17.3%   $155.57     8.0     40.5m   638.6K
+  Implementation           867    22.4%   $203.24    12.0      1.2h   973.0K
+    modify                 744    17.2%   $156.35     8.0     41.2m   643.0K
     create                 123     5.2%    $46.89     4.0     30.2m   330.0K
-  Testing                  318     7.8%    $70.59    12.0      5.5m   137.6K
-    run                    178     4.7%    $41.95     9.0      4.4m   104.3K
-    test                   140     3.2%    $28.65     3.0      1.0m    33.3K
-  Documentation            496    12.7%   $114.27     6.0     47.4m   561.6K
-    system                 437    10.5%    $94.89     6.0     41.2m   487.0K
+  Testing                  322     7.9%    $71.88    13.0      5.5m   139.1K
+    run                    182     4.8%    $43.21    10.0      4.5m   105.7K
+    test                   140     3.2%    $28.67     3.0      1.0m    33.4K
+  Documentation            496    12.6%   $114.28     6.0     47.4m   561.6K
+    system                 437    10.5%    $94.90     6.0     41.2m   487.0K
     agent                 55.9     2.1%    $18.94       ·      6.2m    70.5K
     change                 3.0     0.0%     $0.44       ·      2.9s     4.1K
-  Delivery                 365     9.4%    $84.82    19.0      7.1m   170.4K
-    build                  182     4.3%    $38.91     4.0      2.2m    52.5K
-    commit                 116     3.2%    $28.51     4.0      2.4m    73.8K
-    branch                40.2     1.4%    $12.51    10.0      1.5m    29.9K
-    publish               26.9     0.5%     $4.89     1.0     56.0s    14.2K
-  Environment             53.3     2.7%    $24.44     8.0      1.3m    28.2K
-    env                   47.9     2.6%    $23.23     8.0      1.2m    26.4K
+  Delivery                 369     9.5%    $85.76    19.0      7.2m   172.1K
+    build                  183     4.3%    $39.15     4.0      2.2m    53.1K
+    commit                 117     3.2%    $28.70     4.0      2.5m    74.2K
+    branch                40.3     1.4%    $12.55    10.0      1.5m    29.9K
+    publish               29.5     0.6%     $5.36     1.0     58.4s    14.8K
+  Environment             34.7     2.1%    $18.66       ·     58.1s    20.2K
+    env                   29.3     1.9%    $17.45       ·     52.1s    18.5K
     deps                   5.4     0.1%     $1.21       ·      6.0s     1.7K
-  Unclassified            50.2     1.6%    $14.19     2.0      2.5m    44.6K
-    unknown               41.2     1.4%    $12.42     2.0      2.2m    36.3K
-    incidental             9.0     0.2%     $1.77       ·     19.1s     8.3K
+  Unclassified            37.7     1.3%    $11.50       ·      1.3m    31.3K
+    unknown               30.7     1.1%    $10.04       ·      1.1m    23.6K
+    incidental             7.0     0.2%     $1.46       ·     17.3s     7.7K
 
-  3717 rounds did something a tool can see, out of 3864. Shares are of the $901.48 they cost
-  147 rounds of prose only (3.8%) · 1.4% unclassified · 70.5% of work has a known target
-  Unclassified is mostly ToolSearch, pnpm, (unparsed). --unclassified lists it
-  23.1% of the finding was inside 75 trails, 40 of which ended in a change
+  3770 rounds did something a tool can see, out of 3922. Shares are of the $907.47 they cost
+  152 rounds of prose only (3.9%) · 1.0% unclassified · 70.8% of work has a known target
+  Unclassified is mostly ToolSearch, pnpm, Skill. --unclassified lists it
+  22.5% of the finding was inside 76 trails, 40 of which ended in a change
   The deepest went 5 hops from a listing: `probez trail b2922aea#2.66`
 ```
 
@@ -399,13 +399,13 @@ $ probez find 'category:reconstruction cost:>0.30 -tool:Read' flowz-mcp
 
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
-  4 rounds · $2.32 · 0.6% of rounds · 2.8% of cost · 3 sessions · 81% reconstruction
+  4 rounds · $2.32 · 0.6% of rounds · 2.8% of cost · 3 sessions · 83% reconstruction
 
   ROUND           WORK                COST     TIME         WHEN  SAYS
-  c21c7448#2.64   Environment        $1.16    842ms  11 days ago  Bash 1
-  c21c7448#1.0    Reconstruction     $0.39     1.5s  12 days ago  implement next task
-  bfd594d9#2.24   Reconstruction     $0.42    866ms  16 days ago  Bash 1
-  0b2cc149#1.0    Reconstruction     $0.36    794ms  17 days ago  did we implemented T001?
+  c21c7448#2.64   Environment        $1.16    842ms  21 days ago  Bash 1
+  c21c7448#1.0    Reconstruction     $0.39     1.5s  22 days ago  implement next task
+  bfd594d9#2.24   Reconstruction     $0.42    866ms  26 days ago  Bash 1
+  0b2cc149#1.0    Reconstruction     $0.36    794ms  27 days ago  did we implemented T001?
 
   4 rounds
 ```

@@ -22,7 +22,66 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   rather than against a JSON envelope around it, so the few percent that used to go on backslashes
   goes on rounds.
 
+- **Cursor's shell tool is read as a shell command.** The set of tool names that hold one had
+  `Bash`, `shell`, `shell_command`, `exec_command` and `local_shell`, but not `Shell` or `bash`.
+  A missing spelling is not a small loss: the call goes in whole as one unreadable act, and `Shell`
+  alone was the largest single source of `unclassified` in a store with Cursor sessions in it — a
+  sixth of all labelled weight, almost all of it `ls`, `rg` and `grep`.
+
+- **A namespace is no longer read as a subcommand.** `kubectl -n ocana-agents get pods` came back
+  named `kubectl ocana-agents`: one row per namespace, and the verb saying whether the call read or
+  changed anything never seen at all. `-n`, `--namespace`, `--context`, `--region`, `--profile`,
+  `-o` and the rest of the flags that swallow the token after them are now skipped for the cloud
+  CLIs. Only for those — `make -n` is a dry run and takes no value.
+
+- **An assignment whose value is a command is now that command.** `CMD_ID=$(aws ssm send-command
+  …)` is how a shell script calls anything it needs the result of, and it is most of what a cluster
+  session looks like. The assignment was dropped whole, which took the program with it and left the
+  subcommand standing alone as the name — rows called `ssm`, `get` and `secretsmanager`, of a kind
+  nothing recognized. `FOO=bar cmd` and `FOO=$BAR cmd` still drop to what follows; only the
+  substitution forms hold a command.
+
+- **The harness tools a real store actually holds have a row each.** `ReadFile`, `ListDir`,
+  `SemanticSearch`, `ReadLints`, `ApplyPatch`, `Delete`, `AskQuestion`, `CreatePlan`,
+  `UpdateCurrentStep`, `SwitchMode`, `CallMcpTool` and the rest arrived as
+  `unclassified/unknown` — a share with nothing behind it. An unrecognized harness tool is a hole
+  in the store rather than in the taxonomy, and the fix is one row rather than a rule.
+
+  Together with the three fixes above and the three taxonomy changes below, on the 88,779-round
+  store that prompted all six: Reconstruction 37.5% → 54.6% of cost, Environment 18.6% → 4.0%,
+  and Unclassified 21.3% → 3.0% of labelled weight.
+
 ### Changed
+
+- **Reading a cluster is Reconstruction; changing one is Environment.** They were one row.
+  `kubectl get`, `kubectl logs`, `aws … describe-*`, `terraform plan`, `docker ps`, `helm list` and
+  the rest of the reporting half of the container and cloud CLIs are now `reconstruction/infra`,
+  beside the file reads and searches they are the same act as. `kubectl apply`, `terraform apply`,
+  `docker build` and everything that changes the machines stay `environment/infra`, and so does any
+  verb neither table recognizes — an unread verb is filed as changing the machines rather than as
+  reading them.
+
+  The old note in `bash.ts` argued that a sub-table per CLI bought a distinction nothing asked for,
+  and that held while infra was a named 1%. A store of 88,779 rounds settled it the other way: it
+  had 18.6% of its spend in Environment, of which about half was read-only. At that size the
+  unsplit row was itself the thing hiding the finding. It did not need thirty sub-tables either —
+  one list of subcommands and one regular expression over the hyphenated cloud verbs decide the
+  great majority of what a real store holds.
+
+- **A command handed to another machine is counted as what it ran there.** `kubectl exec … -- cat
+  /opt/app/config.json` is a file read with a cluster in the middle, and `aws ssm send-command …
+  'commands=["grep -E … /var/log/app.log"]'` is a search; both were filed as infrastructure work
+  because of their outermost token. The payload is now read — through a `sh -c` wrapper, and
+  through the JSON array `ssm` wraps a script in — and the row keeps its name, so pods still do not
+  each get one. A payload this reader cannot name leaves the call as whatever it was, which is the
+  same rule the rest of the file follows: `docker exec test-db psql -c "select 1"` is still infra.
+
+- **Waiting is no longer work on the machine.** `sleep`, `wait`, `jobs` and `trap` were `proc`,
+  alongside `ps` and `kill`, and so counted as Environment. `sleep` was the largest single row in
+  that whole category in a real store — almost all of it the `sleep 3` between sending a remote
+  command and collecting its output — and because a call is split evenly across the commands it
+  ran, that pause was charged half of the work it was waiting for. It is scaffolding now, dropped
+  the way `cd` and `echo` are, and the command it was waiting for gets the whole weight.
 
 - **`probez --help` is a reference again, not a manual.** It had grown to 416 lines, most of them
   prose explaining what a trail is, how a question is classified, why a share beats a count — worth
