@@ -308,12 +308,15 @@ const MAX_BODY = 64 * 1024
 const MAX_IMPORT_BODY = 256 * 1024 * 1024
 
 /**
- * Read a JSON body, refusing anything oversized.
+ * Read a request body, refusing anything oversized.
  *
- * The only body this server accepts is a table of numbers, so the cap is generous by two orders of
- * magnitude and still small enough that nothing can be pushed into memory here.
+ * Every body but an import is a handful of numbers, so `MAX_BODY` is generous by two orders of
+ * magnitude and still small enough that nothing can be pushed into memory here. An import is the
+ * whole of somebody's rounds and gets `MAX_IMPORT_BODY`, which it is now measured against
+ * directly: the file used to arrive JSON-escaped inside an envelope, so a few percent of the cap
+ * went on backslashes rather than on rounds.
  */
-async function readJsonBody(req: IncomingMessage, cap = MAX_BODY): Promise<unknown> {
+async function readBody(req: IncomingMessage, cap: number): Promise<Buffer> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
@@ -322,8 +325,29 @@ async function readJsonBody(req: IncomingMessage, cap = MAX_BODY): Promise<unkno
     if (size > cap) throw new Error(`that file is larger than ${Math.round(cap / 1024 / 1024)} MB`)
     chunks.push(buffer)
   }
-  if (size === 0) return null
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  return Buffer.concat(chunks)
+}
+
+async function readJsonBody(req: IncomingMessage, cap = MAX_BODY): Promise<unknown> {
+  const body = await readBody(req, cap)
+  if (body.length === 0) return null
+  return JSON.parse(body.toString('utf8'))
+}
+
+/**
+ * The name the browser gave the file, out of the header that carries it.
+ *
+ * Percent-encoded on the way out, because a header is ASCII and a filename is whatever the sender
+ * typed. A name that will not decode is no name at all rather than a reason to refuse the import.
+ */
+function sentFilename(req: IncomingMessage): string {
+  const header = req.headers['x-probez-filename']
+  if (typeof header !== 'string') return ''
+  try {
+    return decodeURIComponent(header)
+  } catch {
+    return ''
+  }
 }
 
 /**
@@ -371,14 +395,15 @@ async function serveApi(
 
   if (group === 'import' && slug === undefined) {
     // Reachable only as POST; the method check upstream has already refused a GET here.
-    let body: unknown
+    // The body *is* the export, not JSON carrying it: see `postFile` in web/src/api.ts.
+    let text: string
     try {
-      body = await readJsonBody(req, MAX_IMPORT_BODY)
+      text = (await readBody(req, MAX_IMPORT_BODY)).toString('utf8')
     } catch (error) {
       sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
       return
     }
-    sendJson(res, 200, await importExport(dataDir, body))
+    sendJson(res, 200, await importExport(dataDir, { text, from: sentFilename(req) }))
     return
   }
 

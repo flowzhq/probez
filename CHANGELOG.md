@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [Unreleased]
+
+### Fixed
+
+- **Importing a large export no longer wedges the browser.** The Import button read the file into a
+  string and JSON-encoded that string into a request body, so a 205 MB export was held in the tab
+  three times over — the blob, the text, the escaped text — and the escaping added seven percent on
+  top before a byte was sent. A renderer has far less room than the server it is talking to, and at
+  that size it stopped responding rather than finishing. The file is now the request body, streamed
+  off disk by the browser, and the name it had travels in a header; the tab holds none of it. The
+  same 205 MB file that hung the page now imports in a few seconds.
+
+  The size cap the server applies is unchanged at 256 MB but is now measured against the file
+  rather than against a JSON envelope around it, so the few percent that used to go on backslashes
+  goes on rounds.
+
+### Changed
+
+- **`probez --help` is a reference again, not a manual.** It had grown to 416 lines, most of them
+  prose explaining what a trail is, how a question is classified, why a share beats a count — worth
+  reading once, and in the way every time after that. The explanations were already in the README,
+  which is where they belong. What is left is the commands, their flags and the shapes of the ids:
+  247 lines, every flag still listed under the command it belongs to, with a link to the README for
+  what any of it means.
+
 ## [0.6.0] - 2026-09-02
 
 ### Changed
