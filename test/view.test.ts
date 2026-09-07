@@ -1306,3 +1306,95 @@ test('naming a command is readable, writable, and changes what a round counts as
     await server.close()
   }
 })
+
+/**
+ * An import arrives as the body itself, not as a string inside a JSON envelope.
+ *
+ * The envelope was the bug: a browser had to read the file into a string and JSON-encode that
+ * string, so a 200 MB export was held three times over in a renderer and wedged the tab before a
+ * byte was sent. The body is now the file, and the name it had travels in a header.
+ */
+test('an import is the raw body, named by a header', async () => {
+  const { dataDir } = makeStore()
+  const server = await serving(dataDir)
+  const rounds = [
+    {
+      session: 'aaaabbbb/aaaabbbb',
+      round: 0,
+      task: 1,
+      agent: 'main',
+      id: 'aaaabbbb/aaaabbbb#r0',
+      model: 'claude-sonnet-4-5',
+      // An export without the token split is refused outright, so a round here has to carry it.
+      in_uncached: 1200,
+      in_cache_write: 0,
+      in_cache_read: 800,
+      out_tokens: 240,
+      user_text: 'what does this do',
+      text: 'reading it now',
+      thinking_chars: 0,
+      tools: [],
+      events: [],
+      source: 'claude',
+    },
+  ]
+  const jsonl = rounds.map((round) => JSON.stringify(round)).join('\n')
+
+  const post = (body: string, named?: string): Promise<Response> =>
+    get(server, '/api/import', {
+      method: 'POST',
+      headers: {
+        'x-probez-token': server.token,
+        'content-type': 'application/x-ndjson',
+        // Percent-encoded on the wire, exactly as `postFile` in web/src/api.ts sends it.
+        ...(named === undefined ? {} : { 'x-probez-filename': encodeURIComponent(named) }),
+      },
+      body,
+    })
+
+  try {
+    // The header names the project, and `-rounds` comes off the way a download's name does.
+    const result = await body(post(jsonl, 'Ökonomie-rounds.jsonl'))
+    assert.equal(result.name, 'Ökonomie')
+    assert.equal(result.rounds, 1)
+    assert.equal(result.sessions, 1)
+
+    // Re-sending the same export replaces it rather than making a second project.
+    const again = await body(post(jsonl, 'Ökonomie-rounds.jsonl'))
+    assert.equal(again.replaced, true)
+
+    // No header is a missing name, not a refusal: the file still comes in under a fallback.
+    const unnamed = await body(post(jsonl))
+    assert.equal(unnamed.rounds, 1)
+    assert.equal(unnamed.name, 'imported')
+
+    // A header that is not valid percent-encoding is no name either, and still not a refusal.
+    const bad = await body(
+      get(server, '/api/import', {
+        method: 'POST',
+        headers: {
+          'x-probez-token': server.token,
+          'content-type': 'application/x-ndjson',
+          'x-probez-filename': '%E0%A4%A',
+        },
+        body: jsonl,
+      }),
+    )
+    assert.equal(bad.rounds, 1)
+
+    // An empty body is refused, and says so rather than making an empty project.
+    const empty = await post('')
+    assert.equal(empty.status, 400)
+    assert.match((await body(Promise.resolve(empty))).error, /no file contents/)
+
+    // Without the token an import writes nothing, like every other write here.
+    const refused = await get(server, '/api/import', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-ndjson' },
+      body: jsonl,
+    })
+    assert.equal(refused.status, 403)
+  } finally {
+    await server.close()
+  }
+})

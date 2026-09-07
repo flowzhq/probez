@@ -324,8 +324,11 @@ export interface ViewTask extends Totals {
 export interface ToolRow {
   name: string
   calls: number
+  /** Calls that failed and where the failing was a fault. Excludes `benign`. */
   errors: number
-  /** Calls that failed without the harness saying so: stderr, or cut short. */
+  /** Flagged by the harness with nothing wrong: a search found nothing, or the call was declined. */
+  benign: number
+  /** Calls that wrote to stderr while the harness reported no error. Often just a chatty tool. */
   quiet: number
   result_chars: number
   ms: number
@@ -346,6 +349,8 @@ export interface ToolCall {
   input_chars: number
   result_chars: number | null
   is_error: boolean | null
+  /** What sort of failure it was, when `is_error`. Null otherwise, and on older rounds. */
+  error_kind: 'harness' | 'exit' | 'nomatch' | 'limit' | 'schema' | 'denied' | 'remote' | 'other' | null
   stderr_chars: number | null
   interrupted: boolean | null
   patch: Patch | null
@@ -593,13 +598,41 @@ export interface SyncResult {
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
+  return send<T>(path, {
+    ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+  }, body === undefined ? undefined : JSON.stringify(body))
+}
+
+/**
+ * Send a file as the body itself, rather than as a string inside a JSON envelope.
+ *
+ * An export is the only body here that is not a handful of numbers, and it is the whole of
+ * somebody's rounds — hundreds of megabytes is an ordinary size for one. Reading it into a string
+ * and JSON-encoding that string makes the browser hold the file three times over (the blob, the
+ * text, the escaped text) and pays a few percent on top for the escaping, all inside a renderer
+ * that has far less room than the server it is talking to. A `File` handed straight to `fetch` is
+ * streamed off disk instead, so the tab holds none of it.
+ */
+async function postFile<T>(path: string, file: File): Promise<T> {
+  return send<T>(
+    path,
+    {
+      'content-type': 'application/x-ndjson',
+      // Percent-encoded because a header is ASCII and a filename is whatever the sender typed.
+      'x-probez-filename': encodeURIComponent(file.name),
+    },
+    file,
+  )
+}
+
+async function send<T>(path: string, headers: HeadersInit, body?: BodyInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method: 'POST',
     headers: {
       ...(token === null ? {} : { 'x-probez-token': token }),
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...headers,
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body,
     cache: 'no-store',
   })
   if (!response.ok) {
@@ -865,7 +898,7 @@ export const api = {
   saveReader: (command: string[], timeoutMs: number) =>
     post<ReaderPayload>('/reader', { command, timeout_ms: timeoutMs }),
   savePricing: (models: Record<string, Rates>) => post<PricingPayload>('/pricing', { models }),
-  import: (text: string, from: string) => post<ImportResult>('/import', { text, from }),
+  import: (file: File) => postFile<ImportResult>('/import', file),
   // A read, so a GET: answering a query writes nothing, not even the index it is answered from.
   search: (q: string, options: { slug?: string | null; entity?: Entity; limit?: number } = {}) => {
     const query = new URLSearchParams({ q })

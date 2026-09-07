@@ -41,7 +41,8 @@ export type Verb =
   | 'branch'    // git checkout, merge, rebase, stash, reset
   | 'install'   // npm install, pip, brew, go get
   | 'env'       // ps, kill, gh auth — the machine rather than the work
-  | 'infra'     // docker, kubectl, terraform, aws — the machines the code runs on
+  | 'probe'     // kubectl get, aws describe-*, terraform plan — asked those machines about themselves
+  | 'infra'     // docker, kubectl, terraform, aws — changed the machines the code runs on
   | 'ask'       // AskUserQuestion
   | 'track'     // TodoWrite, TaskCreate, Agent
   | 'plan'      // EnterPlanMode, ExitPlanMode
@@ -51,7 +52,7 @@ export type Verb =
 
 export const VERBS: Verb[] = [
   'read', 'search', 'graph', 'query', 'write', 'move', 'test', 'run', 'build',
-  'commit', 'publish', 'branch', 'install', 'env', 'infra', 'ask', 'track', 'plan',
+  'commit', 'publish', 'branch', 'install', 'env', 'probe', 'infra', 'ask', 'track', 'plan',
   'mcp', 'noop', 'unknown',
 ]
 
@@ -462,6 +463,8 @@ function verbOf(command: Command, writes: string | null, downstream: boolean): V
       return 'build'
     case 'deps':
       return 'install'
+    case 'probe':
+      return 'probe'
     case 'infra':
       return 'infra'
     case 'run':
@@ -511,11 +514,41 @@ const TOOL_VERBS: Record<string, Verb> = {
   update_plan: 'plan',
   WebSearch: 'read',
   WebFetch: 'read',
+  // Cursor's names for the same operations. A harness tool nobody put in this table is not a hole
+  // in the taxonomy but a hole in the store: it arrives as `unclassified/unknown`, a share with
+  // nothing behind it, and the fix is one row rather than a rule.
+  ReadFile: 'read',
+  ListDir: 'search',
+  SemanticSearch: 'search',
+  rg: 'search',
+  ReadLints: 'query',
+  ApplyPatch: 'write',
+  Delete: 'move',
+  AskQuestion: 'ask',
+  CreatePlan: 'plan',
+  SwitchMode: 'plan',
+  UpdateCurrentStep: 'track',
+  updateCurrentStep: 'track',
+  TaskList: 'track',
+  TaskGet: 'track',
+  TaskOutput: 'track',
+  TaskStop: 'track',
+  SendMessage: 'track',
+  CallMcpTool: 'mcp',
+  CallDynamicTool: 'mcp',
+  GetMcpTools: 'mcp',
+  GetDynamicTools: 'mcp',
+  // Waiting on a shell that has already been counted is the `sleep` of the tool layer.
+  AwaitShell: 'noop',
+  Await: 'noop',
 }
 
 /** Tools whose target is the query, not a file, however path-shaped their input looks. */
 const TARGETLESS = new Set(['Grep', 'Glob', 'grep_files', 'list_dir', 'AskUserQuestion', 'TaskCreate', 'TaskUpdate',
-  'TodoWrite', 'Agent', 'Task', 'EnterPlanMode', 'ExitPlanMode', 'update_plan', 'web_search'])
+  'TodoWrite', 'Agent', 'Task', 'EnterPlanMode', 'ExitPlanMode', 'update_plan', 'web_search',
+  'SemanticSearch', 'rg', 'AskQuestion', 'CreatePlan', 'SwitchMode', 'UpdateCurrentStep',
+  'updateCurrentStep', 'TaskList', 'TaskGet', 'TaskOutput', 'TaskStop', 'SendMessage',
+  'CallMcpTool', 'CallDynamicTool', 'GetMcpTools', 'GetDynamicTools', 'AwaitShell', 'Await'])
 
 /**
  * A tool served by an MCP server.

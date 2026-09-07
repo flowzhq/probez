@@ -35,6 +35,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { ERROR_MEANING } from './errors.js'
 import { CONTROL } from './import.js'
 import { FIELD_GROUPS, FIELDS, parse, print, PROPERTY_MEANING, ENTITIES, SORTABLE } from './query.js'
 import type { Query } from './query.js'
@@ -151,6 +152,13 @@ function schemaOf(vocabulary: Vocabulary): string {
   lines.push('')
   lines.push('  is: and has: values mean:')
   for (const [value, says] of Object.entries(PROPERTY_MEANING)) {
+    lines.push(`    ${value}${' '.repeat(Math.max(1, 14 - value.length))}${says}`)
+  }
+  lines.push('')
+  // Without these an LLM reads `error:nomatch` as a failure and writes the opposite query to the
+  // one it was asked for, since the word alone says nothing about which side of the line it is on.
+  lines.push('  error: values mean:')
+  for (const [value, says] of Object.entries(ERROR_MEANING)) {
     lines.push(`    ${value}${' '.repeat(Math.max(1, 14 - value.length))}${says}`)
   }
   lines.push('')

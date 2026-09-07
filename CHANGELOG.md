@@ -6,6 +6,137 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is published to npm as
 [`probez-cli`](https://www.npmjs.com/package/probez-cli); the installed command is `probez`.
 
+## [Unreleased]
+
+### Added
+
+- **A failed tool call now says what kind of failure it was.** `is_error` is one bit, and one bit
+  turned out to be the wrong shape for the question: across a real store the flag fires for a `grep`
+  that matched nothing, a suite that failed, an `Edit` whose anchor had moved, a plan the user
+  rejected, and an MCP server that was not running. Every failed call now carries a kind — `harness`,
+  `exit`, `limit`, `schema`, `remote`, `nomatch`, `denied`, `other` — read once from the result body
+  at collection and kept as one word. The bodies are still not stored; this is a label, not a search
+  over text. `probez find "error:harness"` filters on it, and `probez help` lists the values.
+
+- **`NOFAULT`, a column for the flagged calls where nothing went wrong.** A `grep` with no matches
+  and a call you declined are not the tool failing, and counting them produced an error rate that
+  could never come down however well the agent worked. They are now counted apart: `NOFAULT` in the
+  tools table, `is:benign` in a query, and outside `errors:` and `is:error`. On one store this moved
+  `ExitPlanMode` from "failing two calls in three" to "nine calls, no errors, six plans turned down".
+
+### Changed
+
+- **`errors:`, `is:error` and every error count now exclude no-match and declined calls.** Same
+  field, narrower meaning: what remains is the calls where something was actually wrong. The excluded
+  ones are not hidden — they are in `NOFAULT` and `is:benign`.
+
+- **The store and the search index are rebuilt on upgrade** (schema 8, index 4), which is what fills
+  in the kind for rounds already collected. `probez collect` does it; nothing needs re-running by hand.
+
+### Fixed
+
+- **The comments describing `is_error` said the opposite of what it does, in six places.** They
+  claimed it was a harness-acceptance flag that stayed false when a command ran and failed — so a
+  Bash call whose suite failed 47 tests supposedly came back `false`. It does not: a non-zero exit
+  sets the flag, and `Exit code N` opens four in five of every flagged body in a real store. The
+  wrong premise was load-bearing, since it was the stated reason `classify.ts` has no `repair`
+  category. Corrected in `types.ts`, `extract.ts`, `classify.ts`, `cli.ts`, `inspect.ts` and the
+  `is:` meanings in `query.ts`, with what the data actually shows.
+
+- **`quiet` was documented as the larger, hidden half of the failures. It is neither.** The note on
+  `ToolRow.quiet` said these "outnumber the ones `errors` can see"; on a real store it is 1,401
+  against 2,782 the other way. And `interrupted`, half of what `quiet` claimed to read, is recorded
+  by the harness on some forty thousand results and true on none of them — so `is:interrupted` could
+  never match, and `quiet` is in practice stderr alone, most of it npm, git and tsc being chatty.
+  The field and the selector are kept, since that is what the transcripts carry; the documentation
+  now says what they are worth.
+
+- **Cursor's silence about failures is now stated rather than implied.** A Cursor transcript records
+  a tool result as `{"toolName": "read_file"}` — no body, no status, no flag — so `is_error` stays
+  null and every error question comes back empty for those rounds. That is "not recorded", not
+  "none", and on a store with Cursor sessions it can be a third of every round. It cannot be fixed
+  from the data; it can be, and now is, written down where a reader will hit it.
+
+- **Importing a large export no longer wedges the browser.** The Import button read the file into a
+  string and JSON-encoded that string into a request body, so a 205 MB export was held in the tab
+  three times over — the blob, the text, the escaped text — and the escaping added seven percent on
+  top before a byte was sent. A renderer has far less room than the server it is talking to, and at
+  that size it stopped responding rather than finishing. The file is now the request body, streamed
+  off disk by the browser, and the name it had travels in a header; the tab holds none of it. The
+  same 205 MB file that hung the page now imports in a few seconds.
+
+  The size cap the server applies is unchanged at 256 MB but is now measured against the file
+  rather than against a JSON envelope around it, so the few percent that used to go on backslashes
+  goes on rounds.
+
+- **Cursor's shell tool is read as a shell command.** The set of tool names that hold one had
+  `Bash`, `shell`, `shell_command`, `exec_command` and `local_shell`, but not `Shell` or `bash`.
+  A missing spelling is not a small loss: the call goes in whole as one unreadable act, and `Shell`
+  alone was the largest single source of `unclassified` in a store with Cursor sessions in it — a
+  sixth of all labelled weight, almost all of it `ls`, `rg` and `grep`.
+
+- **A namespace is no longer read as a subcommand.** `kubectl -n ocana-agents get pods` came back
+  named `kubectl ocana-agents`: one row per namespace, and the verb saying whether the call read or
+  changed anything never seen at all. `-n`, `--namespace`, `--context`, `--region`, `--profile`,
+  `-o` and the rest of the flags that swallow the token after them are now skipped for the cloud
+  CLIs. Only for those — `make -n` is a dry run and takes no value.
+
+- **An assignment whose value is a command is now that command.** `CMD_ID=$(aws ssm send-command
+  …)` is how a shell script calls anything it needs the result of, and it is most of what a cluster
+  session looks like. The assignment was dropped whole, which took the program with it and left the
+  subcommand standing alone as the name — rows called `ssm`, `get` and `secretsmanager`, of a kind
+  nothing recognized. `FOO=bar cmd` and `FOO=$BAR cmd` still drop to what follows; only the
+  substitution forms hold a command.
+
+- **The harness tools a real store actually holds have a row each.** `ReadFile`, `ListDir`,
+  `SemanticSearch`, `ReadLints`, `ApplyPatch`, `Delete`, `AskQuestion`, `CreatePlan`,
+  `UpdateCurrentStep`, `SwitchMode`, `CallMcpTool` and the rest arrived as
+  `unclassified/unknown` — a share with nothing behind it. An unrecognized harness tool is a hole
+  in the store rather than in the taxonomy, and the fix is one row rather than a rule.
+
+  Together with the three fixes above and the three taxonomy changes below, on the 88,779-round
+  store that prompted all six: Reconstruction 37.5% → 54.6% of cost, Environment 18.6% → 4.0%,
+  and Unclassified 21.3% → 3.0% of labelled weight.
+
+### Changed
+
+- **Reading a cluster is Reconstruction; changing one is Environment.** They were one row.
+  `kubectl get`, `kubectl logs`, `aws … describe-*`, `terraform plan`, `docker ps`, `helm list` and
+  the rest of the reporting half of the container and cloud CLIs are now `reconstruction/infra`,
+  beside the file reads and searches they are the same act as. `kubectl apply`, `terraform apply`,
+  `docker build` and everything that changes the machines stay `environment/infra`, and so does any
+  verb neither table recognizes — an unread verb is filed as changing the machines rather than as
+  reading them.
+
+  The old note in `bash.ts` argued that a sub-table per CLI bought a distinction nothing asked for,
+  and that held while infra was a named 1%. A store of 88,779 rounds settled it the other way: it
+  had 18.6% of its spend in Environment, of which about half was read-only. At that size the
+  unsplit row was itself the thing hiding the finding. It did not need thirty sub-tables either —
+  one list of subcommands and one regular expression over the hyphenated cloud verbs decide the
+  great majority of what a real store holds.
+
+- **A command handed to another machine is counted as what it ran there.** `kubectl exec … -- cat
+  /opt/app/config.json` is a file read with a cluster in the middle, and `aws ssm send-command …
+  'commands=["grep -E … /var/log/app.log"]'` is a search; both were filed as infrastructure work
+  because of their outermost token. The payload is now read — through a `sh -c` wrapper, and
+  through the JSON array `ssm` wraps a script in — and the row keeps its name, so pods still do not
+  each get one. A payload this reader cannot name leaves the call as whatever it was, which is the
+  same rule the rest of the file follows: `docker exec test-db psql -c "select 1"` is still infra.
+
+- **Waiting is no longer work on the machine.** `sleep`, `wait`, `jobs` and `trap` were `proc`,
+  alongside `ps` and `kill`, and so counted as Environment. `sleep` was the largest single row in
+  that whole category in a real store — almost all of it the `sleep 3` between sending a remote
+  command and collecting its output — and because a call is split evenly across the commands it
+  ran, that pause was charged half of the work it was waiting for. It is scaffolding now, dropped
+  the way `cd` and `echo` are, and the command it was waiting for gets the whole weight.
+
+- **`probez --help` is a reference again, not a manual.** It had grown to 416 lines, most of them
+  prose explaining what a trail is, how a question is classified, why a share beats a count — worth
+  reading once, and in the way every time after that. The explanations were already in the README,
+  which is where they belong. What is left is the commands, their flags and the shapes of the ids:
+  247 lines, every flag still listed under the command it belongs to, with a link to the README for
+  what any of it means.
+
 ## [0.6.0] - 2026-09-02
 
 ### Changed

@@ -11,8 +11,10 @@ import { count } from '../format'
  * it under an existing project's menu would be a category error, and it would also be unreachable
  * on the empty store where it is most needed.
  *
- * The browser reads the file the person picked and sends its text. probez never learns the path it
- * came from and could not open it if it did; the only thing that crosses is the bytes.
+ * The browser sends the file the person picked as the request body, streamed off disk rather than
+ * read into the tab — an export runs to hundreds of megabytes, and a renderer has far less room
+ * than the server does. probez never learns the path it came from and could not open it if it did;
+ * the only thing that crosses is the bytes, and its name.
  *
  * What arrives is somebody else's work. probez cannot check any of it, and shows it as faithfully
  * as it shows your own — prompts, commands and all. See SECURITY.md.
@@ -35,7 +37,7 @@ export function Import({ onImported }: { onImported?: () => void }): ReactElemen
     setSaid(null)
     setBad(false)
     try {
-      const result = await api.import(await picked.text(), picked.name)
+      const result = await api.import(picked)
       const what = `${count(result.rounds)} rounds, ${result.sessions} sessions`
       const lost = result.skipped > 0 ? ` · ${result.skipped} records skipped` : ''
       setSaid(`${result.replaced ? 'replaced' : 'imported'} ${result.name} · ${what}${lost}`)

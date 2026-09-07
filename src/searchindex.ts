@@ -40,6 +40,7 @@ import { dirname, join } from 'node:path'
 
 import { aliasOfSource, roundSourceOf } from './agents/paths.js'
 import { subCommands } from './bash.js'
+import { benign, failed } from './errors.js'
 import { asked, labelRounds } from './inspect.js'
 import type { RoundLabel } from './inspect.js'
 import { priceOf } from './pricing.js'
@@ -49,8 +50,15 @@ import type { Node, Query, Subject } from './query.js'
 import { DIR_MODE, eachRoundLine, FILE_MODE, tighten } from './store.js'
 import type { Round } from './types.js'
 
-/** Bumped whenever a field changes meaning. An older index is rebuilt rather than read. */
-export const INDEX_VERSION = 2
+/**
+ * Bumped whenever a field changes meaning. An older index is rebuilt rather than read.
+ *
+ * 3: the `category`, `kind` and `command` columns are all written by the classifier, so splitting
+ * read-only infra out of `environment` changed what every one of them says about calls already
+ * indexed. Without the bump `find 'category:environment'` would keep answering from the taxonomy
+ * that was current when the store was last walked.
+ */
+export const INDEX_VERSION = 4
 
 /** The file, beside `analysis.jsonl` in the project's own store directory. */
 export function indexFile(dir: string): string {
@@ -84,6 +92,7 @@ export const FLAG = {
   skill: 1 << 11,
   mcp: 1 << 12,
   commit: 1 << 13,
+  benign: 1 << 14,
 } as const
 
 interface Header {
@@ -108,12 +117,13 @@ interface Dicts {
   kind: string[]
   category: string[]
   target: string[]
+  error: string[]
 }
 
 type DictName = keyof Dicts
 
 /** The fields a round can hold several of at once, which are counted a column at a time. */
-const MULTI = ['tool', 'command', 'kind', 'category', 'target'] as const
+const MULTI = ['tool', 'command', 'kind', 'category', 'target', 'error'] as const
 
 /** Whether a field is one the index counts values for, which is what a typeahead can offer. */
 export function isFacet(key: string): key is DictName {
@@ -168,6 +178,7 @@ interface Multi {
   kind: number[][]
   category: number[][]
   target: number[][]
+  error: number[][]
 }
 
 /**
@@ -276,6 +287,7 @@ export async function writeIndex(
     kind: new Dictionary(),
     category: new Dictionary(),
     target: new Dictionary(),
+    error: new Dictionary(),
   }
 
   const columns: Columns = {
@@ -284,7 +296,7 @@ export async function writeIndex(
     write1h: [], thinking: [], calls: [], errors: [], files: [], added: [], removed: [], flags: [],
     offset: [], bytes: [],
   }
-  const multi: Multi = { tool: [], command: [], kind: [], category: [], target: [] }
+  const multi: Multi = { tool: [], command: [], kind: [], category: [], target: [], error: [] }
   const postings = new Map<string, number[]>()
   const tasks = new Map<string, TaskRow>()
 
@@ -317,12 +329,13 @@ export async function writeIndex(
       for (const key of ['thinking', 'calls', 'errors', 'files', 'added', 'removed', 'flags'] as const) {
         columns[key][at] = 0
       }
-      for (const key of ['tool', 'command', 'kind', 'target', 'category'] as const) multi[key][at] = []
+      for (const key of ['tool', 'command', 'kind', 'target', 'category', 'error'] as const) multi[key][at] = []
       continue
     }
 
     const tools = round.tools ?? []
     let errors = 0
+    let noFault = false
     let files = 0
     let added = 0
     let removed = 0
@@ -330,7 +343,8 @@ export async function writeIndex(
     let quiet = false
     let patched = false
     for (const tool of tools) {
-      if (tool.is_error === true) errors += 1
+      if (failed(tool)) errors += 1
+      if (benign(tool)) noFault = true
       if (tool.interrupted === true) interrupted = true
       if (tool.is_error !== true && ((tool.stderr_chars ?? 0) > 0 || tool.interrupted === true)) {
         quiet = true
@@ -345,6 +359,7 @@ export async function writeIndex(
 
     let flags = FLAG.live
     if (errors > 0) flags |= FLAG.error
+    if (noFault) flags |= FLAG.benign
     if (quiet) flags |= FLAG.quiet
     if (round.compaction !== null) flags |= FLAG.compacted
     if (interrupted) flags |= FLAG.interrupted
@@ -390,6 +405,9 @@ export async function writeIndex(
     multi.kind[at] = ids('kind', commands.map((command) => command.kind))
     multi.category[at] = ids('category', entry.labels.map((label) => label.category))
     multi.target[at] = ids('target', entry.labels.map((label) => label.target))
+    // Only calls that carry a kind, matching what `subjectOf` returns, or the index and a full
+    // read would disagree about what `error:` means on a store collected before kinds existed.
+    multi.error[at] = ids('error', tools.flatMap((tool) => (tool.error_kind == null ? [] : [tool.error_kind])))
 
     // The same text `subjectOf` searches, so a term found here is a term the round really carries.
     const words = new Set<string>()
@@ -881,6 +899,8 @@ export class SearchIndex {
             return spell('category', multi.category[at])
           case 'target':
             return spell('target', multi.target[at])
+          case 'error':
+            return spell('error', multi.error[at])
           default:
             return []
         }

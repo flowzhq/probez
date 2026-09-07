@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import { safeSessionFilename } from './agents/paths.js'
 import { discoverProjects } from './discover.js'
+import { failed } from './errors.js'
 import {
   analysisRecords,
   categoryTally,
@@ -459,7 +460,7 @@ function callsIn(rounds: Round[]): { tool_calls: number; errors: number } {
   for (const round of rounds) {
     for (const tool of round.tools ?? []) {
       tool_calls += 1
-      if (tool.is_error === true) errors += 1
+      if (failed(tool)) errors += 1
     }
   }
   return { tool_calls, errors }

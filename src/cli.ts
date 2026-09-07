@@ -17,6 +17,8 @@ import type { Asked } from './asking.js'
 import { COMMAND_KINDS, useCommandKinds } from './bash.js'
 import { commandsFile, readCommandKinds } from './commands.js'
 import { CATEGORIES, classifyCall, isCategory, isTarget, TARGETS } from './classify.js'
+import { benign, ERROR_MEANING, failed } from './errors.js'
+import type { ErrorKind } from './types.js'
 import {
   defaultClaudeDir,
   defaultCodexDir,
@@ -248,6 +250,14 @@ function fieldHelp(): string {
     lines.push(`    ${group.title}`)
     for (const field of fields) {
       lines.push(`      ${pad(`${field.key}:`, 11)}${field.says}`)
+      // Expanded where a value is a word that does not explain itself. A reader can guess what
+      // `category:testing` covers; nobody guesses what `error:nomatch` means without being told.
+      if (field.key === 'error') {
+        for (const value of field.values ?? []) {
+          lines.push(`        ${pad(`error:${value}`, 17)}${ERROR_MEANING[value as ErrorKind] ?? ''}`)
+        }
+        continue
+      }
       if (field.key !== 'is' && field.key !== 'has') continue
       for (const value of field.values ?? []) {
         lines.push(`        ${pad(`${field.key}:${value}`, 17)}${PROPERTY_MEANING[value] ?? ''}`)
@@ -260,21 +270,21 @@ function fieldHelp(): string {
 
 const HELP = `probez: see what your coding agents actually did.
 
-What is recorded, and what names it
-  project            a directory an agent was started in    its name, or its path
-  └ session          one agent run                          504799b8
-    ├ subagent       one run the agent handed off           504799b8/a8261ff4
-    └ task           a user turn, and everything it led to  504799b8#3
-      └ round        one LLM call                           504799b8#3.12
-        └ tool call                                         shown in full by its round
-
-Every level has a list and a detail view: \`probez sessions\` then \`probez session <id>\`, and the
-same for tasks and rounds. An id is the path down to the thing it names, so each one extends the
-one above it and no two kinds of id can be mistaken for each other.
-
 Usage
   probez [project]             Summary for a project, picking up anything new first
   probez projects              Every project on this machine
+
+Ids
+  project → session → task → round. An id is the path down to the thing it names:
+      504799b8            a session          504799b8#3      a task
+      504799b8#3.12       a round            504799b8/a8261ff4   a subagent's run
+  Any unique prefix of a session id will do. It comes off when the project has only one:
+      probez task 3               probez round 3.12
+
+Naming a project
+  Leave it out for the current directory. Otherwise its name, as \`probez projects\` lists it,
+  or the path it was worked in. A path holding several projects covers all of them.
+      probez sessions flowz-mcp        probez collect ~/Dev
 
 Search
   probez find "<query>" [project]
@@ -288,55 +298,16 @@ Search
   --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT}, 0 for all)
   --plan                       Print what probez made of the query and run nothing
   --json                       The whole result: totals, share, distribution, rows
-  --ask                        Read the words as a question and let your own LLM write the
-                               query. See below
+  --ask                        Read the words as a question and let your own LLM write the query
   --prompt                     With --ask: print what would be sent and run nothing
   --again                      With --ask: ask again rather than using the answer already held
-  --source claude|cursor|codex Same as a \`source:\` atom in the query. Does not collect.
+  --source claude|cursor|codex Same as a \`source:\` atom in the query. Does not collect
 
-  Bare words are free text, over the prompts, the prose, the commands and the paths. A
-  \`key:value\` filters, \`-\` negates, one after another means and, \`OR\` is the other one,
-  brackets regroup, and a quoted run is searched for as written:
-
-    probez find 'category:reconstruction cost:>0.50 -tool:Read since:7d'
-    probez find '(tool:Edit OR tool:Write) added:>200 in:tasks sort:cost'
-    probez find '"npm test" is:error --all'
-
-  What comes back first is a share, not a count. 412 rounds is a number; 18% of what this
-  project cost, in three of its sessions, nine tenths of it reconstruction, is a finding —
-  so a query re-scopes the profile rather than filtering a listing. \`--in\` says what the
-  matched rounds are then counted as: a session matches when a round inside it does, and
-  the row reports the rounds that matched with the size of the whole session beside them.
-
-  A query is read the same way half-typed as finished: what cannot be read yet is said, under
-  the part of the query it is about, and everything else still runs. \`--plan\` prints that
-  reading on its own, which is a way to find out what probez made of a query without it going
-  near a store.
-
-  The flags on \`rounds\` are the same language underneath — \`--tool Bash\` is \`tool:Bash\` —
-  so the two cannot come to disagree about what a tool name is.
-
-  \`--ask\` is the other way in, for when you would rather not learn the language:
-
-    probez find --ask "which sessions had the most failing shell commands"
-
-  probez writes the field table, the values each field can take, and a sample of the names this
-  store holds — tool names, command names, model names — with your question, to the command in
-  \`<data-dir>/reader.json\`, the same one \`explain\` uses. What comes back is a **query**, not
-  an answer: probez parses it, refuses it outright if it does not read, prints it, and then
-  answers it the way it answers one you typed. So a model chooses which rounds to look at and
-  never what any of them came to — every number stays derived from the rounds, and the query it
-  wrote is one you can correct by hand and run again without asking.
-
-  Nothing you typed to the agent and nothing any tool returned is ever sent. \`--prompt\` prints
-  exactly what would go and runs nothing, which is also how to use this with a chat you already
-  have open. With no reader configured there is nothing probez can run, and it says so.
-
-  Free text matches a word or the start of one, so \`tok\` finds \`tokens\` and \`oken\` does not,
-  and \`"npm test"\` does not find \`pnpm test\`. That boundary is what lets a search index exist:
-  \`collect\` and \`analyze\` write one beside the rounds, and a query is answered from it while
-  only the rounds that matched are read. A project with no current index is read in full and the
-  footer says how many were, since that is the only way to tell a quick search from a slow one.
+  Bare words are free text; \`key:value\` filters, \`-\` negates, adjacency is and, \`OR\` is or,
+  brackets regroup, a quoted run is searched for as written:
+      probez find 'category:reconstruction cost:>0.50 -tool:Read since:7d'
+      probez find '(tool:Edit OR tool:Write) added:>200 in:tasks sort:cost'
+      probez find --ask "which sessions had the most failing shell commands"
 
   Fields
 ${fieldHelp()}
@@ -349,26 +320,12 @@ Sessions
   --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT} for the list,
                                all of them for one session; 0 for all)
 
-  COST is what the session came to at the rates under Settings in \`probez view\`, worked out per
-  round from its own model's prices and summed. A session with rounds whose model has no rate is
-  marked \`+\`, since the figure is real but short; one where none of them has a rate shows \`—\`.
-  SOURCE is which product wrote the session (claude, cursor, codex), not main vs subagent.
-
-  A subagent's run is a session of its own, named for the one that handed it the work:
-  \`504799b8/a8261ff4\`. It is listed and priced separately, because it is a separate context
-  with its own model, and \`probez session 504799b8\` says underneath its tasks what it handed
-  off. Naming a session on its own means that session and not the subagents beneath it.
-
 Tasks
   probez tasks [project]       One row per task, across every session
   probez task <id>             One task: what it asked, and every round it took
   --session <id>               Only tasks from this session
   --source claude|cursor|codex Only tasks whose rounds this agent produced
   --limit <n>                  As above
-
-  FROM is the commit the checkout was on when the task was asked: where the work started, not
-  what it ended up as. It is read from git's HEAD reflog when the project is collected, so it
-  is blank for a project outside a checkout and for tasks older than the reflog reaches.
 
 Rounds
   probez rounds [project]      Every round
@@ -377,7 +334,7 @@ Rounds
   --task <n>                   Only this task number
   --tool <name>                Only rounds that called this tool
   --command <name>             Only rounds that ran this shell command; "git" also
-                               matches "git commit", the way the tools table names it
+                               matches "git commit"
   --kind <kind>                Only rounds that ran a command of this kind:
                                ${COMMAND_KINDS.slice(0, 7).join(' · ')}
                                ${COMMAND_KINDS.slice(7).join(' · ')}
@@ -390,35 +347,18 @@ Rounds
   --errors                     Only rounds where a tool failed
   --limit <n>                  How many rounds to list (default ${DEFAULT_LIMIT}, 0 for all)
 
-\`--session\` also disambiguates \`probez task\` and \`probez round\` when a prefix is ambiguous.
+  \`--session\` also disambiguates \`task\` and \`round\` when a prefix is ambiguous.
 
 Trails
   probez trails [project]      Runs of calls that followed one another into the repository
   probez trail <id>            One of them, hop by hop, named by any round it passed through
-  --deep                       Read the archived session results, which is the only way to
-                               see that a call opened a path an earlier call's output named
+  --deep                       Read the archived session results, which roots a trail further back
   --min-depth <n>              Only trails that went at least this many hops (default ${MIN_DEPTH})
   --outcome <name>             Only trails that ended this way: ${OUTCOMES.join(' · ')}
   --session <id>               Only this session
   --task <n>                   Only this task number
   --source claude|cursor|codex Only trails whose rounds this agent produced
   --limit <n>                  How many trails to list (default ${DEFAULT_LIMIT}, 0 for all)
-
-  An agent that does not know a repository finds its way around it: it lists the tree, opens
-  what the listing named, greps for a word, reads the lines the grep hit. \`analyze\` counts all
-  of that as Reconstruction and cannot tell nine hops of one search from nine unrelated file
-  opens. A trail is that search: DEPTH is how far it went, WIDE how far it fanned from a single
-  call, ROOT what it started from and OUTCOME whether it ended in a change to somewhere it had
-  been. Every hop names its evidence, and \`probez trail <id>\` prints them.
-
-  Without \`--deep\` a hop is inferred from what the calls asked for — a search for a word, then
-  a file carrying that word; a file under a directory already reached. With it, a hop can be
-  read out of the earlier call's own output, which is the only way to see that \`find .\` is why
-  the next five files were opened. Deep sees more and roots a trail further back, so a trail the
-  shallow read names \`1.5\` may be named \`1.0\` with the flag; it is not strictly a superset,
-  since a better-sourced hop can regroup a trail and leave a fragment under the three-call floor.
-  An imported project carries its rounds and not the logs behind them, so \`--deep\` finds
-  nothing there and says so.
 
 Questions
   probez questions [project]   What the agent needed to know, and what finding out cost
@@ -434,26 +374,6 @@ ${ASKS.map((kind) => `                               ${pad(kind, 10)}${ASK_MEANI
   --source claude|cursor|codex Only questions whose rounds this agent produced
   --limit <n>                  How many questions to list (default ${DEFAULT_LIMIT}, 0 for all)
 
-  A trail is a walk that went somewhere. A question is one thing the agent needed to know, and
-  every call it spent finding out — including the calls that went nowhere. The difference is
-  the point: a trail's edges exist only where a call narrowed, so asking the same thing a sixth
-  time makes no edge and joins no trail, and a third of all finding in a real store is exactly
-  that. Eleven greps for one field name are one question that cost eleven calls.
-
-  CALLS is what it cost. AGAIN is the same words asked of the same places over again. FETCH is
-  calls that only turned a line number into a body, the second half of locate-then-fetch. GUESS
-  is calls that named three or more different words at once, which is an agent reaching for
-  vocabulary it has not learned. KIND is which of the six above it was, decided by the first
-  rule that reads it. A seventh — how does A reach B — is left out because no grep expresses
-  it, so no reading of one can recover it.
-
-  KIND is a rule, so it holds for six shapes and says \`other\` for everything else. \`explain\`
-  is the sentence instead, and it comes from a model rather than a rule: probez writes the
-  question's calls to a command you name in \`<data-dir>/reader.json\` — \`{"command": ["claude",
-  "-p"]}\` — and keeps what it answers beside the measurement, never in place of it. Nothing is
-  sent anywhere else, nothing but those calls is sent at all, and with no reader configured
-  there is nothing probez can run. \`--prompt\` prints what would go, for reading it yourself.
-
 Tools
   probez tools [project]       Every tool called, and what Bash actually ran
   --kinds                      Group Bash by kind of work instead of by command
@@ -467,50 +387,20 @@ Analysis
   --split <axis>               What the second level counts: sub (default) or target
   --unclassified               List what did not classify, most of it first
   --deep                       Read the archived results, so the trail line counts the trails
-                               that inputs alone cannot show. See \`probez trails\`
+                               that inputs alone cannot show
   --session <id>               Only this session
   --task <n>                   Only this task number
   --source claude|cursor|codex Only rounds this agent produced
   --limit <n>                  How many sub-rows to list under each category
 
-  Shares are of what the work cost, at the rates under Settings in \`probez view\`. ROUNDS still
-  says how much of the work it was; the two disagree, which is the point. Rounds of pure prose
-  carry no label and are reported instead of guessed at, and so is every tool with no entry in
-  the table and every model with no rate. All three are on the coverage line.
-
-  A command is classified by name, and probez only ever sees the last part of a path — a
-  repository's own \`bin/check\` arrives as \`q\`. Names that generic cannot go in the table
-  probez ships, where they would relabel an unrelated \`q\` on somebody else's machine, so they
-  go in \`<data-dir>/commands.json\` instead — \`{"commands": {"check": "graph"}}\` — or under
-  Settings in \`probez view\`, which lists what this store has run and nothing has classified.
-  The local table is read over the shipped one, so it can correct a name as well as add one.
-  Anything left unnamed stays unclassified, which \`--unclassified\` reports rather than guesses at.
-
 The view
-  probez view                  Open the local profiler in your browser: every project,
-                               then a session, then a task as a timeline of its rounds
+  probez view                  Open the local profiler in your browser
   --port <n>                   Which port to listen on (default ${DEFAULT_PORT})
   --no-open                    Print the URL instead of opening a browser
-  --source claude|cursor|codex Open the project page filtered to that agent.
-                               Sync still collects every agent.
-
-  There is a query bar in the header, on every page: \`/\` or ⌘K focuses it, it completes fields
-  and their values from what the store holds, and it takes the same language \`probez find\` does.
-  The Source control next to it filters the page you are on — same layout, that agent's sessions.
-  Typing \`source:\` in the query bar is still a search. Sync still collects every agent.
-  Opening a round from a result lights the rounds that matched inside its trace, with the rest of
-  the task still drawn around them.
-
-  From there each project has a ⋮ menu: Sync, which is collect then analyze on that one;
-  Rename, which sets a label this CLI answers to and moves nothing; Export, which hands its
-  rounds to your browser to save wherever you point it; and Delete, which asks first and then
-  removes the project and everything probez recorded for it. The agent's own session files are
-  never touched, so a collected project comes back with \`probez collect\`. An import does not.
-  Sync is on a session page as well, beside the header — the same project-wide sync, reached from
-  the run you are reading, since \`collect\` reads a project's log entire and there is no smaller one.
+  --source claude|cursor|codex Open the project page filtered to that agent
 
   It listens on 127.0.0.1 and nothing leaves the machine. The URL carries a token that is new
-  on every run, without which the data neither answers nor syncs. Reading writes nothing.
+  on every run, without which the data neither answers nor syncs.
 
 Clearing
   probez clear <project>       Remove one project and everything probez recorded for it
@@ -520,21 +410,7 @@ Clearing
                                would go and asks; with no terminal to ask on, it refuses
   --json                       The plan, or what went if it went
 
-  A *session* is the unit. One whose last round is older than the window goes entirely —
-  its rounds and the archived transcript beside them, which is the great majority of what
-  a store weighs — and one with any newer round stays whole. A project left with nothing
-  is removed. A project with recent work keeps it.
-
-  What is never touched, here as everywhere, is the agent's own session files: probez has
-  only ever read those. So a project cleared by mistake comes back with \`probez collect\`,
-  minus whatever the agent has pruned since — and a session cleared from the store is not
-  remembered as cleared, so an unrestricted collect brings it back. \`--since\` is the
-  companion to that: clear the old, then collect inside a window.
-
-  An imported project does not come back. The file it arrived as is the only other copy.
-  The analysis and search index of a trimmed project are removed rather than repaired, and
-  are rebuilt by the next \`probez analyze\`. Rates and the reader are settings, not
-  projects, and are never cleared.
+  A cleared project comes back with \`probez collect\`. An imported one does not.
 
 Sharing
   probez export <project>      Write a project out as a file to send someone
@@ -543,34 +419,16 @@ Sharing
   probez import <file>         Read a project someone exported, from .json or .jsonl
   --as <name>                  Store it under this name instead of the one in the file
 
-  An export carries everything the store holds: prompts, commands, file paths. Read one before
-  you send it. An import is someone else's work, shown as faithfully as your own — probez cannot
-  check what is in it, so open one the way you would any attachment. Nothing is executed.
+  An export carries prompts, commands and file paths. Read one before you send it, and open one
+  you were sent the way you would any attachment. Nothing in it is ever executed.
 
 Collection
   probez collect [project]     Collect one project, or every project under a folder
-  probez collect --all         Collect every project on this machine. One it cannot collect
-                               is named with its reason and stepped over; the rest are still
-                               collected and the command exits non-zero
+  probez collect --all         Collect every project on this machine
   --full                       Re-read every session instead of only what changed
-  --since <span>               Only sessions the agent has written to inside this window,
-                               as 30d, 12h or 6w. A window on this run and nothing else: a
-                               session outside it is not recorded as read, so a later
-                               collect with no window reads it then. Ignored on a rebuild,
-                               which writes a new store from what it reads
-  --source claude|cursor|codex|all  Which agent directories to scan (default all;
-                               \`both\` still means all). This is collection, not a
-                               store filter. On sessions, analyze, find, view and
-                               the other read commands the same flag filters rounds
-                               already collected; see Options below.
-
-  Claude Code sessions live under ~/.claude/projects. Cursor transcripts live under
-  ~/.cursor/projects/<slug>/agent-transcripts. Codex CLI rollouts live under
-  ~/.codex/sessions (or \$CODEX_HOME/sessions). A repository used by more than one
-  agent is one project.
-
-  A store collected by an older probez is rebuilt on the next collect, from the session copies
-  it already keeps. Nothing leaves the machine and nothing is lost, but it is not instant.
+  --since <span>               Only sessions written to inside this window, as 30d, 12h or 6w
+  --source claude|cursor|codex|all
+                               Which agent directories to scan (default all)
 
 Options (these work on every command)
   --json                       Machine-readable output
@@ -585,34 +443,17 @@ Options (these work on every command)
   --codex-dir <dir>            Where to read Codex CLI rollouts from
                                (default ~/.codex/sessions, or \$CODEX_HOME/sessions)
   --source claude|cursor|codex|all
-                               On collect and projects: which agent directories to
-                               scan (default all; \`both\` still means all).
-                               On read commands (sessions, tasks, rounds, analyze,
-                               tools, find, trails, questions, view): filter stored
-                               rounds. Does not collect, and does not restrict
-                               discovery. \`source:claude\` is the same filter in
-                               the query language; it matches persisted claude-code.
+                               On collect and projects: which agent directories to scan.
+                               On read commands: filter stored rounds, collecting nothing.
+                               \`source:claude\` is the same filter in the query language
   --version                    Print the version
   -h, --help                   Print this help
 
-Every other flag above belongs to the command it is listed under, and giving one to a command that
-does not take it is an error rather than a silent no-op.
+Every other flag above belongs to the command it is listed under, and giving one to a command
+that does not take it is an error rather than a silent no-op. A list withholds rows past its
+limit and says so; a detail view shows the whole thing unless you ask for a limit.
 
-A list withholds rows past its limit and says so; a detail view (\`session <id>\`, \`task <id>\`,
-\`round <id>\`) shows the whole thing unless you ask for a limit.
-
-Naming a project
-  Leave it out and probez uses the current directory. Otherwise give the project's name, as
-  \`probez projects\` lists it, or the path it was worked in:
-      probez sessions flowz-mcp
-      probez sessions ~/Dev/workspace/flowz-mcp
-  A path holding several projects covers all of them: \`probez collect ~/Dev\` collects each.
-
-Naming a session, a task or a round
-  Any unique prefix of a session id will do, since the tables print the first eight characters:
-      probez session 0b2cc149     probez task 0b2cc149#3     probez round 0b2cc149#3.12
-  The session comes off when the project has only one:
-      probez task 3               probez round 3.12
+What any of it means, and why: https://github.com/flowzhq/probez#readme
 `
 
 /** How much of the input was served from cache, which is the part billed at a fraction of the rate. */
@@ -1183,13 +1024,15 @@ function printToolInput(input: unknown, width: number): void {
 }
 
 /**
- * What the call did, beyond whether the harness accepted it.
+ * What the call did, beyond the flag on it.
  *
- * `is_error` is the harness flag, so a command that ran and failed shows nothing there. Anything
- * written to stderr, a call cut short, or lines changed on disk are the parts worth saying.
+ * The kind of failure is the first thing worth saying, because `✗` alone does not distinguish an
+ * edit whose anchor moved from a `grep` that matched nothing. After that: anything written to
+ * stderr, and lines changed on disk.
  */
 function outcome(tool: ToolCall): string {
   const parts: string[] = []
+  if (tool.error_kind !== null) parts.push(tool.error_kind)
   if (tool.interrupted === true) parts.push('interrupted')
   if (tool.stderr_chars !== null && tool.stderr_chars > 0) parts.push(`${tokens(tool.stderr_chars)} stderr`)
   if (tool.patch !== null) parts.push(`+${tool.patch.added} −${tool.patch.removed}`)
@@ -1471,7 +1314,7 @@ function printRound(round: Round, width: number): void {
       .map((label) => `${label.category}/${label.sub}${label.target === 'unknown' ? '' : ` × ${label.target}`}`)
       .join(' · ')
     console.log(
-      `    ${padStart(String(index + 1), 2)}  ${tool.is_error === true ? '✗' : ' '} ${pad(tool.name ?? '?', 14)}${padStart(duration(tool.ms), 7)}  ${chars}${outcome(tool)}`,
+      `    ${padStart(String(index + 1), 2)}  ${failed(tool) ? '✗' : benign(tool) ? '·' : ' '} ${pad(tool.name ?? '?', 14)}${padStart(duration(tool.ms), 7)}  ${chars}${outcome(tool)}`,
     )
     console.log(`       ${clip(work, width - 8)}`)
     printToolInput(tool.input, width - 8)
@@ -1481,7 +1324,8 @@ function printRound(round: Round, width: number): void {
 
 function toolLine(name: string, indent: number, row: ToolRow): string {
   const width = 22 - indent
-  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(String(row.calls), 6)}  ${padStart(row.errors > 0 ? String(row.errors) : '·', 6)}  ${padStart(tokens(row.result_chars), 8)}  ${padStart(duration(row.ms), 8)}`
+  const count = (n: number): string => padStart(n > 0 ? String(n) : '·', 6)
+  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(String(row.calls), 6)}  ${count(row.errors)}  ${count(row.benign)}  ${padStart(tokens(row.result_chars), 8)}  ${padStart(duration(row.ms), 8)}`
 }
 
 /**
@@ -1490,14 +1334,16 @@ function toolLine(name: string, indent: number, row: ToolRow): string {
  */
 function printTools(rows: ToolRow[], subLimit: number, noun: string): void {
   console.log(
-    `  ${pad('TOOL', 20)}${padStart('CALLS', 6)}  ${padStart('ERRORS', 6)}  ${padStart('RESULT', 8)}  ${padStart('TIME', 8)}`,
+    `  ${pad('TOOL', 20)}${padStart('CALLS', 6)}  ${padStart('ERRORS', 6)}  ${padStart('NOFAULT', 6)}  ${padStart('RESULT', 8)}  ${padStart('TIME', 8)}`,
   )
   let calls = 0
   let errors = 0
+  let noFault = 0
   const broken: string[] = []
   for (const row of rows) {
     calls += row.calls
     errors += row.errors
+    noFault += row.benign
     console.log(toolLine(row.name, 2, row))
 
     const sub = row.sub ?? []
@@ -1513,6 +1359,11 @@ function printTools(rows: ToolRow[], subLimit: number, noun: string): void {
   console.log(
     `  ${rows.length} tool${rows.length === 1 ? '' : 's'} · ${calls} call${calls === 1 ? '' : 's'} · ${errors} error${errors === 1 ? '' : 's'}`,
   )
+  if (noFault > 0) {
+    // Named rather than dropped. These were flagged by the harness and nothing was wrong: mostly a
+    // search that matched nothing, which is a finding, plus calls a person declined.
+    console.log(`  ${noFault} more flagged with no fault: a search found nothing, or you said no`)
+  }
   if (broken.length > 0) {
     // Without this the sub-rows look like they should add up to their tool's own count, and they
     // never will: one call can run several commands, and it counts for each of them.

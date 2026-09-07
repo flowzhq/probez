@@ -80,6 +80,7 @@ test('a round survives the trip with every field intact', () => {
         input_chars: 26,
         result_chars: 900,
         is_error: false,
+        error_kind: null,
         stderr_chars: 12,
         interrupted: false,
         patch: { files: 2, added: 40, removed: 3 },

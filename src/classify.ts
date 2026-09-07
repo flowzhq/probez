@@ -16,18 +16,28 @@
  * lookup, and a label you disagree with is one row to change rather than a rule to trace.
  *
  * What is deliberately absent is as load-bearing as what is here. There is still no `repair`
- * category: `is_error` is a harness-level flag, so a Bash call running a suite with 47 failures
- * comes back `is_error: false`. The store now keeps `stderr_chars` and `interrupted`, which is the
- * signal that was missing, but a category is a claim about what work *was* and that needs rules
- * written against the new field rather than the old one renamed. There is no `trace` sub-kind: it
- * would mean "this file was opened because of a symbol found in that one", which needs result
- * bodies the store does not keep. Both would have been buckets that only ever looked full.
+ * category, but the reason given here for years was wrong and is worth correcting in place: it said
+ * `is_error` was a harness-level flag that came back false for a suite failing 47 tests. It does
+ * not. A non-zero exit sets the flag, and `Exit code N` opens four in five of every flagged body in
+ * a real store. So the signal was never missing. What is missing is the rule: `repair` is a claim
+ * about a *round* — that this one exists because the last one failed — and every call in this file
+ * is labelled on its own, with no view of what came before it. That is a change to the shape of the
+ * classifier, not a row in a table, which is why it is still not here. `error_kind` is the field it
+ * would be written against; see `errors.ts`. There is no `trace` sub-kind either: it would mean
+ * "this file was opened because of a symbol found in that one", which needs result bodies the store
+ * does not keep.
  *
  * `review` was here and is gone. It existed to hold one rule — that a `git diff` after an edit is
  * checking your work and the same command before one is orienting — and paying for that rule meant
  * every round carrying the history of its task. Read-only git is now unconditionally reconstruction,
  * which costs a distinction that was never load-bearing and buys a classifier where a round can be
  * labelled on its own.
+ *
+ * `reconstruction/infra` is the newest row, and the one that reverses a decision rather than adding
+ * to it. Read-only cluster and cloud calls used to be `environment/infra` on the argument that
+ * working on the machines is one kind of work whichever direction it runs in. See the note on
+ * `INFRA` in `bash.ts` for why a store measured at a sixth of its spend in that row settled it the
+ * other way.
  *
  * `reconstruction/mcp` is the one row here that is a placement rather than a reading. `act.ts` can
  * tell that a call went to an MCP server and nothing else: the tool after `mcp__<server>__` is
@@ -81,6 +91,13 @@ export interface CategoryInfo {
  * rest of the container and cloud CLIs used to land in `unclassified/unknown`, which said only that
  * nothing recognized them. Working on the machines the code runs on is not the same work as
  * changing the code, and it is not nothing.
+ *
+ * It is now only the half of that work that *changes* those machines. `reconstruction/infra` is the
+ * other half — `kubectl get`, `aws … describe-*`, `terraform plan`, and a `kubectl exec … -- cat`
+ * that is a file read with a cluster in the middle. Reading a cluster to work out what is going on
+ * is the same act as reading a repository to work out what is going on, and the store that forced
+ * the split had environment at 18.6% of spend with about half of it read-only. The category was
+ * large enough that leaving it whole was what hid the finding.
  */
 export const CATEGORIES: CategoryInfo[] = [
   {
@@ -93,7 +110,7 @@ export const CATEGORIES: CategoryInfo[] = [
     id: 'reconstruction',
     label: 'Reconstruction',
     short: 'Recon',
-    subs: ['locate', 'graph', 'read', 'inspect', 'mcp'],
+    subs: ['locate', 'graph', 'read', 'inspect', 'infra', 'mcp'],
   },
   { id: 'implementation', label: 'Implementation', short: 'Impl', subs: ['create', 'modify'] },
   { id: 'testing', label: 'Testing', short: 'Test', subs: ['test', 'run'] },
@@ -157,6 +174,7 @@ const LABELS: Record<Verb, [Category, string]> = {
   branch: ['delivery', 'branch'],
   install: ['environment', 'deps'],
   env: ['environment', 'env'],
+  probe: ['reconstruction', 'infra'],
   infra: ['environment', 'infra'],
   ask: ['planning', 'clarify'],
   track: ['planning', 'decompose'],

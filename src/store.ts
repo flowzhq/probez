@@ -32,7 +32,7 @@ import type { AgentSource, Project, Round, RoundSource, SessionFile } from './ty
  * Exported so a test that builds a store by hand builds the current one: a fixture with a version
  * number typed into it is a fixture that silently stops being read the next time this moves.
  */
-export const SCHEMA_VERSION = 7
+export const SCHEMA_VERSION = 8
 
 export interface Summary {
   project: string

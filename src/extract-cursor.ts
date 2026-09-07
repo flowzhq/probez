@@ -28,6 +28,12 @@ function userQueryOf(text: string): string | null {
  * Cursor rows use `role` rather than Claude's `type`, have no `message.id`, no usage, and no
  * tool results. Each assistant row is one round. A `<user_query>` starts a task. Missing fields
  * stay null rather than being guessed at.
+ *
+ * "No tool results" is worth stating plainly, because it is the largest hole in the store and it is
+ * silent. A Cursor `tool` row carries a tool *name* and nothing more: no output, no exit status, no
+ * error flag. Every cost, error and result-size question therefore comes back empty for Cursor
+ * rather than wrong — and on this machine that is a third of every round collected. Anything
+ * counting failures has to say "not recorded" for these rather than "none".
  */
 export async function extractCursorSession(
   file: string,
@@ -152,7 +158,13 @@ export async function extractCursorSession(
           input: truncateInput(block.input),
           input_chars: inputChars(block.input),
           result_chars: null,
+          // Null, and it has to stay null. A Cursor transcript records a tool result as
+          // `{"role":"tool","toolResult":{"toolName":"read_file"}}` and nothing else — no body, no
+          // status, no flag — across every result in every file. So "did this call fail" is not a
+          // question this source can answer, and `false` would be a fabricated answer to it.
+          // `unanswered` in the store, not `no`. See ToolRow.unknown.
           is_error: null,
+          error_kind: null,
           stderr_chars: null,
           interrupted: null,
           patch: null,
