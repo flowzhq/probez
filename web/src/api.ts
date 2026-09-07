@@ -442,10 +442,25 @@ export interface ProjectsPayload {
   data_dir: string
   projects: Array<
     StoredProject & {
-      work: Dominant | null
+      work: ProjectWork | null
       mix: Array<{ category: string; label: string; share: number }>
     }
   >
+}
+
+/**
+ * The dominant category with the share the project page would show for it. Mirrors `ProjectWork`.
+ *
+ * `basis` is the denominator that share came from: the money these rounds cost, or — when no model
+ * here has a rate, so there is no money to divide — the classified rounds. The list cannot use one
+ * header to say which, the way the project page does, because two projects in the same table can
+ * differ; the row carries its own answer.
+ */
+export interface ProjectWork extends Dominant {
+  basis: 'cost' | 'rounds'
+  /** Classified rounds with no rate, out of all of them: what the share was computed over. */
+  unpriced: number
+  classified: number
 }
 
 export interface ProjectPayload {
@@ -897,7 +912,7 @@ export const api = {
     post<CommandsPayload>('/commands', { commands }),
   saveReader: (command: string[], timeoutMs: number) =>
     post<ReaderPayload>('/reader', { command, timeout_ms: timeoutMs }),
-  savePricing: (models: Record<string, Rates>) => post<PricingPayload>('/pricing', { models }),
+  savePricing: (models: Record<string, Rates | null>) => post<PricingPayload>('/pricing', { models }),
   import: (file: File) => postFile<ImportResult>('/import', file),
   // A read, so a GET: answering a query writes nothing, not even the index it is answered from.
   search: (q: string, options: { slug?: string | null; entity?: Entity; limit?: number } = {}) => {

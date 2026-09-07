@@ -153,7 +153,12 @@ table, so it can correct a name as well as add one. Anything left unnamed stays 
 is reported rather than guessed at.
 
 **Settings** holds the token rates every cost is computed from — one row per model, five rates
-each, at published list prices and yours to change. Stored in `~/.probez/pricing.json`, owner-only.
+each, at published list prices and yours to change. Stored in `~/.probez/pricing.json`, owner-only,
+and read *over* the shipped table rather than instead of it: correcting one rate leaves the rest
+free to move when a later probez ships a new model, while a row you empty stays empty. A model id
+matches past a dated suffix, so a rate against `claude-haiku-4-5` also covers the
+`claude-haiku-4-5-20251001` rounds Claude Code actually records — and no further than that, so a
+model nothing has priced is reported as unpriced instead of billed at a lookalike's rate.
 Under them sits the **reader**: the command *explain* runs, which is the only program probez ever
 starts. It is argv and not a shell line, it runs only when you press explain on one question or
 *ask* on a search, and leaving it blank leaves probez with nothing it could run.
@@ -163,6 +168,23 @@ than one project. *Trim old history* takes every session older than a window you
 archived transcripts beside them; *clear the whole store* takes every project. Neither acts on its
 first press — both show what would go, the largest projects named rather than only counted, in a
 panel you have to open. Your rates and your reader are settings rather than projects and stay.
+
+The **projects list** is ordered newest-activity-first, and its **Project**, **Last activity** and
+**Updated** headings sort it. The last two are different questions and both are on the page: *Last
+activity* is when the most recent round in a project ran, and *Updated* is when probez last went and
+looked — collected here, or imported from a file. Sorting by *Updated* is how you find the projects
+you have not synced lately, which is not a thing the work dates can tell you. A project with no date
+sorts last whichever way the arrow points, since an unknown date is not an old one.
+
+Its **Work** column is the same pair the project page draws, at row size: the bar is the mix of work
+by rounds, and under it is the largest of those with what that work cost — the number the project
+page shows in its *Share* column, so the two say the same thing about the same project. A project
+none of whose models has a rate has no money to divide; its share is of the rounds instead, and the
+row says so rather than letting one figure stand for two different denominators. Between the two
+there is a project where *most* of the work is unpriced — an imported store where half the rounds
+recorded no model, say. A share of money is still the better answer there, but it is an answer
+about the priced half, so the row and the project page's *Share* heading both carry a mark saying
+how many rounds the money covers.
 
 Each project carries a **⋮** menu, on its own page and on every row of the projects list. *Sync*
 runs `collect` then `analyze` for that project, and is on a session page too, beside the header — a

@@ -93,7 +93,7 @@ export function Settings(): ReactElement {
   }
 
   const save = async (): Promise<void> => {
-    const models: Record<string, Rates> = {}
+    const models: Record<string, Rates | null> = {}
     for (const [model, fields] of Object.entries(draft)) {
       const rates: Record<string, number> = {}
       let usable = true
@@ -105,7 +105,10 @@ export function Settings(): ReactElement {
         if (raw === '' || !Number.isFinite(value) || value < 0) usable = false
         else rates[key] = value
       }
-      if (usable) models[model] = rates as unknown as Rates
+      // A blank goes as an explicit null, never by being left out. Omitting it used to be how a row
+      // was blanked, back when the file was the whole truth; now an omission means "never heard of
+      // it" and the published rate would come straight back on the next read.
+      models[model] = usable ? (rates as unknown as Rates) : null
     }
 
     setSaving(true)

@@ -32,9 +32,28 @@ test('a round from a store written before the field existed has no share', () =>
   assert.equal(contextShare(older as unknown as Parameters<typeof contextShare>[0]), null)
 })
 
-test('every priced model has a window', async () => {
+test('the two tables name the same models, in both directions', async () => {
   const { defaultPricing } = await import('../src/pricing.js')
-  for (const model of Object.keys(defaultPricing().models)) {
+  const priced = Object.keys(defaultPricing().models)
+  // Nothing compiles against these two tables together, so pricing a model and forgetting its
+  // window — or the reverse — is a silent half-edit. This is the only thing that catches it.
+  for (const model of priced) {
     assert.ok(CONTEXT_WINDOWS[model] !== undefined, `${model} has a rate but no window`)
   }
+  for (const model of Object.keys(CONTEXT_WINDOWS)) {
+    assert.ok(priced.includes(model), `${model} has a window but no rate`)
+  }
+})
+
+test('a dated model id reports the window of the model it names', () => {
+  assert.equal(contextWindow('claude-haiku-4-5-20251001'), contextWindow('claude-haiku-4-5'))
+  assert.equal(contextWindow('claude-opus-4-5@20251101'), contextWindow('claude-opus-4-5'))
+  assert.equal(contextWindow('claude-opus-6-20270101'), null)
+})
+
+test('a GPT window is the room for input, not the headline number', () => {
+  // gpt-5.3-codex advertises 400,000 and admits 272,000 of input. Taking the headline would report
+  // every session as filling less of its window than it did, by 47%.
+  assert.equal(contextWindow('gpt-5.3-codex'), 272_000)
+  assert.equal(contextWindow('gpt-5.6-terra'), 922_000)
 })

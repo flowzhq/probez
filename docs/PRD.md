@@ -150,8 +150,12 @@ did, not inside it.
 **Pricing is not in the round.** A round records tokens; what they cost depends on rates that change
 and that differ per contract, so they live in `~/.probez/pricing.json` and are applied at read time.
 Every share under "where agent work goes" is a share of cost, so a wrong rate is a wrong answer;
-the rates ship at published list prices and are editable in the view's Settings screen. A model with
-no rate is reported as outside the shares rather than counted as free. Where *nothing* is priced —
+the rates ship at published list prices and are editable in the view's Settings screen. What is
+saved is read *over* what ships, so correcting one rate does not freeze the rest at the table that
+was current when you corrected it, and a model deliberately left unpriced is written down as such
+rather than left out. The id is matched past a dated snapshot suffix — `claude-haiku-4-5-20251001`
+is priced as `claude-haiku-4-5` — but no further: a model with no rate is reported as outside the
+shares rather than counted as free, and never charged at the rate of one that looks like it. Where *nothing* is priced —
 a source that records no tokens at all, as Cursor does — there is no money to divide, so the shares
 are of the rounds instead and say so, rather than reading as a table of zeros.
 

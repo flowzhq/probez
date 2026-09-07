@@ -369,6 +369,26 @@ thead th {
   white-space: nowrap;
 }
 
+/* A column heading that sorts. The global button reset already hands down the cell's font, colour,
+   letter-spacing and capitals, so a sortable heading is typographically the same heading as a fixed
+   one — the caret and the hover are the whole of the difference. */
+thead th .sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+thead th .sort:hover,
+thead th[aria-sort='ascending'] .sort,
+thead th[aria-sort='descending'] .sort {
+  color: var(--ink);
+}
+
+/* Small enough to read as a mark on the heading rather than as another letter in it. */
+thead th .caret {
+  font-size: 7px;
+}
+
 tbody td {
   padding: 7px 10px;
   border-bottom: 1px solid var(--rule);

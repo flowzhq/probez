@@ -8,6 +8,73 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-07
+
+### Fixed
+
+- **The projects table and the project page state the same share.** The caption under a row's work
+  bar was a share of the rounds and the Share column on the page it links to is a share of the
+  money, so one store read *Recon 61%* in the list and *54.9%* on the page — two honest numbers
+  under one label, which reads as a broken measurement. The list now divides the way the page does:
+  cost when any of the project's models has a rate, and the classified rounds when none does, with
+  a mark on the row saying so in that second case. The name beside it is still the rounds' answer,
+  because the bar it sits under is drawn from the rounds.
+
+- **A share of money says so when most of the work has no price on it.** A cost share divides by the
+  rounds that have a rate, and that can be a minority of them — one store prices 41,100 of its
+  84,322 classified rounds, the rest having recorded no model at all — so a figure a reader takes
+  for a statement about the work was a statement about half of it. Past half, the project page's
+  *Share* heading and the matching row in the projects list now carry a mark with both counts. The
+  share itself is unchanged: money is still the better answer while any of it is priced, and the
+  existing fallback to rounds still needs *nothing* priced.
+
+- **A dated model id is priced as the model it names.** Claude Code records
+  `claude-haiku-4-5-20251001` where the published tables say `claude-haiku-4-5`, and an exact-match
+  lookup missed every one of them: on the store this was found in, 6,196 rounds were reported as
+  having no rate for a model probez had shipped a rate for all along. The snapshot suffix is now
+  stripped before the lookup, in both the rate table and the window table, and Vertex's `@20251101`
+  form with it. A rate typed into Settings covers the dated rounds too. Nothing else was loosened:
+  there is no family fallback, so a model nobody has priced still costs nothing knowable rather than
+  being charged at a neighbour's rate.
+
+- **Claude Sonnet 5 is priced at $2/$10.** It shipped at $3/$15 on the reasoning that the $2/$10
+  announced at launch was introductory through 2026-08-31 and the durable price was the one to hold.
+  Anthropic has since cancelled that increase, and $2/$10 is the standard price. A saved rate still
+  wins over this one — the Settings row shows as *edited*, with reset beside it.
+
+### Changed
+
+- **The rate file is now read over the published rates rather than instead of them.** It used to be
+  the whole truth, so that blanking a row could not be undone by a default reappearing. The cost was
+  that absence meant two things at once: a model added to the defaults by a later probez could never
+  reach anyone who had saved even once — which is everyone who has ever opened the screen. A blank
+  now has its own spelling, a `null` beside the model, and absence goes back to meaning "not heard
+  of", which is the thing a default is for. Existing files migrate on read: a row blanked against the
+  table that shipped with them stays blank, and every model added since arrives priced.
+
+### Added
+
+- **The projects list sorts, and it has the second date it was sorting against.** *Project*, *Last
+  activity* and *Updated* are now headings you can click; the default is still newest activity first,
+  so the first paint is the list it has always been. *Updated* is new as a column: when probez last
+  read the project — collected here, or imported from a file — which is a different question from
+  when the work happened, and the one behind "which of these have I not synced lately". A project
+  with no date sorts last whichever way the arrow points, because an unknown date is not an old one,
+  and ties fall back to the name so a store lists the same way twice running.
+
+- **Rates and context windows for the Codex models, and for the Claude models that were missing.**
+  probez shipped no GPT rate at all, so every Codex round in every store was reported as outside the
+  cost. Added: `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.3-codex` and the
+  GPT-5 generation behind them; `claude-fable-5-1` and `claude-mythos-5-1`, whose cache reads are
+  0.025× input rather than the 0.1× every other model uses; and the older Claude models an archive
+  still holds rounds from, down to `claude-3-5-haiku`. Retired models are priced on purpose — probez
+  reads archives, and those rounds still cost what they cost.
+
+  Two figures are approximations, and say so in the source. The GPT models tier their rates by
+  context length and do not publish the boundary, so what ships is the short-context price. And a GPT
+  window is the room for *input* — 272,000 of `gpt-5.3-codex`'s advertised 400,000 — because that is
+  what the share is computed against; taking the headline would have understated every share by 47%.
+
 ## [0.7.0] - 2026-09-07
 
 ### Added
@@ -1479,7 +1546,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/flowzhq/probez/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/flowzhq/probez/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/flowzhq/probez/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/flowzhq/probez/compare/v0.5.0...v0.5.1

@@ -4,12 +4,52 @@ import { useState } from 'react'
 
 import type { Analysis, CategoryRow } from '../api'
 import { fillOf, orderOf, shadeOf, styleOf, texturedSub } from '../categories'
-import { duration, money, percent, tokens } from '../format'
+import { count, duration, money, percent, tokens } from '../format'
 import { href, linkProps } from '../router'
 import { Info } from './Chrome'
 import { Tip, useTip } from './Tip'
 import { TokenCells, TokenHeaders } from './Tokens'
 import type { ReactElement } from 'react'
+
+/**
+ * Most of the work here has no price on it.
+ *
+ * A share of money divides by the rounds that have a rate, and that can be a minority of them: one
+ * store prices 41,100 of its 84,322 classified rounds, the rest recording no model at all. The
+ * number is not wrong — it is a true share of what was actually billed — but a reader takes a
+ * percentage for a statement about the work, and this one is a statement about half of it. Half is
+ * where that stops being a footnote, so half is the line.
+ *
+ * Not the same condition as falling back to the rounds, which needs *nothing* priced. Between the
+ * two a share of money is still the better answer; it just cannot be read as covering everything.
+ */
+export function mostlyUnpriced(unpriced: number, classified: number): boolean {
+  return classified > 0 && unpriced * 2 > classified
+}
+
+/**
+ * The mark that says so, wherever that share is standing.
+ *
+ * Both places it appears are tables, and a table has no room for the sentence — the project page
+ * states it in prose under the bars, and the projects list has nothing under anything. So it is a
+ * mark, and it carries the two counts rather than the word "some": a reader deciding whether to go
+ * and set a rate needs to know if it is a tenth of the work missing or nine tenths.
+ */
+export function UnpricedMark({
+  unpriced,
+  classified,
+}: {
+  unpriced: number
+  classified: number
+}): ReactElement {
+  const priced = classified - unpriced
+  return (
+    <Info
+      says={`${count(unpriced)} of the ${count(classified)} rounds that called a tool have no rate for their model, so this is a share of what the other ${count(priced)} cost. Set a rate under Settings to bring the rest in.`}
+      aria={`A share of what ${count(priced)} of ${count(classified)} rounds cost: the rest have no rate.`}
+    />
+  )
+}
 
 /**
  * Where the work went, one row per category.
@@ -41,6 +81,9 @@ export function WorkBars({
   // as a missing denominator. With no money to divide, the rounds are the honest denominator, and
   // the mark on the header says which one the reader is looking at.
   const byRounds = spent === 0
+  // Priced, but most of it isn't. The share stays a share of money — see `mostlyUnpriced` — and
+  // says what it left out.
+  const thin = !byRounds && mostlyUnpriced(analysis.coverage.unpriced, total)
 
   if (total === 0) {
     return <p className="note">No round in this span called a tool, so there is no work to divide.</p>
@@ -90,7 +133,7 @@ export function WorkBars({
               className="r"
               // The `i` is 17px the header did not have room for, so the column widens to hold it
               // rather than wrapping "Share" onto two lines.
-              style={{ width: byRounds ? 84 : 66 }}
+              style={{ width: byRounds || thin ? 84 : 66 }}
               title={
                 byRounds
                   ? undefined
@@ -103,6 +146,8 @@ export function WorkBars({
                   says="No round here has a priced model, so there is no cost to divide. These are shares of the classified rounds instead — of how much work a category was, not of what it cost. Set a rate under Settings to get shares of money."
                   aria="Shares of rounds, not of cost: no round here has a priced model."
                 />
+              ) : thin ? (
+                <UnpricedMark unpriced={analysis.coverage.unpriced} classified={total} />
               ) : null}
             </th>
             <th className="r" style={{ width: 66 }}>

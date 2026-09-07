@@ -70,7 +70,7 @@ import { commandsFile, readCommandKinds, writeCommandKinds } from './commands.js
 import { buildIndex, isFacet, SearchIndex } from './searchindex.js'
 import { applyClear, planClear } from './store.js'
 import type { ClearPlan, ClearResult } from './store.js'
-import { contextShare } from './models.js'
+import { contextShare, resolveModel } from './models.js'
 import type { Round, ToolCall } from './types.js'
 
 /**
@@ -134,7 +134,36 @@ export interface ViewTask extends TaskRow {
 
 export interface ProjectsPayload {
   data_dir: string
-  projects: Array<StoredProject & { work: Dominant | null; mix: CategoryShare[] }>
+  projects: Array<StoredProject & { work: ProjectWork | null; mix: CategoryShare[] }>
+}
+
+/**
+ * The category a project mostly was, and its share on the basis the project page divides by.
+ *
+ * `dominant` measures a share of the rounds; the project page's Share column measures a share of
+ * the money. Both are honest and they are not the same number — reconstruction was 61% of one
+ * store's rounds and 54.9% of its bill — so a row that named the first one and a page that showed
+ * the second read as a bug in the measurement. The list now says what the page says.
+ *
+ * The *name* is still the one `dominant` picks, because the bar beside it is drawn from the
+ * rounds: a caption naming a category that is not the widest slice above it would trade one
+ * disagreement for another. `basis` says which denominator the share came from, since a project
+ * whose models have no rate has no money to divide and falls back to the rounds.
+ */
+export interface ProjectWork extends Dominant {
+  basis: 'cost' | 'rounds'
+  /**
+   * Classified rounds with no rate for their model, out of all the classified rounds: what the
+   * share was computed over.
+   *
+   * A cost basis divides by the rounds that have a price, and on a real store that can be a
+   * minority of them — one project here prices 41,100 of 84,322, the rest recording no model at
+   * all. The share is not wrong, but it is a share of half the work, and the row cannot say so
+   * without the two counts. The project page states them under its bars; this is the same pair,
+   * for a table that has no room for a sentence.
+   */
+  unpriced: number
+  classified: number
 }
 
 export interface CategoryShare {
@@ -424,6 +453,33 @@ function mixOf(analysis: Analysis): CategoryShare[] {
   }))
 }
 
+/**
+ * The dominant category, sharing the project page's denominator.
+ *
+ * The same rule the Share column applies, in the same order: money if any of these rounds has a
+ * rate, and the classified rounds if none does. Deliberately the page's rule rather than a second
+ * one that agrees with it today — the two numbers stay equal because they are computed the same
+ * way, not because both were correct at the time they were written.
+ */
+function projectWork(analysis: Analysis, labels: RoundLabel[]): ProjectWork | null {
+  const win = dominant(labels)
+  if (win === null) return null
+  const { cost: spent, classified, unpriced } = analysis.coverage
+  const over = { unpriced, classified }
+  const row = analysis.rows.find((one) => one.name === win.category)
+  // No row means the analysis and the labels disagree about what these rounds were, which cannot
+  // happen from one pass over one set of rounds. `dominant`'s own share is the rounds basis, so
+  // there is an answer to give rather than a hole.
+  if (row === undefined) return { ...win, basis: 'rounds', ...over }
+  if (spent > 0) return { ...win, share: row.cost / spent, basis: 'cost', ...over }
+  return {
+    ...win,
+    share: classified === 0 ? 0 : row.rounds / classified,
+    basis: 'rounds',
+    ...over,
+  }
+}
+
 function modelOf(rounds: Round[]): string | null {
   const counts = new Map<string, number>()
   for (const round of rounds) {
@@ -488,7 +544,7 @@ export async function projectsPayload(
     for (const labels of labelRounds(rounds).values()) all.push(...labels)
     projects.push({
       ...shownProject(project, rounds, source),
-      work: dominant(all),
+      work: projectWork(analysis, all),
       mix: mixOf(analysis),
     })
   }
@@ -1581,20 +1637,27 @@ export interface PricingPayload {
  */
 export async function pricingPayload(dataDir: string): Promise<PricingPayload> {
   const pricing = await readPricing(dataDir)
-  const defaults = defaultPricing().models
+  const defaults: Record<string, Rates> = {}
+  for (const [model, rate] of Object.entries(defaultPricing().models)) {
+    if (rate !== null) defaults[model] = rate
+  }
+
   const seen = new Map<string, number>()
   for (const project of await listStored(dataDir)) {
     for (const round of await roundsOf(project.dir)) {
       if (round.model === null) continue
-      seen.set(round.model, (seen.get(round.model) ?? 0) + 1)
+      // Counted against the id that actually prices the round, so the 6,196 rounds recorded as
+      // `claude-haiku-4-5-20251001` land on the `claude-haiku-4-5` row rather than sitting in a row
+      // of their own marked "no rate" while being charged perfectly well. A model nothing resolves
+      // keeps its own spelling, because that is the one a person has to type a rate against.
+      const id = resolveModel(round.model, (one) => pricing.models[one] != null) ?? round.model
+      seen.set(id, (seen.get(id) ?? 0) + 1)
     }
   }
-  // Three sources, unioned: models the store has rounds for, models the rate file names, and models
-  // with a published price. The last is what keeps the screen usable after a save — the file is
-  // authoritative, so without it every model nobody had used yet would disappear the first time
-  // anything was saved, and there would be no row left to type a rate into.
+  // Two sources, unioned: models the store has rounds for, and every model the rate table names.
+  // The rates are the defaults merged with whatever was saved, so a model nobody has used yet still
+  // gets a row — and a model deliberately blanked keeps one, with nothing in it.
   for (const model of Object.keys(pricing.models)) if (!seen.has(model)) seen.set(model, 0)
-  for (const model of Object.keys(defaults)) if (!seen.has(model)) seen.set(model, 0)
 
   const models: PricedModel[] = [...seen.entries()]
     .map(([model, rounds]) => {
@@ -1615,16 +1678,24 @@ export async function pricingPayload(dataDir: string): Promise<PricingPayload> {
  * Every field of every model is checked before anything is written: a rate table is arithmetic that
  * silently changes every share on every page, and a string where a number belongs would turn those
  * into `NaN` rather than into an error anybody sees.
+ *
+ * A `null` is accepted and stored as one. That is a model deliberately left unpriced, and it has to
+ * be written down rather than left out: an omission now means "never heard of it", and the defaults
+ * would fill it straight back in.
  */
 export async function savePricing(dataDir: string, body: unknown): Promise<PricingPayload> {
   const models = (body as { models?: unknown } | null)?.models
   if (!models || typeof models !== 'object' || Array.isArray(models)) {
-    throw new BadRequest('expected { models: { "<model>": { in, cache_write_5m, cache_write_1h, cache_read, out } } }')
+    throw new BadRequest('expected { models: { "<model>": { in, cache_write_5m, cache_write_1h, cache_read, out } | null } }')
   }
   const fields = ['in', 'cache_write_5m', 'cache_write_1h', 'cache_read', 'out'] as const
-  const checked: Record<string, Rates> = {}
+  const checked: Record<string, Rates | null> = {}
   for (const [model, value] of Object.entries(models as Record<string, unknown>)) {
     if (model === '' || model.length > 200) throw new BadRequest(`"${model}" is not a model name`)
+    if (value === null) {
+      checked[model] = null
+      continue
+    }
     if (!value || typeof value !== 'object') throw new BadRequest(`${model} has no rates`)
     const raw = value as Record<string, unknown>
     const rates: Record<string, number> = {}

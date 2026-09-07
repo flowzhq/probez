@@ -219,6 +219,44 @@ test('every level answers, and its numbers are the ones the store holds', async 
   }
 })
 
+/**
+ * The list and the page state the same fact, so they divide by the same thing.
+ *
+ * They did not: the row named a share of the rounds and the page's Share column a share of the
+ * money, and one store put reconstruction at 61% in the table and 54.9% on the page it linked to.
+ * Two honest numbers under one label read as a broken one.
+ */
+test('the projects table divides by the same thing the project page does', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const row = (await body(withToken(server, '/api/projects'))).projects[0]
+    const page = await body(withToken(server, `/api/projects/${slug}`))
+    const { rows, coverage } = page.analysis
+
+    assert.ok(coverage.cost > 0, 'the fixture prices nothing, so there is no cost basis to check')
+    assert.equal(row.work.basis, 'cost')
+    const named = rows.find((one: { name: string }) => one.name === row.work.category)
+    assert.ok(named !== undefined, 'the list names a category the page does not have a row for')
+    assert.equal(row.work.share, named.cost / coverage.cost)
+
+    // The share travels with what it was computed over, so the row can mark a project whose money
+    // covers a minority of its rounds — the page says that in prose it has no room for.
+    assert.equal(row.work.classified, coverage.classified)
+    assert.equal(row.work.unpriced, coverage.unpriced)
+
+    // The name is still the rounds' answer, because the bar above it is drawn from the rounds. A
+    // caption naming a category that is not the widest slice would trade one disagreement for
+    // another.
+    const widest = [...row.mix].sort(
+      (a: { share: number }, b: { share: number }) => b.share - a.share,
+    )[0]
+    assert.equal(row.work.category, widest.category)
+  } finally {
+    await server.close()
+  }
+})
+
 test('the paths it hands the browser are the short ones', async () => {
   const { dataDir, slug } = makeStore()
   const server = await serving(dataDir)
@@ -690,6 +728,17 @@ test('?source=cursor keeps the project payload to Cursor rounds on a mixed store
     const listed = await body(withToken(server, '/api/projects?source=cursor'))
     assert.equal(listed.projects.length, 1)
     assert.equal(listed.projects[0].rounds, cursor.project.rounds)
+
+    // A Cursor session carries no token counts, so there is no money to divide and the row falls
+    // back to the rounds — the same fallback the project page's Share column makes, and the reason
+    // the row has to say which denominator it used. The page beside it cannot say it for them:
+    // this store's Claude rounds are priced and its Cursor rounds are not.
+    assert.equal(cursor.analysis.coverage.cost, 0)
+    const fallback = listed.projects[0].work
+    assert.equal(fallback.basis, 'rounds')
+    const named = cursor.analysis.rows.find((one: { name: string }) => one.name === fallback.category)
+    assert.equal(fallback.share, named.rounds / cursor.analysis.coverage.classified)
+    assert.equal((await body(withToken(server, '/api/projects'))).projects[0].work.basis, 'cost')
 
     const found = await body(withToken(server, `/api/search?q=source:cursor&project=${slug}`))
     assert.equal(found.totals.rounds, cursor.analysis.coverage.rounds)
@@ -1241,29 +1290,58 @@ test('a model probez has never seen can be priced, which is the only way to pric
   const { dataDir } = makeStore()
   const server = await serving(dataDir)
   try {
-    // The table is built from models with rounds collected, models the rate file names, and models
-    // with a published price. None of those can hold a model you have not run yet — so pricing
-    // Codex on a machine with no Codex sessions depends entirely on a name being acceptable here.
+    // The table is built from models with rounds collected and models the rate table names. Neither
+    // can hold a model nobody publishes a price for — `gpt-5-codex` is a real id that appears in
+    // older Codex rollouts and is no longer on any pricing page, so probez ships no rate for it
+    // rather than inventing one. Pricing it depends entirely on a name being acceptable here.
     const before = await body(withToken(server, '/api/pricing'))
-    assert.equal(before.models.some((one: { model: string }) => one.model === 'gpt-5'), false)
+    assert.equal(before.models.some((one: { model: string }) => one.model === 'gpt-5-codex'), false)
 
     const saved = await body(
       get(server, `/api/pricing?t=${server.token}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          models: { 'gpt-5': { in: 1, cache_write_5m: 1, cache_write_1h: 2, cache_read: 0.1, out: 8 } },
+          models: { 'gpt-5-codex': { in: 1, cache_write_5m: 1, cache_write_1h: 2, cache_read: 0.1, out: 8 } },
         }),
       }),
     )
-    const row = saved.models.find((one: { model: string }) => one.model === 'gpt-5')
+    const row = saved.models.find((one: { model: string }) => one.model === 'gpt-5-codex')
     assert.ok(row !== undefined, 'a model named in the rate file is not offered back')
     assert.equal(row.rates.out, 8)
     assert.equal(row.rounds, 0, 'a priced model with no rounds is still a row')
 
     // And it survives a re-read, since the rate file is what the screen is built from.
     const again = await body(withToken(server, '/api/pricing'))
-    assert.ok(again.models.some((one: { model: string }) => one.model === 'gpt-5'))
+    assert.ok(again.models.some((one: { model: string }) => one.model === 'gpt-5-codex'))
+  } finally {
+    await server.close()
+  }
+})
+
+test('a blanked row is saved as a blank, not as a model nobody mentioned', async () => {
+  const { dataDir } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    // What the Settings screen sends for an empty row. It has to be an explicit null: leaving the
+    // model out would now read as "never heard of it", and the published rate would come back.
+    const saved = await body(
+      get(server, `/api/pricing?t=${server.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: { 'claude-opus-5': null } }),
+      }),
+    )
+    const row = saved.models.find((one: { model: string }) => one.model === 'claude-opus-5')
+    assert.ok(row !== undefined, 'a blanked model still needs a row to type a rate back into')
+    assert.equal(row.rates, null)
+
+    const again = await body(withToken(server, '/api/pricing'))
+    const back = again.models.find((one: { model: string }) => one.model === 'claude-opus-5')
+    assert.equal(back.rates, null, 'the blank did not survive the round trip')
+    // And the models it says nothing about keep the published rate.
+    const other = again.models.find((one: { model: string }) => one.model === 'claude-sonnet-5')
+    assert.ok(other.rates !== null)
   } finally {
     await server.close()
   }
