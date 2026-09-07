@@ -29,6 +29,7 @@ export const TOOL_DEFAULTS: ToolCall = {
   input_chars: 0,
   result_chars: null,
   is_error: null,
+  error_kind: null,
   stderr_chars: null,
   interrupted: null,
   patch: null,

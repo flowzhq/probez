@@ -520,6 +520,76 @@ that has not been collected since it existed, or whose rounds have moved underne
 full and the footer says how many were — since being told is the only way to tell a quick search
 from a slow one. `find` itself never writes one; reading writes nothing, here as everywhere.
 
+### Errors: what actually went wrong, and what only looked like it
+
+The harness sets one flag on a failed call, and one flag is the wrong shape for the question. It
+fires for a `grep` that matched nothing, for a suite that failed, for an `Edit` whose anchor had
+moved, for a plan you rejected, and for an MCP server that was not running. Those are five different
+facts and only one of them is a mistake anyone can act on. Counted together they produce an error
+rate that cannot come down, because most of what it counts was never wrong.
+
+So every failed call carries a **kind**, read once from the result body at collection and stored as
+one word. `error:` filters on it:
+
+| Kind | What it is |
+| --- | --- |
+| `harness` | the agent misused the tool: an unread file written to, an edit anchor that had moved, a bad argument |
+| `exit` | a command the agent ran exited non-zero |
+| `limit` | the call hit a tool ceiling: a file too large to return, a `Read` aimed at a directory |
+| `schema` | the model's structured output did not satisfy its schema |
+| `remote` | an MCP server, a browser or a network call failed |
+| `nomatch` | a search or comparison found nothing — an answer, not a failure |
+| `denied` | you declined the call, or a permission rule did |
+| `other` | flagged, and not recognised as any of these |
+
+`nomatch` and `denied` are not faults, and are counted apart from the failures everywhere — as
+`NOFAULT` in the tools table, as `is:benign` in a query, and outside `errors:` and `is:error`
+entirely:
+
+```console
+$ probez tools runnerz --limit 3
+
+  runnerz  ~/Dev/benchmarks/runnerz
+
+  TOOL                 CALLS  ERRORS  NOFAULT    RESULT      TIME
+  Bash                  2602      60       3      3.8M     14.6h
+    cd                  1378      30       ·      1.6M      6.9h
+    echo                1042      27       2      1.6M      5.0h
+    grep                 734      11       2    897.0K      6.5h
+      … 130 more, --limit 0 for all
+  Edit                   133       6       ·     21.8K      5.8m
+  Read                    46       ·       ·    460.2K      2.1m
+  AskUserQuestion         19       ·       ·     10.3K      3.7h
+  ToolSearch              16       ·       ·      1.2K      1.9s
+  Write                   12       ·       ·      2.0K     20.2s
+  ExitPlanMode             9       ·       6     45.9K      1.1h
+  TaskOutput               6       ·       ·      5.4K     47.7m
+  ListAgents               5       ·       ·      3.2K     108ms
+  Agent                    3       ·       ·      3.2K      50ms
+  Monitor                  3       ·       ·       627      91ms
+  TaskStop                 3       ·       ·      1.6K      24ms
+  WebFetch                 3       ·       ·      4.9K     34.7s
+  WebSearch                3       ·       ·     11.0K     35.0s
+  EnterPlanMode            2       ·       ·      1.2K      11ms
+  Skill                    1       ·       ·        27      3.0s
+
+  16 tools · 2866 calls · 66 errors
+  9 more flagged with no fault: a search found nothing, or you said no
+  133 commands under Bash. A call that ran several is counted for each
+```
+
+`ExitPlanMode` is the clearest case: nine calls, no errors, six plans you turned down. Under one
+flag that read as a tool failing two times in three.
+
+The kind worth chasing is `harness`, because every one of them is a protocol mistake with a fix —
+`probez find "error:harness" --all` is the list. `exit` is the agent's shell reporting on the world
+and mostly says what the repository was doing, not what the agent did wrong.
+
+**What this cannot see.** Cursor records a tool result as a name and nothing else — no body, no
+status, no flag — so every error question comes back empty for a Cursor session rather than wrong.
+That is not "no errors"; it is "not recorded", and on a store with Cursor sessions in it that can be
+a third of every round. Codex records an exit code and is read the same way Claude Code is.
+
 ### Trails: how the agent found its way around
 
 An agent that does not know a repository finds its way around it. It lists the tree, opens what the

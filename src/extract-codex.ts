@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
 import { isSubagent } from './agents/paths.js'
+import { errorKindOf } from './errors.js'
 import { applyTiming, contentChars, inputChars, toText, truncateInput } from './extract.js'
 import type { HeadHistory } from './git.js'
 import type { Compaction, Patch, Round, RoundEvent, ToolCall } from './types.js'
@@ -154,6 +155,21 @@ function outputText(value: unknown): string {
     if (typeof record.output === 'string') return record.output
   }
   return toText(value)
+}
+
+/**
+ * The exit status Codex recorded on an output object, when it recorded one.
+ *
+ * Codex puts the shell's status in a field rather than at the head of the body, so this is what
+ * stands in for Claude's `Exit code N` line. Null when the output is not shell-shaped, which leaves
+ * `errorKindOf` to read the body the ordinary way.
+ */
+function exitCodeOf(output: unknown): number | null {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return null
+  const code = (output as Json).exit_code
+  if (typeof code === 'number') return code
+  if (typeof code === 'string' && code.trim() !== '' && Number.isFinite(Number(code))) return Number(code)
+  return null
 }
 
 function outputIsError(payload: Json, output: unknown): boolean {
@@ -335,6 +351,7 @@ export async function extractCodexSession(
       input_chars: inputChars(input),
       result_chars: null,
       is_error: null,
+      error_kind: null,
       stderr_chars: null,
       interrupted: null,
       patch: name === 'apply_patch' ? foldApplyPatch(patchText(parseArguments(input))) : null,
@@ -468,6 +485,9 @@ export async function extractCodexSession(
       if (entry !== undefined) {
         entry.tool.result_chars = chars
         entry.tool.is_error = outputIsError(payload, payload.output)
+        if (entry.tool.is_error) {
+          entry.tool.error_kind = errorKindOf(text, entry.tool.name, entry.tool.input, exitCodeOf(payload.output))
+        }
         entry.tool.result_at = timestamp
         entry.tool.ms = entry.emittedTs !== null && ts !== null ? ts - entry.emittedTs : null
         if (entry.tool.patch === null && entry.tool.name === 'apply_patch') {

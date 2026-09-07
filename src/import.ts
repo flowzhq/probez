@@ -1,4 +1,5 @@
 import { isRoundSource, sourceFromAlias } from './agents/paths.js'
+import { isErrorKind } from './errors.js'
 import type { Compaction, Patch, Round, RoundEvent, RoundSource, ToolCall } from './types.js'
 
 /**
@@ -105,6 +106,9 @@ function toolOf(value: unknown): ToolCall {
     input_chars: num(t.input_chars),
     result_chars: numOrNull(t.result_chars),
     is_error: boolOrNull(t.is_error),
+    // Checked against the table rather than trusted: an export is arbitrary JSON, so an unknown
+    // word here becomes null the way every other unreadable field does.
+    error_kind: typeof t.error_kind === 'string' && isErrorKind(t.error_kind) ? t.error_kind : null,
     stderr_chars: numOrNull(t.stderr_chars),
     interrupted: boolOrNull(t.interrupted),
     patch: patchOf(t.patch),

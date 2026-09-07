@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
 import { isSubagent } from './agents/paths.js'
+import { errorKindOf } from './errors.js'
 import type { HeadHistory } from './git.js'
 import type { Compaction, Patch, Round, RoundEvent, ToolCall } from './types.js'
 
@@ -141,11 +142,13 @@ export function foldPatch(result: unknown): Patch | null {
 }
 
 /**
- * The failure signal the harness flag misses.
+ * What the result carried besides its flag.
  *
- * `is_error` is set by the harness, so a command that ran and failed comes back false. The raw
- * result carries what actually happened. There is no exit code anywhere in the record — `stderr`
- * and `interrupted` are the whole of it.
+ * There is no exit code as a *field* anywhere in the record — the shell's status arrives only as
+ * the `Exit code N` line the body opens with, which is where `errorKindOf` reads it. `stderr` and
+ * `interrupted` are the whole of the structured signal, and of the two only `stderr` is ever
+ * populated: `interrupted` is present on some forty thousand results in this machine's store and
+ * true on none of them.
  */
 function resultSignal(result: unknown): { stderr_chars: number | null; interrupted: boolean | null } {
   if (!result || typeof result !== 'object') return { stderr_chars: null, interrupted: null }
@@ -379,6 +382,7 @@ export async function extractSession(
             input_chars: inputChars(block.input),
             result_chars: null,
             is_error: null,
+            error_kind: null,
             stderr_chars: null,
             interrupted: null,
             patch: null,
@@ -419,6 +423,12 @@ export async function extractSession(
       if (entry === undefined) continue
       entry.tool.result_chars = chars
       entry.tool.is_error = block.is_error === true
+      // The body is read here and kept nowhere: this is the one moment probez holds the text of a
+      // result, and a kind is the only thing that survives it. Only failures are read, which is
+      // about one call in a hundred, so the whole store pays for a string it will never store.
+      if (entry.tool.is_error) {
+        entry.tool.error_kind = errorKindOf(toText(block.content), entry.tool.name, entry.tool.input)
+      }
       entry.tool.result_at = timestamp
       entry.tool.ms = entry.emittedTs !== null && ts !== null ? ts - entry.emittedTs : null
       // The harness flag says whether the call was accepted, not whether it worked. What the tool

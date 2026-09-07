@@ -324,8 +324,11 @@ export interface ViewTask extends Totals {
 export interface ToolRow {
   name: string
   calls: number
+  /** Calls that failed and where the failing was a fault. Excludes `benign`. */
   errors: number
-  /** Calls that failed without the harness saying so: stderr, or cut short. */
+  /** Flagged by the harness with nothing wrong: a search found nothing, or the call was declined. */
+  benign: number
+  /** Calls that wrote to stderr while the harness reported no error. Often just a chatty tool. */
   quiet: number
   result_chars: number
   ms: number
@@ -346,6 +349,8 @@ export interface ToolCall {
   input_chars: number
   result_chars: number | null
   is_error: boolean | null
+  /** What sort of failure it was, when `is_error`. Null otherwise, and on older rounds. */
+  error_kind: 'harness' | 'exit' | 'nomatch' | 'limit' | 'schema' | 'denied' | 'remote' | 'other' | null
   stderr_chars: number | null
   interrupted: boolean | null
   patch: Patch | null

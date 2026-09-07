@@ -1,3 +1,9 @@
+/**
+ * What sort of failure a flagged tool call was. The rules that assign it, and what each one means,
+ * are in `errors.ts`; the type lives here because it is part of what a stored call *is*.
+ */
+export type ErrorKind = 'harness' | 'exit' | 'nomatch' | 'limit' | 'schema' | 'denied' | 'remote' | 'other'
+
 /** Lines a file-editing tool changed, folded from the result's structured patch. */
 export interface Patch {
   /** Distinct files the patch touched. */
@@ -19,13 +25,27 @@ export interface ToolCall {
   /** Size of the result, in characters. The body itself is not recorded. */
   result_chars: number | null
   /**
-   * Whether the harness reported a failure. This is not the same as the command failing: a Bash
-   * call whose suite failed 47 tests still comes back false. See `stderr_chars` and `interrupted`.
+   * Whether the harness reported a failure.
+   *
+   * It fires more widely than "the tool broke". A Bash call whose command exits non-zero comes back
+   * true, and so does a `grep` that matched nothing, a person declining the call, and an MCP server
+   * that was not running. `error_kind` is what tells those apart; read it rather than this.
    */
   is_error: boolean | null
+  /**
+   * What sort of failure it was, on calls where `is_error` is true. Null everywhere else, and null
+   * on rounds collected before probez recorded it. See `errors.ts`.
+   */
+  error_kind: ErrorKind | null
   /** Size of anything the tool wrote to stderr. Null when the tool has no stderr to report. */
   stderr_chars: number | null
-  /** Whether the call was cut short rather than running to completion. */
+  /**
+   * Whether the call was cut short rather than running to completion.
+   *
+   * Recorded by the harness on every Bash result and, across this machine's whole store, never once
+   * true. Kept because it is what the transcript says and a future harness may set it; not relied
+   * on, which is why `quietlyFailed` is in practice a question about stderr alone.
+   */
   interrupted: boolean | null
   /** What the call changed, for tools that edit files. Null for everything else. */
   patch: Patch | null

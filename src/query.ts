@@ -36,6 +36,7 @@ import type { Command } from './bash.js'
 import { CATEGORIES, TARGETS } from './classify.js'
 import type { Label } from './classify.js'
 import { aliasOfSource, roundSourceOf, SOURCE_ALIASES } from './agents/paths.js'
+import { benign, ERROR_KINDS, failed } from './errors.js'
 import { costOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
 import type { Round } from './types.js'
@@ -144,6 +145,7 @@ export const FIELDS: Field[] = [
   { key: 'kind', kind: 'enum', group: 'what', says: 'the kind of command it ran', values: [...COMMAND_KINDS] },
   { key: 'category', kind: 'enum', group: 'what', says: 'the kind of work it did', values: CATEGORIES.map((c) => c.id) },
   { key: 'target', kind: 'enum', group: 'what', says: 'what it worked on', values: [...TARGETS] },
+  { key: 'error', kind: 'enum', group: 'what', says: 'the kind of failure a call hit', values: [...ERROR_KINDS] },
 
   // What it came to.
   { key: 'cost', kind: 'money', group: 'cost', says: 'what the round cost, in dollars', example: '>0.50' },
@@ -155,7 +157,7 @@ export const FIELDS: Field[] = [
   { key: 'cached', kind: 'number', group: 'cost', says: 'input tokens served from the prompt cache', example: '>50k' },
   { key: 'thinking', kind: 'number', group: 'cost', says: 'characters of reasoning', example: '>1k' },
   { key: 'calls', kind: 'number', group: 'cost', says: 'tool calls the round made', example: '>5' },
-  { key: 'errors', kind: 'number', group: 'cost', says: 'tool calls the harness reported as failed', example: '>0' },
+  { key: 'errors', kind: 'number', group: 'cost', says: 'tool calls that failed; excludes no-match and declined', example: '>0' },
   { key: 'files', kind: 'number', group: 'cost', says: 'files a file-editing tool touched', example: '>3' },
   { key: 'added', kind: 'number', group: 'cost', says: 'lines added', example: '>200' },
   { key: 'removed', kind: 'number', group: 'cost', says: 'lines removed', example: '>200' },
@@ -170,7 +172,7 @@ export const FIELDS: Field[] = [
     kind: 'enum',
     group: 'plain',
     says: 'a plain property of the round',
-    values: ['error', 'quiet', 'compacted', 'interrupted', 'sub', 'main', 'asked'],
+    values: ['error', 'benign', 'quiet', 'compacted', 'interrupted', 'sub', 'main', 'asked'],
   },
   {
     key: 'has',
@@ -183,10 +185,11 @@ export const FIELDS: Field[] = [
 
 /** What each `is:` and `has:` value stands for, since a single word never explains itself. */
 export const PROPERTY_MEANING: Record<string, string> = {
-  error: 'a tool call the harness reported as failed',
-  quiet: 'stderr written, or the call cut short, while the harness reported no error',
+  error: 'a tool call that failed; not counting a search with no matches or a call declined',
+  benign: 'a call the harness flagged where nothing went wrong: no matches found, or declined',
+  quiet: 'stderr written while the harness reported no error at all; often just a chatty tool',
   compacted: 'the harness compacted the context immediately before this round',
-  interrupted: 'a tool call was cut short rather than running to completion',
+  interrupted: 'a tool call was cut short; the harness records this field but has never set it',
   sub: 'a subagent ran it',
   main: 'the main agent ran it',
   asked: 'a person prompted it, not the previous round\'s tool results',
@@ -1033,6 +1036,10 @@ export function subjectOf(round: Round, context: RoundContext): Subject {
           return context.labels.map((label) => label.category)
         case 'target':
           return context.labels.map((label) => label.target)
+        case 'error':
+          // Only calls that actually carry a kind, so `error:` never matches a round that succeeded
+          // and never invents `other` for a store collected before kinds were recorded.
+          return tools.flatMap((tool) => (tool.error_kind === null ? [] : [tool.error_kind]))
         default:
           return []
       }
@@ -1063,7 +1070,7 @@ export function subjectOf(round: Round, context: RoundContext): Subject {
         case 'calls':
           return tools.length
         case 'errors':
-          return tools.filter((tool) => tool.is_error === true).length
+          return tools.filter(failed).length
         case 'files':
           return patch().files
         case 'added':
@@ -1082,10 +1089,12 @@ export function subjectOf(round: Round, context: RoundContext): Subject {
       if (key === 'is') {
         switch (value) {
           case 'error':
-            return tools.some((tool) => tool.is_error === true)
+            return tools.some(failed)
+          case 'benign':
+            return tools.some(benign)
           case 'quiet':
-            // Failures the harness did not report: stderr written, or a call cut short, while
-            // `is_error` stayed false. On a real store these outnumber the ones it does report.
+            // stderr written while the harness reported nothing at all. Weaker than it looks: most
+            // of it is npm, git or tsc writing progress, and `interrupted` has never once been set.
             return tools.some(
               (tool) =>
                 tool.is_error !== true &&

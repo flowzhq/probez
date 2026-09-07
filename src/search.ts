@@ -30,6 +30,7 @@ import {
   taskRows,
 } from './inspect.js'
 import type { Analysis, CategoryRow, SessionRow, TaskRow } from './inspect.js'
+import { failed } from './errors.js'
 import { costOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
 import { questionsOf } from './question.js'
@@ -289,7 +290,7 @@ function total(groups: Array<{ project: string; rounds: Round[] }>, pricing: Pri
       out.ms += round.ms ?? 0
       out.input += round.in_tokens ?? 0
       out.output += round.out_tokens ?? 0
-      for (const tool of round.tools ?? []) if (tool.is_error === true) out.errors += 1
+      for (const tool of round.tools ?? []) if (failed(tool)) out.errors += 1
       if (typeof round.ts === 'string') {
         if (out.first_ts === null || round.ts < out.first_ts) out.first_ts = round.ts
         if (out.last_ts === null || round.ts > out.last_ts) out.last_ts = round.ts
@@ -763,7 +764,7 @@ function roundHits(query: Query, matched: Matched[], pricing: Pricing): RoundHit
         in_tokens: round.in_tokens,
         out_tokens: round.out_tokens,
         category: mainCategory(labelled.get(round) ?? []),
-        errors: (round.tools ?? []).filter((tool) => tool.is_error === true).length,
+        errors: (round.tools ?? []).filter(failed).length,
         tools: toolsOf(round),
         says: says(round),
       })

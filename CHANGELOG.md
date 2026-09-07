@@ -8,7 +8,54 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+### Added
+
+- **A failed tool call now says what kind of failure it was.** `is_error` is one bit, and one bit
+  turned out to be the wrong shape for the question: across a real store the flag fires for a `grep`
+  that matched nothing, a suite that failed, an `Edit` whose anchor had moved, a plan the user
+  rejected, and an MCP server that was not running. Every failed call now carries a kind — `harness`,
+  `exit`, `limit`, `schema`, `remote`, `nomatch`, `denied`, `other` — read once from the result body
+  at collection and kept as one word. The bodies are still not stored; this is a label, not a search
+  over text. `probez find "error:harness"` filters on it, and `probez help` lists the values.
+
+- **`NOFAULT`, a column for the flagged calls where nothing went wrong.** A `grep` with no matches
+  and a call you declined are not the tool failing, and counting them produced an error rate that
+  could never come down however well the agent worked. They are now counted apart: `NOFAULT` in the
+  tools table, `is:benign` in a query, and outside `errors:` and `is:error`. On one store this moved
+  `ExitPlanMode` from "failing two calls in three" to "nine calls, no errors, six plans turned down".
+
+### Changed
+
+- **`errors:`, `is:error` and every error count now exclude no-match and declined calls.** Same
+  field, narrower meaning: what remains is the calls where something was actually wrong. The excluded
+  ones are not hidden — they are in `NOFAULT` and `is:benign`.
+
+- **The store and the search index are rebuilt on upgrade** (schema 8, index 4), which is what fills
+  in the kind for rounds already collected. `probez collect` does it; nothing needs re-running by hand.
+
 ### Fixed
+
+- **The comments describing `is_error` said the opposite of what it does, in six places.** They
+  claimed it was a harness-acceptance flag that stayed false when a command ran and failed — so a
+  Bash call whose suite failed 47 tests supposedly came back `false`. It does not: a non-zero exit
+  sets the flag, and `Exit code N` opens four in five of every flagged body in a real store. The
+  wrong premise was load-bearing, since it was the stated reason `classify.ts` has no `repair`
+  category. Corrected in `types.ts`, `extract.ts`, `classify.ts`, `cli.ts`, `inspect.ts` and the
+  `is:` meanings in `query.ts`, with what the data actually shows.
+
+- **`quiet` was documented as the larger, hidden half of the failures. It is neither.** The note on
+  `ToolRow.quiet` said these "outnumber the ones `errors` can see"; on a real store it is 1,401
+  against 2,782 the other way. And `interrupted`, half of what `quiet` claimed to read, is recorded
+  by the harness on some forty thousand results and true on none of them — so `is:interrupted` could
+  never match, and `quiet` is in practice stderr alone, most of it npm, git and tsc being chatty.
+  The field and the selector are kept, since that is what the transcripts carry; the documentation
+  now says what they are worth.
+
+- **Cursor's silence about failures is now stated rather than implied.** A Cursor transcript records
+  a tool result as `{"toolName": "read_file"}` — no body, no status, no flag — so `is_error` stays
+  null and every error question comes back empty for those rounds. That is "not recorded", not
+  "none", and on a store with Cursor sessions it can be a third of every round. It cannot be fixed
+  from the data; it can be, and now is, written down where a reader will hit it.
 
 - **Importing a large export no longer wedges the browser.** The Import button read the file into a
   string and JSON-encoded that string into a request body, so a 205 MB export was held in the tab

@@ -2,6 +2,7 @@ import { isSubagent, roundSourceOf, sessionSegments } from './agents/paths.js'
 import { subCommands } from './bash.js'
 import { CATEGORIES, categoryInfo, classifyCall } from './classify.js'
 import type { Category, Label } from './classify.js'
+import { benign, failed } from './errors.js'
 import { shortSession } from './format.js'
 import { costOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
@@ -85,10 +86,24 @@ export interface TaskRow extends Totals {
 export interface ToolRow {
   name: string
   calls: number
+  /**
+   * Calls that failed and where the failing was a fault. Excludes the flagged calls that were
+   * nothing going wrong — a `grep` with no matches, a call a person declined — which are counted
+   * in `benign` instead. See `errors.ts`, and `ErrorKind` for what the difference is.
+   */
   errors: number
   /**
-   * Calls that wrote to stderr or were cut short while the harness reported no error. These are
-   * failures `errors` cannot see, and on a real store they outnumber the ones it can.
+   * Calls the harness flagged where nothing was wrong. Kept as its own column rather than dropped,
+   * because a search that finds nothing is a fact about the work and not noise to hide.
+   */
+  benign: number
+  /**
+   * Calls that wrote to stderr while the harness reported no error at all.
+   *
+   * In practice this is stderr alone: the transcripts also carry an `interrupted` flag, and across
+   * this machine's store it is recorded on some forty thousand results and true on none. Treat a
+   * large `quiet` as noise until proven otherwise — npm, git and tsc all write to stderr when
+   * nothing is wrong — which is why it is a column of its own and not folded into `errors`.
    */
   quiet: number
   result_chars: number
@@ -229,7 +244,7 @@ export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
     addTotals(row, round, pricing)
     for (const tool of round.tools ?? []) {
       row.tool_calls += 1
-      if (tool.is_error === true) row.errors += 1
+      if (failed(tool)) row.errors += 1
     }
     if (typeof round.ts === 'string') {
       if (row.first_ts === null || round.ts < row.first_ts) row.first_ts = round.ts
@@ -308,17 +323,26 @@ export function taskRows(rounds: Round[], pricing: Pricing): TaskRow[] {
 
 function add(row: ToolRow, tool: ToolCall): void {
   row.calls += 1
-  if (tool.is_error === true) row.errors += 1
+  if (failed(tool)) row.errors += 1
+  else if (benign(tool)) row.benign += 1
   else if (quietlyFailed(tool)) row.quiet += 1
   if (typeof tool.result_chars === 'number') row.result_chars += tool.result_chars
   if (typeof tool.ms === 'number') row.ms += tool.ms
 }
 
 /**
- * A call that went wrong without the harness saying so.
+ * A call that wrote to stderr while the harness reported nothing wrong.
  *
- * `is_error` reports that the call was accepted, so a command that ran and failed comes back false.
- * Counted only when `is_error` is not already true, so the two columns never describe the same call.
+ * This was built on a belief that turned out to be false — that `is_error` only reports whether a
+ * call was *accepted*, leaving real command failures invisible. It does not: a non-zero exit sets
+ * the flag, and `Exit code N` opens four in five of every flagged body in this machine's store. So
+ * this is not the hidden other half of the failures. It is the weaker signal it always was: about
+ * one Bash result in eleven writes to stderr, and most of those are npm, git or tsc being chatty.
+ *
+ * `interrupted` is in the test because the transcripts carry the field, not because it fires; it is
+ * recorded on some forty thousand results here and true on none of them.
+ *
+ * Counted only where `is_error` is not already set, so no call is in two columns at once.
  */
 export function quietlyFailed(tool: ToolCall): boolean {
   return tool.interrupted === true || (tool.stderr_chars ?? 0) > 0
@@ -349,7 +373,7 @@ export function toolTally(rounds: Round[], sub?: 'command' | 'kind'): ToolRow[] 
       if (typeof tool.name !== 'string' || tool.name === '') continue
       let row = byName.get(tool.name)
       if (row === undefined) {
-        row = { name: tool.name, calls: 0, errors: 0, quiet: 0, result_chars: 0, ms: 0 }
+        row = { name: tool.name, calls: 0, errors: 0, benign: 0, quiet: 0, result_chars: 0, ms: 0 }
         byName.set(tool.name, row)
       }
       add(row, tool)
@@ -370,7 +394,7 @@ export function toolTally(rounds: Round[], sub?: 'command' | 'kind'): ToolRow[] 
         seen.add(key)
         let entry = group.get(key)
         if (entry === undefined) {
-          entry = { name: key, calls: 0, errors: 0, quiet: 0, result_chars: 0, ms: 0 }
+          entry = { name: key, calls: 0, errors: 0, benign: 0, quiet: 0, result_chars: 0, ms: 0 }
           if (sub === 'command') entry.kind = command.kind
           group.set(key, entry)
         }
@@ -417,7 +441,7 @@ export function labelRounds(rounds: Round[]): Map<Round, RoundLabel[]> {
             ...label,
             weight: label.weight * perCall,
             call,
-            errored: tool.is_error === true,
+            errored: failed(tool),
           })
         }
       })
@@ -807,7 +831,7 @@ export function traceOf(rounds: Round[], options: { window?: number } = {}): Tra
       out_tokens: round.out_tokens,
       thinking_chars: round.thinking_chars || 0,
       tools: tools.length,
-      errors: tools.filter((tool) => tool.is_error === true).length,
+      errors: tools.filter(failed).length,
       dominant: dominant(labels),
       // A round of pure prose stays prose: a neighbourhood cannot lend it work no tool saw.
       phase: labels.length === 0 ? null : dominant(near),
@@ -971,7 +995,7 @@ export function toolSummary(round: Round): string {
   const counts = new Map<string, number>()
   let errors = 0
   for (const tool of round.tools ?? []) {
-    if (tool.is_error === true) errors += 1
+    if (failed(tool)) errors += 1
     const name = tool.name ?? '?'
     counts.set(name, (counts.get(name) ?? 0) + 1)
   }

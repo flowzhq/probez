@@ -659,6 +659,26 @@ test('a call that failed without the harness noticing is counted apart from one 
   assert.equal(row?.quiet, 2)
 })
 
+test('a flagged call with nothing wrong is counted apart from the failures', () => {
+  const [row] = toolTally([
+    round({
+      session: 'eeee5555',
+      round: 0,
+      tools: [
+        tool('Bash', { is_error: true, error_kind: 'exit' }),
+        tool('Bash', { is_error: true, error_kind: 'nomatch' }),
+        tool('Bash', { is_error: true, error_kind: 'denied' }),
+        tool('Bash'),
+      ],
+    }),
+  ])
+  assert.equal(row?.calls, 4)
+  // A grep with no matches and a call you declined are not the tool failing, so an error rate that
+  // counted them could never come down however well the agent worked.
+  assert.equal(row?.errors, 1)
+  assert.equal(row?.benign, 2)
+})
+
 test('input is charged to the work a round did, on the same split as its rounds', () => {
   const analysis = categoryTally(
     [

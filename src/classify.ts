@@ -16,12 +16,16 @@
  * lookup, and a label you disagree with is one row to change rather than a rule to trace.
  *
  * What is deliberately absent is as load-bearing as what is here. There is still no `repair`
- * category: `is_error` is a harness-level flag, so a Bash call running a suite with 47 failures
- * comes back `is_error: false`. The store now keeps `stderr_chars` and `interrupted`, which is the
- * signal that was missing, but a category is a claim about what work *was* and that needs rules
- * written against the new field rather than the old one renamed. There is no `trace` sub-kind: it
- * would mean "this file was opened because of a symbol found in that one", which needs result
- * bodies the store does not keep. Both would have been buckets that only ever looked full.
+ * category, but the reason given here for years was wrong and is worth correcting in place: it said
+ * `is_error` was a harness-level flag that came back false for a suite failing 47 tests. It does
+ * not. A non-zero exit sets the flag, and `Exit code N` opens four in five of every flagged body in
+ * a real store. So the signal was never missing. What is missing is the rule: `repair` is a claim
+ * about a *round* — that this one exists because the last one failed — and every call in this file
+ * is labelled on its own, with no view of what came before it. That is a change to the shape of the
+ * classifier, not a row in a table, which is why it is still not here. `error_kind` is the field it
+ * would be written against; see `errors.ts`. There is no `trace` sub-kind either: it would mean
+ * "this file was opened because of a symbol found in that one", which needs result bodies the store
+ * does not keep.
  *
  * `review` was here and is gone. It existed to hold one rule — that a `git diff` after an edit is
  * checking your work and the same command before one is orienting — and paying for that rule meant

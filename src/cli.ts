@@ -17,6 +17,8 @@ import type { Asked } from './asking.js'
 import { COMMAND_KINDS, useCommandKinds } from './bash.js'
 import { commandsFile, readCommandKinds } from './commands.js'
 import { CATEGORIES, classifyCall, isCategory, isTarget, TARGETS } from './classify.js'
+import { benign, ERROR_MEANING, failed } from './errors.js'
+import type { ErrorKind } from './types.js'
 import {
   defaultClaudeDir,
   defaultCodexDir,
@@ -248,6 +250,14 @@ function fieldHelp(): string {
     lines.push(`    ${group.title}`)
     for (const field of fields) {
       lines.push(`      ${pad(`${field.key}:`, 11)}${field.says}`)
+      // Expanded where a value is a word that does not explain itself. A reader can guess what
+      // `category:testing` covers; nobody guesses what `error:nomatch` means without being told.
+      if (field.key === 'error') {
+        for (const value of field.values ?? []) {
+          lines.push(`        ${pad(`error:${value}`, 17)}${ERROR_MEANING[value as ErrorKind] ?? ''}`)
+        }
+        continue
+      }
       if (field.key !== 'is' && field.key !== 'has') continue
       for (const value of field.values ?? []) {
         lines.push(`        ${pad(`${field.key}:${value}`, 17)}${PROPERTY_MEANING[value] ?? ''}`)
@@ -1014,13 +1024,15 @@ function printToolInput(input: unknown, width: number): void {
 }
 
 /**
- * What the call did, beyond whether the harness accepted it.
+ * What the call did, beyond the flag on it.
  *
- * `is_error` is the harness flag, so a command that ran and failed shows nothing there. Anything
- * written to stderr, a call cut short, or lines changed on disk are the parts worth saying.
+ * The kind of failure is the first thing worth saying, because `✗` alone does not distinguish an
+ * edit whose anchor moved from a `grep` that matched nothing. After that: anything written to
+ * stderr, and lines changed on disk.
  */
 function outcome(tool: ToolCall): string {
   const parts: string[] = []
+  if (tool.error_kind !== null) parts.push(tool.error_kind)
   if (tool.interrupted === true) parts.push('interrupted')
   if (tool.stderr_chars !== null && tool.stderr_chars > 0) parts.push(`${tokens(tool.stderr_chars)} stderr`)
   if (tool.patch !== null) parts.push(`+${tool.patch.added} −${tool.patch.removed}`)
@@ -1302,7 +1314,7 @@ function printRound(round: Round, width: number): void {
       .map((label) => `${label.category}/${label.sub}${label.target === 'unknown' ? '' : ` × ${label.target}`}`)
       .join(' · ')
     console.log(
-      `    ${padStart(String(index + 1), 2)}  ${tool.is_error === true ? '✗' : ' '} ${pad(tool.name ?? '?', 14)}${padStart(duration(tool.ms), 7)}  ${chars}${outcome(tool)}`,
+      `    ${padStart(String(index + 1), 2)}  ${failed(tool) ? '✗' : benign(tool) ? '·' : ' '} ${pad(tool.name ?? '?', 14)}${padStart(duration(tool.ms), 7)}  ${chars}${outcome(tool)}`,
     )
     console.log(`       ${clip(work, width - 8)}`)
     printToolInput(tool.input, width - 8)
@@ -1312,7 +1324,8 @@ function printRound(round: Round, width: number): void {
 
 function toolLine(name: string, indent: number, row: ToolRow): string {
   const width = 22 - indent
-  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(String(row.calls), 6)}  ${padStart(row.errors > 0 ? String(row.errors) : '·', 6)}  ${padStart(tokens(row.result_chars), 8)}  ${padStart(duration(row.ms), 8)}`
+  const count = (n: number): string => padStart(n > 0 ? String(n) : '·', 6)
+  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(String(row.calls), 6)}  ${count(row.errors)}  ${count(row.benign)}  ${padStart(tokens(row.result_chars), 8)}  ${padStart(duration(row.ms), 8)}`
 }
 
 /**
@@ -1321,14 +1334,16 @@ function toolLine(name: string, indent: number, row: ToolRow): string {
  */
 function printTools(rows: ToolRow[], subLimit: number, noun: string): void {
   console.log(
-    `  ${pad('TOOL', 20)}${padStart('CALLS', 6)}  ${padStart('ERRORS', 6)}  ${padStart('RESULT', 8)}  ${padStart('TIME', 8)}`,
+    `  ${pad('TOOL', 20)}${padStart('CALLS', 6)}  ${padStart('ERRORS', 6)}  ${padStart('NOFAULT', 6)}  ${padStart('RESULT', 8)}  ${padStart('TIME', 8)}`,
   )
   let calls = 0
   let errors = 0
+  let noFault = 0
   const broken: string[] = []
   for (const row of rows) {
     calls += row.calls
     errors += row.errors
+    noFault += row.benign
     console.log(toolLine(row.name, 2, row))
 
     const sub = row.sub ?? []
@@ -1344,6 +1359,11 @@ function printTools(rows: ToolRow[], subLimit: number, noun: string): void {
   console.log(
     `  ${rows.length} tool${rows.length === 1 ? '' : 's'} · ${calls} call${calls === 1 ? '' : 's'} · ${errors} error${errors === 1 ? '' : 's'}`,
   )
+  if (noFault > 0) {
+    // Named rather than dropped. These were flagged by the harness and nothing was wrong: mostly a
+    // search that matched nothing, which is a finding, plus calls a person declined.
+    console.log(`  ${noFault} more flagged with no fault: a search found nothing, or you said no`)
+  }
   if (broken.length > 0) {
     // Without this the sub-rows look like they should add up to their tool's own count, and they
     // never will: one call can run several commands, and it counts for each of them.

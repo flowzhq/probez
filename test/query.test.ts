@@ -325,6 +325,33 @@ test('is: and has: read the round rather than a field of it', () => {
   assert.equal(hits(parse('has:thinking'), round({ session: 'a', round: 3, thinking_chars: 10 })), true)
 })
 
+test('a flagged call that was nothing going wrong is is:benign, not is:error', () => {
+  const nothing = round({
+    session: 'a',
+    round: 4,
+    tools: [tool('Bash', { is_error: true, error_kind: 'nomatch' })],
+  })
+  assert.equal(hits(parse('is:error'), nothing), false)
+  assert.equal(hits(parse('is:benign'), nothing), true)
+  // And it is outside the count, which is what makes an error rate something that can move.
+  assert.equal(hits(parse('errors:>0'), nothing), false)
+})
+
+test('error: names the kind of failure, and matches nothing on a call that worked', () => {
+  const broke = round({
+    session: 'a',
+    round: 5,
+    tools: [tool('Edit', { is_error: true, error_kind: 'harness' })],
+  })
+  assert.equal(hits(parse('error:harness'), broke), true)
+  assert.equal(hits(parse('error:exit'), broke), false)
+  assert.equal(hits(parse('errors:>0'), broke), true)
+  // A round collected before kinds existed carries none, so `error:` declines to guess one for it.
+  const old = round({ session: 'a', round: 6, tools: [tool('Bash', { is_error: true })] })
+  assert.equal(hits(parse('error:other'), old), false)
+  assert.equal(hits(parse('is:error'), old), true)
+})
+
 test('free text reaches the prompt, the prose and what the tools were pointed at', () => {
   const one = round({
     session: 'a',
