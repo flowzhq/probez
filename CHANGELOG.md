@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-07
+
 ### Added
 
 - **A failed tool call now says what kind of failure it was.** `is_error` is one bit, and one bit
@@ -1477,7 +1479,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/flowzhq/probez/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/flowzhq/probez/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/flowzhq/probez/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/flowzhq/probez/compare/v0.4.0...v0.5.0

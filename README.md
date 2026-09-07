@@ -228,13 +228,13 @@ $ probez
 
 probez  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
-  sessions   26        rounds   3864     tasks  156
-  tokens     1.3B in · 3.1M out
-             19.3K new · 18.2M cached · 1.3B reused  (99% reused)
-  span       Jul 31 – Aug 30, 2026
-  top tools  Bash 2634 · Edit 1121 · Write 330 · Read 294 · WebSearch 28
+  sessions   27        rounds   3922     tasks  161
+  tokens     1.3B in · 3.2M out
+             19.4K new · 18.4M cached · 1.3B reused  (99% reused)
+  span       Jul 31 – Aug 31, 2026
+  top tools  Bash 2687 · Edit 1121 · Write 330 · Read 294 · WebSearch 28
 
-  up to date, 28 sessions unchanged
+  up to date, 10 sessions unchanged
   → ~/.probez/projects/flowz-agentic-sdlc-bd3def99/rounds.jsonl
 ```
 
@@ -246,14 +246,14 @@ $ probez sessions flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   SESSION    SOURCE   ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  0bfa7fe3   claude      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   17 days ago
-  0b2cc149   claude       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   17 days ago
-  51cced08   claude      134      4  131          24.3M   138.1K     $22.57  Impl 39%   16 days ago
-  be254122   claude       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  16 days ago
-  bfd594d9   claude       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  16 days ago
-  6ffef9bc   claude       33      4  30            2.2M    17.5K      $2.19  Recon 52%  12 days ago
-  c21c7448   claude      146      2  145 ✗5       22.8M   112.6K     $18.83  Recon 43%  11 days ago
-  069d8593   claude       31      1  30 ✗3         1.9M    11.3K      $1.76  Recon 72%  10 days ago
+  0bfa7fe3   claude      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   27 days ago
+  0b2cc149   claude       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   27 days ago
+  51cced08   claude      134      4  131          24.3M   138.1K     $22.57  Impl 39%   26 days ago
+  be254122   claude       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  26 days ago
+  bfd594d9   claude       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  26 days ago
+  6ffef9bc   claude       33      4  30            2.2M    17.5K      $2.19  Recon 52%  22 days ago
+  c21c7448   claude      146      2  145 ✗4       22.8M   112.6K     $18.83  Recon 43%  21 days ago
+  069d8593   claude       31      1  30 ✗2         1.9M    11.3K      $1.76  Recon 72%  20 days ago
 
   8 sessions · 652 rounds · $82.58
   `probez session <id>` shows one of them, task by task.
@@ -269,14 +269,14 @@ $ probez sessions flowz-agentic-sdlc --limit 6
   flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
   SESSION            AGENT SOURCE   ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  6b45d8d7/a5420a73  sub   claude        7      1  17          182.4K     5.8K      $0.84  Recon 83%  28 days ago
-  6b45d8d7/ab80aaad  sub   claude        8      1  16          197.9K     5.4K      $0.86  Recon 86%  28 days ago
-  6b45d8d7           main  claude      122      8  234 ✗3       58.6M   139.5K     $76.13  Docs 29%   28 days ago
-  15ac167d/a29da1c6  sub   claude        7      1  19          135.0K     9.1K      $0.94  Recon 93%  28 days ago
-  15ac167d/ad108a22  sub   claude       18      1  38          515.5K    17.7K      $1.99  Plan 65%   28 days ago
-  15ac167d           main  claude      150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   28 days ago
+  6b45d8d7/a5420a73  sub   claude        7      1  17          182.4K     5.8K      $0.84  Recon 83%  1 mo ago
+  6b45d8d7/ab80aaad  sub   claude        8      1  16          197.9K     5.4K      $0.86  Recon 86%  1 mo ago
+  6b45d8d7           main  claude      122      8  234 ✗1       58.6M   139.5K     $76.13  Docs 29%   1 mo ago
+  15ac167d/a29da1c6  sub   claude        7      1  19          135.0K     9.1K      $0.94  Recon 93%  1 mo ago
+  15ac167d/ad108a22  sub   claude       18      1  38          515.5K    17.7K      $1.99  Plan 65%   1 mo ago
+  15ac167d           main  claude      150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   1 mo ago
 
-  showing 6 of 23 sessions · 3744 rounds · $941.53, --limit 0 for all
+  showing 6 of 27 sessions · 3922 rounds · $963.20, --limit 0 for all
   `probez session <id>` shows one of them, task by task.
 ```
 
@@ -336,19 +336,19 @@ $ probez analyze flowz-agentic-sdlc
   flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
   WORK                  ROUNDS    SHARE      COST  ERRORS      TIME      OUT
-  Planning                 203     4.5%    $40.82     4.0      8.1m   116.3K
+  Planning                 203     4.5%    $40.82     2.0      8.1m   116.3K
     read                   171     3.4%    $30.77     2.0      3.2m    73.4K
     clarify               14.0     0.4%     $3.30       ·      2.8m    25.1K
     decompose             10.1     0.5%     $4.24       ·      2.1m    15.4K
-    design                 8.0     0.3%     $2.52     2.0       1ms     2.4K
-  Reconstruction          1440    39.8%   $361.31    86.0     43.3m   963.5K
-    locate                 620    16.5%   $149.51    40.0     12.4m   329.1K
+    design                 8.0     0.3%     $2.52       ·       1ms     2.4K
+  Reconstruction          1440    39.8%   $361.31    83.0     43.3m   963.5K
+    locate                 620    16.5%   $149.51    39.0     12.4m   329.1K
     read                   481    12.2%   $110.48    28.0      8.8m   250.5K
-    inspect                324    10.8%    $98.32    18.0     21.8m   378.0K
+    inspect                324    10.8%    $98.32    16.0     21.8m   378.0K
     graph                  9.5     0.2%     $1.86       ·     13.0s     4.6K
     mcp                    6.0     0.1%     $1.14       ·      1.5s     1.3K
-  Implementation           867    22.4%   $203.24    12.0      1.2h   973.0K
-    modify                 744    17.2%   $156.35     8.0     41.2m   643.0K
+  Implementation           867    22.4%   $203.24    10.0      1.2h   973.0K
+    modify                 744    17.2%   $156.35     6.0     41.2m   643.0K
     create                 123     5.2%    $46.89     4.0     30.2m   330.0K
   Testing                  322     7.9%    $71.88    13.0      5.5m   139.1K
     run                    182     4.8%    $43.21    10.0      4.5m   105.7K
@@ -357,10 +357,10 @@ $ probez analyze flowz-agentic-sdlc
     system                 437    10.5%    $94.90     6.0     41.2m   487.0K
     agent                 55.9     2.1%    $18.94       ·      6.2m    70.5K
     change                 3.0     0.0%     $0.44       ·      2.9s     4.1K
-  Delivery                 369     9.5%    $85.76    19.0      7.2m   172.1K
-    build                  183     4.3%    $39.15     4.0      2.2m    53.1K
+  Delivery                 369     9.5%    $85.76    16.0      7.2m   172.1K
+    build                  183     4.3%    $39.15     3.0      2.2m    53.1K
     commit                 117     3.2%    $28.70     4.0      2.5m    74.2K
-    branch                40.3     1.4%    $12.55    10.0      1.5m    29.9K
+    branch                40.3     1.4%    $12.55     8.0      1.5m    29.9K
     publish               29.5     0.6%     $5.36     1.0     58.4s    14.8K
   Environment             34.7     2.1%    $18.66       ·     58.1s    20.2K
     env                   29.3     1.9%    $17.45       ·     52.1s    18.5K
@@ -424,7 +424,7 @@ $ probez find '(tool:Edit OR tool:Write) added:>200 in:tasks sort:cost' flowz-ag
 
   flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
-  29 rounds · $11.87 · 0.8% of rounds · 1.3% of cost · 8 sessions · 86% implementation
+  29 rounds · $11.87 · 0.7% of rounds · 1.2% of cost · 8 sessions · 86% implementation
 
   TASK         ROUNDS    OF       COST  ASKED
   6b45d8d7#3        6    71      $4.10  <task-notification> <task-id>a5420a731e4ed3f58</task…
@@ -481,17 +481,16 @@ $ probez find --ask 'which sessions had the most failing shell commands' flowz-m
 
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
-  8 rounds · $0.70 · 1.2% of rounds · 0.8% of cost · 6 sessions · 8 tool errors · 40% reconstruction
+  6 rounds · $0.54 · 0.9% of rounds · 0.6% of cost · 5 sessions · 6 tool errors · 50% reconstruction
 
   SESSION      ROUNDS     OF       COST     TIME  LAST
-  069d8593          3     31      $0.18    29.4s  10 days ago
-  0bfa7fe3          1    127      $0.21    26.5s  17 days ago
-  bfd594d9          1     73      $0.11     4.6s  16 days ago
-  c21c7448          1    146      $0.10    23.8s  12 days ago
-  be254122          1     21      $0.05     2.2s  16 days ago
-  0b2cc149          1     87      $0.04     8.2s  17 days ago
+  069d8593          2     31      $0.12    12.2s  20 days ago
+  0bfa7fe3          1    127      $0.21    26.5s  27 days ago
+  bfd594d9          1     73      $0.11     4.6s  26 days ago
+  be254122          1     21      $0.05     2.2s  26 days ago
+  0b2cc149          1     87      $0.04     8.2s  27 days ago
 
-  6 sessions
+  5 sessions
 ```
 
 **A model chooses which rounds to look at, and never what any of them came to.** Every figure above
@@ -612,7 +611,7 @@ $ probez trails flowz-agentic-sdlc --deep --limit 8
   19ae887e#2.1               13      6     5     11  listing  edit         2.9M   20.1s
   19ae887e#2.6                6      4     3      8  probe    edit         1.8M    9.7s
 
-  showing 8 of 94 trails, --limit 0 for all · 86 proven from result bodies
+  showing 8 of 100 trails, --limit 0 for all · 92 proven from result bodies
   `probez trail <id>` draws one of them, hop by hop.
 ```
 

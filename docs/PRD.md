@@ -101,7 +101,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
   "tools": [
     {"name": "Read", "id": "toolu_013evtr8jYg2P6ypM2pmuWkR",
      "input": {"file_path": "src/loop.ts"}, "input_chars": 38,
-     "result_chars": 8123, "is_error": false, "stderr_chars": null, "interrupted": null,
+     "result_chars": 8123, "is_error": false, "error_kind": null, "stderr_chars": null, "interrupted": null,
      "patch": null,
      "emitted_at": "2026-08-11T19:09:58.201Z", "result_at": "2026-08-11T19:09:58.243Z", "ms": 42}
   ],
@@ -237,14 +237,19 @@ silently counted ADRs as code.
 Three things in the original v0.2 sketch did not survive contact with a real store, and are recorded
 here because the reasons generalise:
 
-- **Repair was not detectable, and the fix was not the one assumed.** Only 2% of tool calls carry
-  `is_error`, because it is a harness-level flag rather than an exit status: a `Bash` call running a
-  suite with 47 failures returns `is_error: false`. This was written up as needing `exit_code`
-  captured at extract time. There is no exit code in the source records — the field does not exist.
-  What does exist is `stderr` and `interrupted` on the raw result, which v0.3 captures as
-  `stderr_chars` and `interrupted`. On one 442-round store that surfaces 15 calls that failed while
-  the harness reported success. The taxonomy does not yet spend it; the point here is that the
-  blocker was a wrong guess about the source, not a missing capability.
+- **Repair was not detectable, and the reason recorded here was wrong twice over.** The original
+  claim was that `is_error` is a harness-level flag rather than an exit status, so a `Bash` call
+  running a suite with 47 failures returns `is_error: false`, and that what was needed was an
+  `exit_code` the source records do not carry. Measured against 127,480 tool results in 0.7.0: the
+  flag fires 1,279 times, and 797 of those bodies open with the line `Exit code N`. A non-zero exit
+  does set it. The exit status was never absent, only in the body rather than in a field — which is
+  where `error_kind` now reads it, along with the seven other shapes of failure the same flag covers.
+  So the signal was never the blocker. The blocker is that `repair` is a claim about a *round* —
+  that this one exists because the last one failed — and every label in `classify.ts` is a function
+  of a single call with no view of what preceded it. That is a change to the shape of the classifier
+  rather than a row in a table, and it is still not made. The generalisable part is the correction
+  itself: the constraint was recorded from a guess about the source and went unchecked for four
+  minor versions, in six places at once.
 - **`trace` is not detectable.** Following calls across files would mean knowing that one file was
   opened *because* of a symbol found in another, which needs result bodies the store does not keep.
   The nearest proxy, runs of consecutive reads, decays smoothly with no natural threshold: 25% of
