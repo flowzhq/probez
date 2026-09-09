@@ -131,6 +131,8 @@ export interface StoredProject {
   collected_at: string | null
   /** When this arrived as an export, or null when it was collected on this machine. */
   imported_at: string | null
+  /** When this arrived darkened, or null when what it holds is as it was recorded. */
+  darkened_at: string | null
   sources: Array<'claude-code' | 'cursor' | 'codex'>
 }
 
@@ -670,8 +672,9 @@ export type ExportFormat = 'jsonl' | 'json'
 export async function exportProject(
   slug: string,
   format: ExportFormat,
+  darken = false,
 ): Promise<{ filename: string; bytes: number; saved: 'picked' | 'downloaded' | 'cancelled' }> {
-  const response = await fetch(`/api/projects/${slug}/export?format=${format}`, {
+  const response = await fetch(`/api/projects/${slug}/export?format=${format}${darken ? '&darken=1' : ''}`, {
     headers: token === null ? {} : { 'x-probez-token': token },
     cache: 'no-store',
   })

@@ -212,6 +212,14 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
                               imported
                             </span>
                           )}
+                          {project.darkened_at === null ? null : (
+                            <span
+                              className="mark"
+                              title="It was darkened on the way out of the store it came from: these figures are real, the words behind them were replaced"
+                            >
+                              darkened
+                            </span>
+                          )}
                           <SourceMarks sources={project.sources} />
                           <div className="muted mono clip" style={{ fontSize: 11 }}>
                             {project.path ?? project.key}

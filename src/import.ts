@@ -184,6 +184,9 @@ export function normalizeRound(value: unknown): Round | null {
     round: num(r.round),
     task: num(r.task),
     commit: commitOf(r.commit),
+    // Only ever true. A round that does not say it is darkened is not, and an absent field is how
+    // every round written before this existed says so.
+    ...(r.darkened === true ? { darkened: true as const } : {}),
     agent: r.agent === 'sub' ? 'sub' : 'main',
     source: importedSource(r.source),
     id,
@@ -243,6 +246,17 @@ export interface Parsed {
   rounds: Round[]
   /** Records that were not rounds at all. */
   skipped: number
+}
+
+/**
+ * Whether an import arrived darkened.
+ *
+ * Read off the rounds rather than the manifest, because a bare `.jsonl` has no manifest and a
+ * bundle's can be edited by anyone. Every round has to say so: a file where only some of them do is
+ * a file someone assembled by hand, and calling that darkened would overstate what was checked.
+ */
+export function allDarkened(rounds: Round[]): boolean {
+  return rounds.length > 0 && rounds.every((round) => round.darkened === true)
 }
 
 /**

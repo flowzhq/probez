@@ -60,10 +60,13 @@ Three constraints are not up for negotiation in a PR, because they are the produ
    origin. CI checks each of those separately, so relaxing one is a visible change to this file
    rather than a quiet one to a grep.
 
-   There is one place probez *starts a program*, and it is named here so it stays a decision rather
-   than a precedent: `src/reader.ts`. **Two** things call it, and both are named below, because the
-   number is the point — a list of callers that grows without anyone noticing is how a fence becomes
-   a suggestion. Adding a third means editing this paragraph and arguing for it.
+   There is one place probez starts a program *that could reach a network*, and it is named here so
+   it stays a decision rather than a precedent: `src/reader.ts`. (Two others start one that cannot:
+   `src/open.ts` hands a loopback URL to the desktop's opener, and `src/git.ts` runs `git log` in a
+   project directory. Both are named under rule 3, and neither can carry anything off the machine.)
+   **Two** things call the reader, and both are named below, because the number is the point — a
+   list of callers that grows without anyone noticing is how a fence becomes a suggestion. Adding a
+   third means editing this paragraph and arguing for it.
 
    - `src/reading.ts`, which is how `probez explain` hands one question's calls to a model the
      person already has, and gets a sentence back. The request this rule would otherwise refuse:
@@ -106,18 +109,25 @@ Three constraints are not up for negotiation in a PR, because they are the produ
    is a query probez parses, which can filter rows and do nothing else. There is no path from what
    comes back to a command, a file, or a byte leaving this machine.
 
-   CI greps for `child_process` outside `src/open.ts` and `src/reader.ts`, and for `shell: true` and
-   `exec` inside them, so a second spawn anywhere fails the build the way a second reflog reader
-   does. A PR that wants one needs to argue for it the way this list does.
+   CI greps for `child_process` outside `src/open.ts`, `src/reader.ts` and `src/git.ts`, and for
+   `shell: true` and `exec` inside all three, so a fourth spawn anywhere fails the build the way a
+   second reflog reader does. `execFile` is allowed in `src/git.ts` and nowhere else: it takes argv
+   rather than a command line, which is the distinction the grep is drawing. A PR that wants one
+   needs to argue for it the way this list does.
 3. **Only ever read the agent's session files.** probez writes exclusively under its own data
    directory.
 
    There is one read outside them, and it is named here so it stays a decision rather than a
-   precedent: `src/git.ts` opens `.git/logs/HEAD` in the directory the agent ran in, to say which
-   commit a task started from. It is one plain text file, opened read-only, and nothing is
-   executed — there is no `git` subprocess, and probez behaves the same on a machine with no git
-   installed. CI greps for it, so a second reader anywhere else fails the build rather than
-   arriving quietly, and a PR that wants one needs to argue for it the way this paragraph does.
+   precedent: `src/git.ts` looks into the repository the agent ran in, to say which commit a task
+   started from. It reads `.git/logs/HEAD` — git's HEAD reflog, one plain text file, opened
+   read-only. Where that log cannot reach the task, because git expired it at 90 days or because the
+   clone only ever held one line, it also runs `git log --first-parent --format=%H %ct` in that
+   directory for the commit history behind it: argv, no shell, no pager, no locks taken, nothing
+   written, and every failure is simply no answer — so probez still behaves the same on a machine
+   with no git installed. A reflog that still holds the repository's first commit can answer alone,
+   and for one of those nothing is run at all, which is the usual case. CI greps for both, so a
+   second reader anywhere else fails the build rather than arriving quietly, and a PR that wants
+   one needs to argue for it the way this paragraph does.
 
    The view's routes that write are all `POST`, and there are ten: `.../sync` writes what `collect`
    and `analyze` write, `.../rename` sets one field of a manifest, `.../delete` removes one project's

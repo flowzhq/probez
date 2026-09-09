@@ -8,6 +8,70 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-09-09
+
+### Added
+
+- **`probez export --darken`, and *Darken the export* in the view, for sending a project to
+  somebody outside the work.** An export was verbatim, and both the README and `SECURITY.md` said so
+  — which made the thing an export exists for, putting a trace in a bug report, the thing it could
+  not safely do. Darkened, prompts and replies are written as `****`, and paths, commands, search
+  terms, unrecognised tool and command names and the project's own name become one-way tokens salted
+  per export. It works with either format and on either surface, cannot be undone, and a project
+  that arrived that way says `darkened` in `probez projects`, in the header of every read command,
+  at import, and beside its name in the view.
+
+  **The measurements survive, and that is the whole design.** Blanking those fields would have kept
+  the byte counts and thrown away the analysis: a path decides a call's target, a command decides
+  its kind, `pathsIn` reads paths back out of shell commands for over half a real store, and a trail
+  exists because two calls named the same thing. So a token is built to be *read* the way the
+  original was — `targetOf`, `isProse` and `documentSub` give the same answers, the command
+  classifies as the same kind, a redirect is still a write, a piped command is still piped, a
+  directory still contains the files under it, and one file has one token however it was spelled.
+  Exported darkened and imported back, this repo's own store analyzes to the same figures: every
+  category within a tenth of a point, and the coverage line identical.
+
+  Two limits, said here rather than discovered later. The counts describe real work, so a small
+  project's shape can be recognisable to someone who knows it — this is a way to share a shape, not
+  anonymity. And trails come out thinner: one of the three edges a trail is built from is a search
+  term appearing *inside* a file's name, and a one-way token of a substring is not a substring of
+  the token. On this repo's store that is 101 trails against 146. Every other figure is unchanged.
+
+### Fixed
+
+- **A task the reflog cannot reach is no longer given the oldest hash it happens to hold.** Asked
+  about a moment older than every move in `.git/logs/HEAD`, the reader returned the *pre-image* of
+  the oldest surviving line — a commit the log cannot vouch for, handed back as if it could, and the
+  same one for every task that fell off the front. Its own doc comment already said all three
+  "cannot say" cases return null; the code did not. It does now. This is the whole of what changes
+  on an existing store, and on a repository that still holds its own first commit it changes
+  nothing, because there the pre-image is the all-zero hash and the answer was already null.
+
+### Changed
+
+- **Where the reflog cannot reach, the commit history behind it answers instead.** A reflog covers
+  one clone and git expires it at 90 days, so it is not a durable record of an old task: a fresh
+  clone arrives holding a single line, and one checkout here has 85 commits of history against a
+  reflog that knows only the clone. For a moment no move accounts for, probez now takes the newest
+  commit that had been made by then. That is an inference and not a record — it reads
+  `--first-parent` from the current HEAD, so a task done on a branch since deleted is dated against
+  the line that survived, and a rebase restamps the dates it reads — so it is consulted second, and
+  only where the exact answer has expired.
+
+  It fixes nothing visible yet, and is worth saying so plainly: across a store of 11,067 tasks, the
+  68 that fall outside their reflog all ran *before their repository's first commit*, so they were
+  correctly blank and stay blank. What this is for is the reflog that expires next: one checkout
+  here already starts 93 days back, just past git's 90-day default.
+
+- **probez runs `git log`, where before it only read a file.** This is the one promise in the README
+  and `SECURITY.md` that this release retracts, so it is spelled out rather than folded into the
+  entry above. The command is argv with no shell, no pager, and `GIT_OPTIONAL_LOCKS=0` so it takes
+  no lock; it writes nothing, keeps nothing but hashes and seconds, and every failure is simply no
+  answer. It runs only where it can add something — a reflog still holding its repository's first
+  commit covers that repository whole, and for one of those nothing is run at all, which is 17 of
+  the 19 checkouts on the machine this was measured on. A machine with no git installed behaves
+  exactly as it did before.
+
 ## [0.7.1] - 2026-09-07
 
 ### Fixed
@@ -1546,7 +1610,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/flowzhq/probez/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/flowzhq/probez/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/flowzhq/probez/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/flowzhq/probez/compare/v0.5.1...v0.6.0

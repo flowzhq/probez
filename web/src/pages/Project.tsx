@@ -51,6 +51,14 @@ export function Project({
                   imported
                 </span>
               )}
+              {data.project.darkened_at === null ? null : (
+                <span
+                  className="mark"
+                  title="It was darkened on the way out of the store it came from: these figures are real, the words behind them were replaced"
+                >
+                  darkened
+                </span>
+              )}
               <SourceMarks sources={data.project.sources} />
               <span className="muted mono clip">{data.project.path ?? data.project.key}</span>
               <span className="spacer" style={{ flex: 1 }} />

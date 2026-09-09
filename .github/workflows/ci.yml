@@ -89,27 +89,37 @@ jobs:
           fi
           echo "ok: loopback only"
 
-      - name: Only the opener and the reader touch child_process
+      - name: Only the opener, the reader and the reflog reader touch child_process
         run: |
-          # Two files start a program, and they are the only two.
+          # Three files start a program, and they are the only three. The number is the point: a
+          # list that grows without anyone noticing is how a fence becomes a suggestion.
           #
           # src/open.ts opens a browser: one spawn of one platform command with the URL as an argv
           # element. src/reader.ts runs the command a person wrote into reader.json, which is how
           # `probez explain` hands one question to a model they already have -- see CONTRIBUTING
-          # rule 2. Anywhere else, or through a shell, is a way to run something nobody asked for.
-          if grep -rln "child_process" src/ | grep -vE "^src/(open|reader)\.ts$"; then
-            echo "child_process belongs in src/open.ts and src/reader.ts and nowhere else"; exit 1
+          # rule 2. src/git.ts runs `git log` in a project directory, read-only, for the commit a
+          # task started from, and only where the reflog cannot answer on its own.
+          # Anywhere else, or through a shell, is a way to run something nobody asked for.
+          if grep -rln "child_process" src/ | grep -vE "^src/(open|reader|git)\.ts$"; then
+            echo "child_process belongs in src/open.ts, src/reader.ts and src/git.ts and nowhere else"; exit 1
           fi
-          if grep -nE "exec\(|execFile|shell:\s*true" src/open.ts src/reader.ts; then
+          # No shell, anywhere. `exec` takes a command line and hands it to one; `execFile` takes
+          # argv and does not, which is why it is allowed in src/git.ts and nowhere else.
+          # The leading class keeps this off `MOVE.exec(...)`, which is a regular expression.
+          if grep -nE "(^|[^.[:alnum:]_])exec(Sync)?\(|shell:[[:space:]]*true" src/open.ts src/reader.ts src/git.ts; then
             echo "these must spawn argv directly, never through a shell"; exit 1
           fi
-          echo "ok: two spawns, both argv-only"
+          if grep -nE "execFile" src/open.ts src/reader.ts; then
+            echo "the opener and the reader spawn, they do not execFile"; exit 1
+          fi
+          echo "ok: three spawns, all argv-only"
 
       - name: Only the reflog reader looks inside a repository
         run: |
           # probez reads the agent's session files and one file beside the work: git's HEAD reflog,
-          # for the commit a task started from. That read lives in src/git.ts, is read-only, and
-          # starts no `git` process. A second reader anywhere else is a constraint changing.
+          # for the commit a task started from. Where that log has been expired past the task, it
+          # also runs `git log` for the commit history behind it. Both are read-only, both live in
+          # src/git.ts. A second reader anywhere else is a constraint changing.
           # `\b` keeps this off `.gitignore` and `.github`, which are names in the tool tables.
           if grep -rlnE "\.git\b" src/ | grep -v "^src/git\.ts$"; then
             echo "reading a repository belongs in src/git.ts and nowhere else"; exit 1

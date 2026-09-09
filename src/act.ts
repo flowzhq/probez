@@ -140,7 +140,7 @@ function baseName(path: string): string {
  * operation the target axis exists to describe. Without this the commonest shape in the store
  * arrives with no target at all.
  */
-const DIRECTORY_TARGETS: Record<string, Target> = {
+export const DIRECTORY_TARGETS: Record<string, Target> = {
   src: 'code', lib: 'code', app: 'code', apps: 'code', pkg: 'code', packages: 'code',
   cmd: 'code', internal: 'code', components: 'code', server: 'code', client: 'code',
   test: 'tests', tests: 'tests', spec: 'tests', e2e: 'tests', __tests__: 'tests',

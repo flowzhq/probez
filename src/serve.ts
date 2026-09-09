@@ -382,7 +382,7 @@ async function serveApi(
   // /api/projects/<slug>/readings
   // /api/projects/<slug>/prompt?session=&task=&at=
   // /api/projects/<slug>/explain                                POST
-  // /api/projects/<slug>/export?format=jsonl|json
+  // /api/projects/<slug>/export?format=jsonl|json&darken=1
   // /api/projects/<slug>/sync                                   POST
   // /api/projects/<slug>/rename                                 POST
   // /api/projects/<slug>/delete                                 POST
@@ -548,7 +548,9 @@ async function serveApi(
       sendJson(res, 400, { error: `format must be jsonl or json, got "${format}"` })
       return
     }
-    const file = await exportProject(dataDir, slug, format)
+    // Exporting is a read either way; darkening only changes what the bytes say, so this stays a
+    // GET like the plain one.
+    const file = await exportProject(dataDir, slug, format, url.searchParams.get('darken') === '1')
     // The filename is built from the slug, which is already restricted to characters a header can
     // carry, so there is nothing here to escape.
     res.writeHead(200, {

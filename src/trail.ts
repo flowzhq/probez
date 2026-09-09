@@ -153,7 +153,7 @@ function tokenize(segment: string): string[] {
 }
 
 /** The identifiers in a pattern that could name a file. */
-function termsOf(pattern: string): string[] {
+export function termsOf(pattern: string): string[] {
   return (pattern.match(TERM) ?? []).map((term) => term.toLowerCase())
 }
 
@@ -166,7 +166,7 @@ function termsOf(pattern: string): string[] {
  * a real store the second is the commoner of the two by a wide margin — counted as a probe it would
  * root a trail at every test run.
  */
-function probesOfCommand(placed: Placed): string[] {
+export function probesOfCommand(placed: Placed): string[] {
   const [head] = placed.name.split(' ')
   if (head === undefined || placed.piped) return []
 

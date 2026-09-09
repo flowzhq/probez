@@ -200,7 +200,7 @@ const GLOBAL_FLAGS = new Set([
  */
 const COMMAND_FLAGS: Record<string, string[]> = {
   collect: ['full', 'since'],
-  export: ['bundle', 'out'],
+  export: ['bundle', 'darken', 'out'],
   import: ['as'],
   projects: [],
   sessions: ['limit', 'agent'],
@@ -415,12 +415,21 @@ Clearing
 Sharing
   probez export <project>      Write a project out as a file to send someone
   --bundle                     One .json with the manifest and analysis, not bare .jsonl rounds
+  --darken                     Replace everything readable in it, keeping every measurement
   --out <file>                 Write there instead of to stdout
   probez import <file>         Read a project someone exported, from .json or .jsonl
   --as <name>                  Store it under this name instead of the one in the file
 
-  An export carries prompts, commands and file paths. Read one before you send it, and open one
-  you were sent the way you would any attachment. Nothing in it is ever executed.
+  An export carries prompts, commands and file paths unless you darken it. Read one before you
+  send it, and open one you were sent the way you would any attachment. Nothing in it is ever
+  executed.
+
+  \`--darken\` is for sending one to somebody outside the work. Prompts and replies become
+  \`****\`; paths, commands and search terms become one-way tokens that classify the way the
+  originals did, so the rounds, the costs, the timings, the errors and the targets all survive and
+  none of the words do. Trails come out thinner: one of the three things they are built from is a
+  search term appearing inside a file's name, and a token cannot carry that. It cannot be undone,
+  and a project that arrived this way says so on every read of it.
 
 Collection
   probez collect [project]     Collect one project, or every project under a folder
@@ -558,6 +567,9 @@ async function runImport(
       ? '  replaced the copy already imported from this project'
       : '  this is somebody else\'s work, kept apart from anything collected here',
   )
+  if (result.darkened) {
+    console.log('  it arrived darkened: the counts are real, the words in it were replaced')
+  }
   console.log(`  → ${shorten(result.dir)}/rounds.jsonl`)
   console.log(`  probez view ${result.slug}`)
   console.log('')
@@ -575,6 +587,7 @@ async function runExport(
   target: string | undefined,
   bundle: boolean,
   out: string | undefined,
+  darken: boolean,
 ): Promise<void> {
   if (target === undefined) fail('probez export needs a project: `probez export my-app --out my-app.json`')
 
@@ -587,7 +600,7 @@ async function runExport(
     fail(`${target} matches more than one project — name one of ${names}`)
   }
 
-  const written = await exportProject(dataDir, matched[0]!.slug!, bundle ? 'json' : 'jsonl')
+  const written = await exportProject(dataDir, matched[0]!.slug!, bundle ? 'json' : 'jsonl', darken)
   if (out === undefined) {
     process.stdout.write(written.body)
     return
@@ -597,7 +610,7 @@ async function runExport(
   await writeFile(file, written.body, { mode: 0o600 })
   const size = Buffer.byteLength(written.body)
   console.log('')
-  console.log(`  exported  ${matched[0]!.key}  →  ${shorten(file)}`)
+  console.log(`  exported  ${darken ? 'darkened  ' : ''}${matched[0]!.key}  →  ${shorten(file)}`)
   console.log(`  ${(size / 1024).toFixed(0)} KB · they read it with \`probez import ${basename(file)}\``)
   console.log('')
 }
@@ -707,7 +720,10 @@ function projectHeader(project: Project): void {
     : project.slug !== undefined
       ? '(imported)'
       : '(path unknown)'
-  console.log(`  ${name}  ${where}`)
+  // Said on every read of a darkened project rather than once at import, because the figures below
+  // are real and the words beside them are not, and that is worth knowing every time.
+  const how = project.darkened === true ? '  darkened' : ''
+  console.log(`  ${name}  ${where}${how}`)
   console.log('')
 }
 
@@ -737,6 +753,7 @@ async function storedMatches(dataDir: string, target: string | undefined): Promi
     // What the store calls it, which is the one thing discovery could not have told us.
     name: row.project,
     path: row.path,
+    darkened: row.darkened_at !== null,
     dir: row.source_dir ?? '',
     sessions: [],
     lastActivity: Date.parse(row.last_ts ?? '') || 0,
@@ -2271,6 +2288,7 @@ async function main(): Promise<void> {
         port: { type: 'string' },
         as: { type: 'string' },
         bundle: { type: 'boolean', default: false },
+        darken: { type: 'boolean', default: false },
         out: { type: 'string' },
         'no-open': { type: 'boolean', default: false },
         version: { type: 'boolean', default: false },
@@ -2367,7 +2385,7 @@ async function main(): Promise<void> {
 
   // Export reads the store and writes a file of its own; the agent's directory has no part in it.
   if (command === 'export') {
-    await runExport(dataDir, target, values.bundle === true, values.out)
+    await runExport(dataDir, target, values.bundle === true, values.out, values.darken === true)
     return
   }
 
@@ -2457,6 +2475,7 @@ async function main(): Promise<void> {
         // where that one is stated.
         lastActivity: Date.parse(row.last_ts ?? row.imported_at ?? '') || 0,
         slug: row.slug,
+        darkened: row.darkened_at !== null,
         sources: row.sources,
       }))
     const listed = [...own, ...imported]
@@ -2474,6 +2493,7 @@ async function main(): Promise<void> {
             path: p.path,
             slug: p.slug,
             imported: p.slug !== undefined,
+            darkened: p.darkened === true,
             sessions: p.sessions.length,
             last_activity: new Date(p.lastActivity).toISOString(),
           })),
@@ -2489,7 +2509,7 @@ async function main(): Promise<void> {
       const count = project.sessions.length
       const where =
         project.slug !== undefined
-          ? `(imported)  ${project.slug}`
+          ? `(imported${project.darkened === true ? ', darkened' : ''})  ${project.slug}`
           : project.path
             ? shorten(project.path)
             : '(path unknown)'

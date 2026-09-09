@@ -808,6 +808,53 @@ test('a project exported from one store imports into another and reads the same'
   assert.deepEqual(figures(after.stdout), figures(before))
 })
 
+test('a darkened export reads the same, and says nothing', () => {
+  const mine = makeSource(2)
+  assert.equal(collect(mine).status, 0)
+  const before = read(mine, ['analyze']).stdout
+  const plain = readFileSync(join(mine.dataDir, 'projects', readdirSync(join(mine.dataDir, 'projects'))[0]!, 'rounds.jsonl'), 'utf8')
+
+  const bundle = join(mine.dataDir, 'sent.json')
+  const exported = run([
+    'export', mine.project, '--data-dir', mine.dataDir, '--bundle', '--darken', '--out', bundle,
+  ])
+  assert.equal(exported.status, 0, exported.stderr)
+  assert.match(exported.stdout, /darkened/)
+
+  // Nothing a person wrote is in the file. The prompts and the assistant's prose are the whole of
+  // what the fixture says in words, so they are the whole of what must not be in there.
+  const sent = readFileSync(bundle, 'utf8')
+  for (const said of plain.split('\n').flatMap((line) => {
+    if (line.trim() === '') return []
+    const round = JSON.parse(line) as { user_text?: string; text?: string }
+    return [round.user_text ?? '', round.text ?? ''].filter((one) => one.length > 8)
+  })) {
+    assert.ok(!sent.includes(said), `the export still holds ${JSON.stringify(said.slice(0, 40))}`)
+  }
+
+  const theirs = realpathSync(mkdtempSync(join(tmpdir(), 'probez-cli-darkened-')))
+  const imported = run(['import', bundle, '--data-dir', theirs])
+  assert.equal(imported.status, 0, imported.stderr)
+  // The person who receives it is told what they have before they read a number out of it.
+  assert.match(imported.stdout, /arrived darkened/)
+
+  const slug = readdirSync(join(theirs, 'projects'))[0]!
+  const after = run([
+    'analyze', slug, '--data-dir', theirs,
+    '--claude-dir', join(theirs, 'none'),
+    '--cursor-dir', join(theirs, 'none-cursor'),
+    '--codex-dir', join(theirs, 'none-codex'),
+  ])
+  assert.equal(after.status, 0, after.stderr)
+  // The header says so on every read, not only at import.
+  assert.match(after.stdout, /darkened/)
+  // And the figures are the ones the real project produced: that is the whole point of darkening
+  // rather than blanking. The first two lines name the project and differ.
+  const figures = (text: string): string[] =>
+    text.split('\n').slice(2).join('\n').match(/[\d.]+[KM%]?/g) ?? []
+  assert.deepEqual(figures(after.stdout), figures(before))
+})
+
 test('importing the same project twice leaves one copy of it', () => {
   const mine = makeSource(1)
   assert.equal(collect(mine).status, 0)

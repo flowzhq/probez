@@ -117,11 +117,24 @@ export interface Round {
    * The commit HEAD pointed at when this round's task began: where the work started from, not what
    * it ended up as. Every round of a task carries the same hash, including its subagents'.
    *
-   * Null when the project is not a git checkout, when git is keeping no HEAD reflog, or when the
-   * reflog no longer reaches back to the task. Resolved once, when the round is collected, so it
+   * Read from git's HEAD reflog, which is the exact answer where it reaches, and from the commit
+   * history behind it where it does not — a reflog is pruned at 90 days and a fresh clone holds one
+   * line, so an old task can fall off the front of one. The second source is an inference and not a
+   * record: it names the newest commit that had been made by then. See `git.ts`.
+   *
+   * Null when the project is not a git checkout, when neither source can be read, and when the task
+   * is older than the repository's first commit. Resolved once, when the round is collected, so it
    * does not decay as the reflog is pruned.
    */
   commit: string | null
+  /**
+   * Set only on a round that arrived in a darkened export. Absent means it is as it was recorded.
+   *
+   * It rides on the round rather than beside it because a bare `.jsonl` export has no manifest to
+   * carry it — it is the store's own file, one round per line — so a mark kept anywhere else would
+   * be lost for half the formats, and for any subset somebody cut out by hand. See `darken.ts`.
+   */
+  darkened?: true
   /** "sub" for subagent work, "main" otherwise. Not which product produced the session. */
   agent: 'main' | 'sub'
   /**
@@ -207,6 +220,12 @@ export interface Project {
    * record. That encoding is lossy, so a Claude `cwd` for the same checkout outranks it.
    */
   path_inferred?: boolean
+  /**
+   * True when this project arrived darkened: its content was replaced on the way out of whichever
+   * store it came from, and only its measurements are real. Set on projects matched through the
+   * store, since only an import can be one.
+   */
+  darkened?: boolean
   /** Directory holding the session files. */
   dir: string
   sessions: SessionFile[]

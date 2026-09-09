@@ -172,7 +172,7 @@ export function Task({
                         // "2.6m elapsed" and "94% reused" beside it read.
                         'started',
                         shortCommit(data.task.commit),
-                        "The commit this checkout was on when the task was asked — where the work started, not what it ended up as. Read from git's HEAD reflog when the project was collected.",
+                        "The commit this checkout was on when the task was asked — where the work started, not what it ended up as. Read from git's HEAD reflog when the project was collected, or, for a task older than that log reaches, from the newest commit that had been made by then.",
                       ] as Fact,
                     ]),
                 ['working', duration(data.task.gen_ms)],

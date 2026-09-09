@@ -23,7 +23,7 @@ import { extractCodexSession, isCodexRecord } from './extract-codex.js'
 import { extractCursorSession } from './extract-cursor.js'
 import { extractSession } from './extract.js'
 import { readHeadHistory } from './git.js'
-import { CONTROL } from './import.js'
+import { allDarkened, CONTROL } from './import.js'
 import type { AgentSource, Project, Round, RoundSource, SessionFile } from './types.js'
 
 /**
@@ -98,6 +98,13 @@ export interface StoredProject {
   collected_at: string | null
   /** When this arrived as an export, or null when it was collected on this machine. */
   imported_at: string | null
+  /**
+   * When this arrived darkened, or null when what it holds is as it was recorded.
+   *
+   * Set from the rounds on the way in rather than taken from the sender's manifest, so it says what
+   * the file actually contains rather than what it claimed to.
+   */
+  darkened_at: string | null
   /** Which agents contributed sessions. Absent on stores written before sources were recorded. */
   sources: AgentSource[]
 }
@@ -106,6 +113,8 @@ interface Manifest {
   schema_version?: number
   /** Set only on a project that arrived as a file. Absent means it was collected here. */
   imported_at?: string | null
+  /** Set only on a project whose every round arrived darkened. Absent means it arrived as recorded. */
+  darkened_at?: string | null
   /**
    * The name someone gave this project, which outranks `project`.
    *
@@ -187,6 +196,7 @@ function asStored(slug: string, dir: string, manifest: Manifest): StoredProject 
     last_ts: manifest.last_ts ?? null,
     collected_at: manifest.collected_at ?? null,
     imported_at: manifest.imported_at ?? null,
+    darkened_at: manifest.darkened_at ?? null,
     sources: (manifest.sources ?? []).filter(isAgentSource),
   }
 }
@@ -893,6 +903,8 @@ export interface ImportResult {
   skipped: number
   /** Whether this replaced a project of the same origin rather than adding one. */
   replaced: boolean
+  /** Whether every round in the file arrived darkened, so the import says so on the way in. */
+  darkened: boolean
 }
 
 /**
@@ -975,6 +987,7 @@ export async function importProject(
         source_dir: null,
         collected_at: now,
         imported_at: now,
+        darkened_at: allDarkened(rounds) ? now : null,
         sessions: sessions.size,
         rounds: rounds.length,
         tasks: tasks.size,
@@ -1003,6 +1016,7 @@ export async function importProject(
     slug,
     dir,
     project: name,
+    darkened: allDarkened(rounds),
     rounds: rounds.length,
     sessions: sessions.size,
     tasks: tasks.size,

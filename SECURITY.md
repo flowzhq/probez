@@ -22,13 +22,21 @@ configuration. This is enforced by the codebase containing no HTTP client and no
 use, and checked in CI. The one exception is spelled out below under *the reader*, and it is a
 program you name and a moment you choose.
 
-**One file is read outside the agent's session directory.** To say which commit a task started
-from, probez opens `.git/logs/HEAD` — git's HEAD reflog — in the directory the agent ran in. It is
-read-only, and it is a read of a text file: no `git` subprocess is started, nothing from the
-repository is executed, and probez works the same where git is not installed. What is kept from it
-is a commit hash per round and nothing else; branch names, commit messages, and the identity of
-whoever made the commits are all in that file and none of them are stored. A directory that is not
-a checkout, or one where git keeps no reflog, is recorded as having no commit.
+**One repository is looked into outside the agent's session directory.** To say which commit a task
+started from, probez opens `.git/logs/HEAD` — git's HEAD reflog — in the directory the agent ran in.
+That is a read of one text file, read-only.
+
+Where the reflog cannot reach the task, probez also runs one command in that directory:
+`git log --first-parent --format=%H %ct`. It is spawned as argv with no shell, with the pager off
+and `GIT_OPTIONAL_LOCKS=0` so it takes no lock, and it writes nothing. Nothing from the repository
+is executed by probez, every failure is simply no answer, and probez works the same where git is not
+installed. It runs only when it can add something: a reflog that still holds the repository's first
+commit covers it whole, and for one of those no command is run at all.
+
+What is kept from either is a commit hash per round and nothing else; branch names, commit messages,
+and the identity of whoever made the commits are all in that reflog and that history, and none of
+them are stored. A directory that is not a checkout, or one where neither source can answer, is
+recorded as having no commit.
 
 **`probez view` listens on a port, and that deserves stating plainly.** It is the one place probez
 opens a socket. It serves your own store, unredacted, to your own browser, so it is fenced in five
@@ -130,11 +138,43 @@ says happened, happened.
 **Export hands data to your browser, or to the file you name.** probez itself still writes
 only under its own data directory — it cannot put a file in the folder you pick, and does not try.
 `probez export` writes the same two formats from the command line, under the same owner-only mode as
-the rest of the store. What comes out is unredacted either way: `.jsonl` is a byte-for-byte copy of
+the rest of the store. By default what comes out is unredacted: `.jsonl` is a byte-for-byte copy of
 `rounds.jsonl`, and `.json` adds the manifest and the analysis around the same rounds. Both contain prompts, file paths and shell
 commands exactly as typed, so an export is a copy of the thing this page has been warning you about,
 now outside the owner-only store and in whatever directory you chose. Read the last paragraph of
 this file before sending one anywhere.
+
+**`--darken` is the exception, and it is the one to use for anything leaving your machine.** With it
+— *Darken the export* in the view's Export menu — the export is rewritten on the way out. Tokens
+are salted with bytes generated for that export and thrown away, so they are one-way and two exports
+of the same project share none of them.
+
+*Replaced with `****`:* the prompt of every round, and the assistant's prose.
+
+*Replaced with a token:* every file path, every shell command's arguments, every search term and
+pattern, MCP server, MCP tool and skill names, the name of any command probez's own table does not
+recognise, commit hashes, and the project's name, path and key.
+
+*Kept exactly, because they are the measurement:* every count and duration — rounds, tasks, tokens,
+cost, timing, errors — and the things the analyzer reads to classify. That last group is the part
+worth reading twice, since it is what a darkened export still discloses:
+
+- **Timestamps, in full.** Every round keeps its clock. That is when you were working, to the
+  second, and it is not covered by any of the above.
+- **Model ids** (`claude-opus-5`), because cost is computed from them.
+- **Tool and command names probez recognises** (`Edit`, `Bash`, `git`, `npm`) — these are the
+  figures. A name it does not recognise is tokenized, because that one is yours.
+- **File extensions and conventional directory names** (`src`, `tests`, `docs`), since the target
+  axis is read off them.
+- **Session, message and tool-call ids**, which are opaque strings the harness generated. They carry
+  no content, and they have to keep pairing with one another for `probez task` and `probez round` to
+  resolve on the other side.
+- **Which agent produced each round** (`claude-code`, `cursor`, `codex`).
+- **The counts themselves**, which describe real work. A small project's shape can be recognisable
+  to someone who already knows it.
+
+Darkening is a way to send a shape. It is not anonymisation, and it is not a claim about what cannot
+be inferred from one.
 
 What it *does* put on screen is everything in `rounds.jsonl`: prompts in full, assistant messages in
 full, and every tool input including file paths and shell commands. Anyone who can see your screen
@@ -248,7 +288,8 @@ and personal projects side by side. That is a different exposure profile from th
 layout it reads from, and the reason the mode matters.
 
 **Therefore:** treat `~/.probez` with the same care as the repositories it describes. It can contain
-secrets that appeared in a prompt or a command line. probez does no redaction of any kind, and a
+secrets that appeared in a prompt or a command line. probez does no redaction *of the store*, and a
 credential typed into a shell command is stored exactly as typed. Review it before sharing any of
-it. Redaction for sharing is a planned feature and does not exist yet. Until it does, assume no
-output of probez is safe to publish unreviewed.
+it. Redaction exists for one thing only, and it is `probez export --darken`, described above: it
+redacts what leaves, never what is kept. Assume no other output of probez is safe to publish
+unreviewed.

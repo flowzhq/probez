@@ -34,6 +34,13 @@ import {
 } from './store.js'
 import type { CollectResult, ImportResult, RemoveResult, StoredProject } from './store.js'
 import { CONTROL, ImportError, parseExport } from './import.js'
+import {
+  darkenManifest,
+  darkenRound,
+  darkenUnclassified,
+  newTokens,
+  type Tokens,
+} from './darken.js'
 import { shorten } from './format.js'
 import { MAX_RESULT_CHARS, readToolResult, readToolResults } from './result.js'
 import { questionsOf, questionShare } from './question.js'
@@ -1532,20 +1539,29 @@ export async function exportProject(
   dataDir: string,
   slug: string,
   format: ExportFormat,
+  darken = false,
 ): Promise<Export> {
   const stored = await findStored(dataDir, slug)
   if (stored === null) throw new NotFound(`no project ${slug} in this store`)
+
+  // One set of tokens for the whole export, so the same path darkens the same way in every round
+  // of it, and a different way in the next one. See `darken.ts`.
+  const tokens = darken ? newTokens(stored.path ?? '') : null
 
   if (format === 'jsonl') {
     const body = await readFile(join(stored.dir, 'rounds.jsonl'), 'utf8').catch(() => '')
     return {
       filename: `${stored.slug}-rounds.jsonl`,
       type: 'application/x-ndjson; charset=utf-8',
-      body,
+      // Line at a time rather than parsing the file into one array and serialising it back: these
+      // run to hundreds of megabytes, and the whole point of the store's own format is that it
+      // never has to be held at once.
+      body: tokens === null ? body : darkenLines(tokens, body),
     }
   }
 
-  const rounds = await roundsOf(stored.dir)
+  const stored_rounds = await roundsOf(stored.dir)
+  const rounds = tokens === null ? stored_rounds : stored_rounds.map((one) => darkenRound(tokens, one))
   const analysis = categoryTally(rounds, await readPricing(dataDir))
   return {
     filename: `${stored.slug}.json`,
@@ -1553,11 +1569,14 @@ export async function exportProject(
     body: JSON.stringify(
       {
         exported_at: new Date().toISOString(),
-        manifest: stored,
+        manifest:
+          tokens === null ? stored : darkenManifest(tokens, stored as unknown as Record<string, unknown>),
         analysis: {
           categories: analysis.rows,
           coverage: analysis.coverage,
-          unclassified: analysis.unknown,
+          // Each unclassified row is named for the tool or command that could not be read, which is
+          // the one place a name the sender owns reaches the analysis.
+          unclassified: tokens === null ? analysis.unknown : darkenUnclassified(tokens, analysis.unknown),
         },
         rounds,
       },
@@ -1565,6 +1584,22 @@ export async function exportProject(
       2,
     ),
   }
+}
+
+/** The store's own file, darkened a line at a time. A line that will not parse is dropped. */
+function darkenLines(tokens: Tokens, body: string): string {
+  const out: string[] = []
+  for (const line of body.split('\n')) {
+    if (line.trim() === '') continue
+    let round: Round
+    try {
+      round = JSON.parse(line) as Round
+    } catch {
+      continue
+    }
+    out.push(JSON.stringify(darkenRound(tokens, round)))
+  }
+  return out.length === 0 ? '' : `${out.join('\n')}\n`
 }
 
 /**

@@ -159,9 +159,12 @@ free to move when a later probez ships a new model, while a row you empty stays 
 matches past a dated suffix, so a rate against `claude-haiku-4-5` also covers the
 `claude-haiku-4-5-20251001` rounds Claude Code actually records — and no further than that, so a
 model nothing has priced is reported as unpriced instead of billed at a lookalike's rate.
-Under them sits the **reader**: the command *explain* runs, which is the only program probez ever
-starts. It is argv and not a shell line, it runs only when you press explain on one question or
-*ask* on a search, and leaving it blank leaves probez with nothing it could run.
+Under them sits the **reader**: the command *explain* runs, and the only program probez starts at
+your direction. It is argv and not a shell line, it runs only when you press explain on one question
+or *ask* on a search, and leaving it blank leaves probez with nothing it could run. One other program
+probez starts, and it is not one you configure: `git log`, during collection, in a project whose
+reflog cannot say what a task began from — read-only and local, described under
+[Privacy](#privacy).
 
 At the bottom, behind its own heading, is the **danger zone**: the two operations that remove more
 than one project. *Trim old history* takes every session older than a window you pick, and the
@@ -193,12 +196,18 @@ sync to offer there, since an agent writes its log per project and `collect` rea
 *Rename* gives it a name of your own — a label, on this machine, that the CLI answers to as well;
 nothing moves, since a project's directory in the store is a hash of the path an agent ran in, and
 clearing the field puts the derived name back.
-*Export* hands its rounds or a full bundle to your browser to save. *Delete* removes the project and
+*Export* hands its rounds or a full bundle to your browser to save, and *Darken the export* above
+those two decides what either one writes — on, the prompts and paths go out replaced and the figures
+go out whole, which is what makes a project safe to send to somebody outside the work. It changes
+the file and only the file; the screen goes on showing your own work in full, which is what it is
+for. Both export rows read *darkened* while it is on, so a toggle whose effect lands in a file you
+have not written yet still shows you something. *Delete*
+removes the project and
 everything probez recorded for it, after asking; the agent's own session files are not touched, so a
 collected project comes back with `probez collect` minus whatever the agent has since pruned, and an
 imported one does not come back at all. **Import** on the projects page reads a file someone sent
 you — which is also why the view opens on an empty store, and why a project that arrived that way is
-marked `imported` in the list.
+marked `imported` in the list, and `darkened` beside it when it came in redacted.
 
 ## The CLI
 
@@ -229,7 +238,7 @@ project                a directory an agent was started in    its name, or its p
 | `probez analyze` | Where the work went |
 | `probez view` | Open the profiler |
 | `probez collect` | Collect one project, or every project under a folder |
-| `probez export <project>` | Write a project out as a file to send someone |
+| `probez export <project>` | Write a project out as a file to send someone, `--darken` to redact it |
 | `probez import <file>` | Read a project someone sent you |
 | `probez clear` | Remove a project, everything, or everything older than a window |
 
@@ -239,6 +248,7 @@ Lists take `--limit` and always say how many rows they withheld. `rounds` filter
 `analyze` takes `--by`, `--split` and `--unclassified`. `trails` takes `--deep`, `--min-depth` and
 `--outcome`. `questions` takes `--kind` and `--min-calls`, and `explain` takes `--again` and `--prompt`.
 `clear` takes `--all`, `--before` and `--yes`, and `collect` takes `--since`.
+`export` takes `--bundle`, `--darken` and `--out`, and `import` takes `--as`.
 `--source` on `collect` and `projects` selects which agent directories to scan (Claude Code, Cursor,
 Codex, or all). On the read commands — `sessions`, `tasks`, `rounds`, `analyze`, `tools`, `find`,
 `trails`, `questions`, `view` — the same flag filters already-collected rounds and does not restrict
@@ -268,14 +278,14 @@ $ probez sessions flowz-mcp
   flowz-mcp  ~/Dev/workspace/flowz-mcp
 
   SESSION    SOURCE   ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  0bfa7fe3   claude      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   27 days ago
-  0b2cc149   claude       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   27 days ago
-  51cced08   claude      134      4  131          24.3M   138.1K     $22.57  Impl 39%   26 days ago
-  be254122   claude       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  26 days ago
-  bfd594d9   claude       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  26 days ago
-  6ffef9bc   claude       33      4  30            2.2M    17.5K      $2.19  Recon 52%  22 days ago
-  c21c7448   claude      146      2  145 ✗4       22.8M   112.6K     $18.83  Recon 43%  21 days ago
-  069d8593   claude       31      1  30 ✗2         1.9M    11.3K      $1.76  Recon 72%  20 days ago
+  0bfa7fe3   claude      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   29 days ago
+  0b2cc149   claude       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   29 days ago
+  51cced08   claude      134      4  131          24.3M   138.1K     $22.57  Impl 39%   28 days ago
+  be254122   claude       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  28 days ago
+  bfd594d9   claude       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  28 days ago
+  6ffef9bc   claude       33      4  30            2.2M    17.5K      $2.19  Recon 52%  24 days ago
+  c21c7448   claude      146      2  145 ✗4       22.8M   112.6K     $18.83  Recon 43%  23 days ago
+  069d8593   claude       31      1  30 ✗2         1.9M    11.3K      $1.76  Recon 72%  22 days ago
 
   8 sessions · 652 rounds · $82.58
   `probez session <id>` shows one of them, task by task.
@@ -347,8 +357,15 @@ $ probez tasks flowz-agentic-sdlc --session 15ac167d --limit 8
 
 **`FROM` is where the task began, not what it produced.** Tasks 3, 4 and 5 all start from
 `9e4e660`, so those three asks were made against the same tree; the hash then moves, which is the
-work of the task before it landing. It is read from git's HEAD reflog when the project is
-collected — no `git` runs — and it is blank for a project that is not a checkout.
+work of the task before it landing. It is read from git's HEAD reflog when the project is collected,
+and it is blank for a project that is not a checkout.
+
+A reflog only reaches so far — git expires it at 90 days, and a fresh clone arrives holding a single
+line — so for a task older than that, probez reads the commit history behind it instead, and takes
+the newest commit that had been made by the time the task was asked. That second answer is an
+inference rather than a record, and it is the one case where `probez` runs `git` rather than reading
+a file. It runs only where it can add something: a reflog that still holds the repository's first
+commit covers every moment that repository has existed, and nothing else is consulted for one.
 
 And what the work actually was:
 
@@ -424,10 +441,10 @@ $ probez find 'category:reconstruction cost:>0.30 -tool:Read' flowz-mcp
   4 rounds · $2.32 · 0.6% of rounds · 2.8% of cost · 3 sessions · 83% reconstruction
 
   ROUND           WORK                COST     TIME         WHEN  SAYS
-  c21c7448#2.64   Environment        $1.16    842ms  21 days ago  Bash 1
-  c21c7448#1.0    Reconstruction     $0.39     1.5s  22 days ago  implement next task
-  bfd594d9#2.24   Reconstruction     $0.42    866ms  26 days ago  Bash 1
-  0b2cc149#1.0    Reconstruction     $0.36    794ms  27 days ago  did we implemented T001?
+  c21c7448#2.64   Environment        $1.16    842ms  23 days ago  Bash 1
+  c21c7448#1.0    Reconstruction     $0.39     1.5s  24 days ago  implement next task
+  bfd594d9#2.24   Reconstruction     $0.42    866ms  28 days ago  Bash 1
+  0b2cc149#1.0    Reconstruction     $0.36    794ms  29 days ago  did we implemented T001?
 
   4 rounds
 ```
@@ -925,12 +942,37 @@ you get the store's own `.jsonl`, one round per line, on stdout unless you pass 
 imports. The same pair is in the view: **Export** under a project's **⋮**, **Import** on the
 projects page.
 
+**`--darken` is how you send one to somebody outside the work.** Prompts and replies are written as
+`****`; paths, commands and search terms become tokens; the project's own name goes with them. What
+survives is every measurement — rounds, tasks, tokens, cost, timing, errors — and, deliberately, the
+shape the analyzer reads: a path still resolves to the same target, a command still classifies as
+the same kind of work, and two calls that named the same file still name the same token, so the
+categories, the targets and the trails all come out. In the view it is **Darken the export**, a
+toggle above the two Export items, since it changes what either one writes rather than being a third
+thing to export. It redacts the file and nothing else — the view keeps showing your own work as it
+is.
+
+```console
+$ probez export flowz-mcp --bundle --darken --out flowz-mcp-darkened.json
+
+  exported  darkened  flowz-mcp  →  ~/probez-demo/flowz-mcp-darkened.json
+  1202 KB · they read it with `probez import flowz-mcp-darkened.json`
+```
+
+It cannot be undone: the tokens are one-way and salted per export, so two exports of the same
+project share none of them. A project that arrived this way says `darkened` in `probez projects`, in
+the header of every read command, and beside its name in the view. Two things it does not do, which
+are worth knowing before you rely on it: the counts still describe real work, so a small project's
+shape may be recognisable to someone who knows it; and trails come out thinner, because an edge
+built from a search term appearing *inside* a file's name cannot survive a one-way token — on this
+repo's own store, 101 trails against 146.
+
 An import is kept apart from anything collected here — a hash of the sender's project decides where
 it lands, so the same name from two people does not collide, and re-importing replaces rather than
 appends. Nothing in a file is executed. But nothing in it is checked either: it says whatever the
 sender's agent said, and probez shows it to you as faithfully as it shows your own work. **An export
-is unredacted** — prompts, shell commands and file paths exactly as typed. Read one before you send
-it, and read [SECURITY.md](SECURITY.md) first.
+is unredacted unless it was darkened** — otherwise it holds prompts, shell commands and file paths
+exactly as typed. Read one before you send it, and read [SECURITY.md](SECURITY.md) first.
 
 ## What you get
 
@@ -969,7 +1011,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 }
 ```
 
-Four of those repay a second look:
+Five of those repay a second look:
 
 - **`in_tokens` is the sum of the fields after it**, and the last is usually almost all of it. Cache
   reads bill at a fraction of the rate, so the total alone is a poor guide to what a round cost.
@@ -979,7 +1021,12 @@ Four of those repay a second look:
   suite fails still comes back `false`. `stderr_chars` and `interrupted` are what actually happened.
 - **`commit` is the task's starting point, at full length**, and it is the same on every round of
   the task. It is `null` here because the project this round came from is not a git checkout, which
-  is also what a repository with no reflog and a task older than the reflog reaches both look like.
+  is also what a task older than the repository's first commit, and a repository neither the reflog
+  nor the commit history can be read from, both look like.
+- **`darkened` is absent here, and is `true` on every round of a project that arrived darkened** —
+  see [Sharing a project](#sharing-a-project). It rides on the round rather than beside it because
+  a `.jsonl` export has no manifest to carry it, so the mark survives a file someone cut down by
+  hand. Where it is set, the numbers on the round are real and the words are `****` or tokens.
 
 **Not recorded:** reasoning text and tool result bodies, kept as character counts. Tool input
 strings over 2,000 characters are cut to the first 200 plus a length marker; object structure and
@@ -1006,15 +1053,19 @@ command you name, on a question you name, with that question's calls and nothing
 does not exist until you write the file.
 
 It does read your real work. `rounds.jsonl` holds prompts and assistant messages in full, and tool
-inputs including file paths and shell commands. One file outside the agent's session directory is
-read too: `.git/logs/HEAD` in the project, for the commit each task started from — read-only, with
-no `git` subprocess, and nothing kept from it but the hash. The verbatim session copies beside it hold more
-still: the full reasoning text and full tool output the round record leaves out.
+inputs including file paths and shell commands. One repository outside the agent's session directory
+is looked into too, for the commit each task started from: `.git/logs/HEAD` in the project, read-only
+— and, only where that log does not reach back to the task, one run of `git log` in that directory,
+as argv with no shell, taking no lock and writing nothing. Nothing is kept from either but the hash,
+and a machine with no git installed behaves exactly as it did before. The verbatim session copies
+beside it hold more still: the full reasoning text and full tool output the round record leaves out.
 
-There is no redaction of any kind. A credential typed into a shell command is stored exactly as
-typed. The store is written owner-only, and `collect` tightens anything it finds looser. Treat
-`~/.probez` with the same care as the repositories it describes, and read
-[SECURITY.md](SECURITY.md) before sharing any of it.
+Nothing in the store is redacted. A credential typed into a shell command is stored exactly as
+typed. The store is written owner-only, and `collect` tightens anything it finds looser. Redaction
+exists for one thing and one only — `probez export --darken`, which redacts what *leaves* and never
+what is kept, described under [Sharing a project](#sharing-a-project). Treat `~/.probez` with the
+same care as the repositories it describes, and read [SECURITY.md](SECURITY.md) before sharing any
+of it.
 
 ## Contributing
 

@@ -268,7 +268,9 @@ export function Settings(): ReactElement {
 }
 
 /**
- * The command `explain` runs, which is the only program probez ever starts.
+ * The command `explain` runs: the only program probez starts at a person's direction, and the only
+ * one that could reach off the machine. (Collection starts one other, `git log`, in a project whose
+ * reflog cannot date a task — local, read-only, and nothing anyone configures.)
  *
  * Everything else here reads files and draws them. This is the one setting that gives probez
  * something to execute, so the screen says exactly what that means: it is argv and not a shell

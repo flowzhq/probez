@@ -164,7 +164,17 @@ type Panel = 'menu' | 'rename' | 'remove'
  * store's own file, the contract every stage reads, and `.json` is a bundle to look at, carrying
  * the analysis and the coverage its shares are shares of.
  *
- * Whatever comes out is unredacted — prompts, file paths, shell commands, exactly as typed.
+ * Whatever comes out is unredacted — prompts, file paths, shell commands, exactly as typed —
+ * unless **Darken the export** is on. It is a toggle above the two of them rather than a third
+ * thing to export, because it changes what either one writes. Darkened, the prompts and replies
+ * become `****` and the paths, commands and search terms become tokens that classify the way the
+ * originals did, so the figures survive and the words do not. It cannot be undone.
+ *
+ * It says *the export* and not *personal data* on purpose. It changes the file and nothing else —
+ * this screen goes on showing your own work in full, which is what it is for — and a control that
+ * reads as though it darkens what you are looking at, then visibly does nothing when pressed, is a
+ * control nobody can trust. Both export rows say `darkened` while it is on for the same reason:
+ * a toggle whose effect only appears in a file you have not written yet needs to show *something*.
  *
  * **Delete** is the only thing here that destroys anything, and it destroys the whole of what probez
  * recorded for one project. It asks first, in a panel that says what goes and what does not: the
@@ -198,6 +208,9 @@ export function Actions({
   compact?: boolean
 }): ReactElement {
   const [busy, setBusy] = useState<'sync' | 'rename' | 'remove' | ExportFormat | null>(null)
+  // Off every time the menu is built. Darkening is a decision about one file being sent to one
+  // person, and a remembered one would eventually surprise somebody in the other direction.
+  const [darken, setDarken] = useState(false)
   const [said, setSaid] = useState<string | null>(null)
   const [bad, setBad] = useState(false)
   const [panel, setPanel] = useState<Panel | null>(null)
@@ -262,7 +275,7 @@ export function Actions({
     setBusy(format)
     setSaid(null)
     try {
-      const result = await exportProject(slug, format)
+      const result = await exportProject(slug, format, darken)
       report(
         result.saved === 'cancelled'
           ? 'export cancelled'
@@ -356,12 +369,26 @@ export function Actions({
               <span className="menu-note">what to call it here; nothing moves</span>
             </button>
             <div className="menu-rule" role="separator" />
+            <button
+              role="menuitemcheckbox"
+              aria-checked={darken}
+              onClick={() => setDarken((was) => !was)}
+            >
+              <strong>{darken ? '✓ ' : ''}Darken the export</strong>
+              <span className="menu-note">
+                {darken
+                  ? 'the file gets ****, this screen is unchanged'
+                  : 'redact the file the two below write; nothing here changes'}
+              </span>
+            </button>
             <button role="menuitem" onClick={() => void save('jsonl')}>
-              <strong>Export rounds</strong> <span className="mono muted">.jsonl</span>
+              <strong>Export rounds{darken ? ', darkened' : ''}</strong>{' '}
+              <span className="mono muted">.jsonl</span>
               <span className="menu-note">the store's own file, one round per line</span>
             </button>
             <button role="menuitem" onClick={() => void save('json')}>
-              <strong>Export bundle</strong> <span className="mono muted">.json</span>
+              <strong>Export bundle{darken ? ', darkened' : ''}</strong>{' '}
+              <span className="mono muted">.json</span>
               <span className="menu-note">manifest, analysis and rounds in one document</span>
             </button>
             <div className="menu-rule" role="separator" />

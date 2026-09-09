@@ -121,7 +121,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | `session`, `task`, `round` | Group rounds into tasks and order them |
 | `agent` | Separate the main agent from subagent work (`main` \| `sub`). Not which product produced the session |
 | `source` | Which product produced the session (`claude-code` \| `cursor` \| `codex` \| `unknown`). Stamped at collect from the session; missing or unrecognised is `unknown`, never assumed Claude. The query language's `source:claude` matches persisted `claude-code` |
-| `commit` | Which state of the tree a task was asked against, read from git's HEAD reflog at collect time |
+| `commit` | Which state of the tree a task was asked against, read at collect time from git's HEAD reflog, and from the commit history behind it for a task older than that log reaches |
 | `in_tokens`, `out_tokens`, `ms` | Weight each category, giving the percentages |
 | `in_uncached`, `in_cache_write`, `in_cache_read` | The three price differently, so the sum alone says little about cost |
 | `in_cache_write_5m`, `in_cache_write_1h` | A cache write has two prices: 1.25× input for a 5-minute entry, 2× for a 1-hour one |
@@ -130,6 +130,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | `events[]` | The round's moments in order, so a timing question does not need a re-collect |
 | `mcp_server`, `mcp_tool`, `skill` | Name work a built-in tool table cannot place |
 | `user_text`, `text` | Classify the round's intent |
+| `darkened` | Set only on a round that arrived in a darkened export, so a reader knows the words are replaced and the figures are not. On the round rather than the manifest, because a `.jsonl` export has none |
 | `tools[].name`, `tools[].input` | Classify the operation and its target (code / tests / docs / config) |
 | `tools[].id`, `emitted_at`, `result_at` | Pair a call with its result, including across rounds |
 | `tools[].result_chars`, `input_chars` | Depth of a reconstruction step, and the true size of a truncated call |
@@ -508,6 +509,17 @@ and that holds on the way out as well as on the way in. So a collected project c
 at all. The view says both of those in the panel that asks, because the difference between them is
 the difference between an inconvenience and a loss.
 
+**An export can be darkened, and darkening keeps the measurements.** `probez export --darken`, and
+*Darken the export* in the view, replace the prompts and replies with `****` and every path,
+command, search term and name with a one-way token salted per export. The reason it is tokens rather
+than blanks is that the analyzer reads those fields: a path decides a call's target, a command
+decides its kind, and a trail exists because two calls named the same thing. A token is built to
+answer those three the way the original did — `targetOf` gives the same target, the command
+classifies the same, and one file gets one token — so a darkened project still analyzes. Two limits
+are stated rather than papered over: the counts still describe real work, and an edge built from a
+search term appearing inside a file's name cannot survive a one-way token, so trails come out
+thinner. Darkening is a way to share a shape, not an anonymity guarantee.
+
 **Import is the one input probez does not control.** Everything else it reads was written by the
 agent on this machine; an export was written by somebody else's, and arrives by whatever route
 attachments arrive by. So it is parsed as hostile: every field type-checked, every string bounded,
@@ -571,7 +583,7 @@ question to the reader and get back **a query** — parsed by probez, refused ou
 read, shown, and only then answered by the deterministic path. A model chooses which rounds to look
 at and never what any of them came to, which is the whole of why this is allowed under the
 no-outbound-network rule and why a result read from a question is reproducible by someone with no
-reader configured. This is the second thing in probez that starts a program; CONTRIBUTING § rule 2
+reader configured. This is the second thing in probez that starts the reader; CONTRIBUTING § rule 2
 names both callers and what would have to be argued to add a third.
 
 ## Agent source as a dimension
