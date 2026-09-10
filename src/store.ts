@@ -18,6 +18,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { isAgentSource, isRoundSource, safeSessionFilename, sessionIdFromFilename } from './agents/paths.js'
+import { applyCursorUsage, readCursorUsage } from './cursor-usage.js'
 import { readToolResults } from './result.js'
 import { extractCodexSession, isCodexRecord } from './extract-codex.js'
 import { extractCursorSession } from './extract-cursor.js'
@@ -543,6 +544,42 @@ export async function readRoundsIn(dir: string): Promise<Round[]> {
   return rounds
 }
 
+/**
+ * Merge Cursor hook usage from the data-dir sidecar onto stored rounds.
+ *
+ * Redistributes each event across tool-using rounds in the matching task. Returns how many usage
+ * events were attached. Rewrites `rounds.jsonl` and drops cached analysis when anything changes.
+ */
+export async function mergeCursorUsageIntoProject(dir: string, dataDir: string): Promise<number> {
+  const events = await readCursorUsage(dataDir)
+  if (events.length === 0) return 0
+
+  const roundsFile = join(dir, 'rounds.jsonl')
+  const rounds = await readRoundsIn(dir)
+  if (rounds.length === 0) return 0
+
+  const before = rounds.map((round) => JSON.stringify(round))
+  const applied = applyCursorUsage(rounds, events)
+  if (applied === 0) return 0
+
+  const after = rounds.map((round) => JSON.stringify(round))
+  let changed = false
+  for (let i = 0; i < before.length; i++) {
+    if (before[i] !== after[i]) {
+      changed = true
+      break
+    }
+  }
+  if (!changed) return 0
+
+  const target = `${roundsFile}.usage`
+  await writeFile(target, after.join('\n') + '\n', { encoding: 'utf8', mode: FILE_MODE })
+  await rename(target, roundsFile)
+  await tighten(roundsFile, FILE_MODE)
+  await rm(join(dir, 'analysis.jsonl'), { force: true })
+  return applied
+}
+
 export async function summarize(project: Project, dataDir: string): Promise<Summary> {
   const dir = projectDir(dataDir, project)
   const sessions = new Set<string>()
@@ -791,6 +828,12 @@ export async function collectProject(
         : session.source === 'codex'
           ? await extractCodexSession(session.file, session.id, head)
           : await extractSession(session.file, session.id, head)
+    // Cursor transcripts have no usage. Hook events under the data dir are merged here so a
+    // rebuild still picks them up. Claude and Codex rounds already carry their own counts and
+    // applyCursorUsage redistributes onto tool-using rounds (or parks prose-only as outside).
+    if (session.source === 'cursor') {
+      applyCursorUsage(rounds, await readCursorUsage(dataDir))
+    }
     const lines: string[] = []
     for (const round of rounds) {
       const key = `${round.session}\u0000${round.id}`
@@ -820,6 +863,10 @@ export async function collectProject(
     // The analysis beside it was computed from rounds that no longer exist in this shape.
     await rm(join(dir, 'analysis.jsonl'), { force: true })
   }
+
+  // Hook events often arrive after the transcript was already collected. Re-merge onto stored
+  // Cursor rounds so a later collect (with nothing stale) still attaches usage.
+  await mergeCursorUsageIntoProject(dir, dataDir)
 
   state.schema_version = version
   await writeFile(join(dir, 'state.json'), JSON.stringify(state, null, 2) + '\n', {

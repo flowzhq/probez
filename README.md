@@ -43,9 +43,12 @@ one record per LLM round under `~/.probez`. Run it again whenever you want to ca
 only what changed. `probez collect --all` does every project on the machine at once, and a
 project it cannot collect is reported and stepped over rather than ending the run — the others are
 still collected, and the command exits non-zero. A repository
-used in more than one agent is one project. Cursor transcripts do not include token usage, so those rounds
-have no cost. Each round records which product produced it; filter with `--source` or `source:` rather than
-treating agents as separate projects.
+used in more than one agent is one project. Cursor transcripts omit token usage; install
+`probez hook --install` once so Cursor's stop hook records them, then `collect` attaches the
+counts. The hook is not retroactive — only turns after it is installed get Tokens and Cost;
+`collect` cannot invent usage for older Cursor sessions. Without the hook those rounds stay
+outside Tokens and Cost. Each round records which product produced it; filter with `--source` or
+`source:` rather than treating agents as separate projects.
 
 **3. Look at what came back**, in the browser or in the terminal:
 
@@ -238,6 +241,7 @@ project                a directory an agent was started in    its name, or its p
 | `probez analyze` | Where the work went |
 | `probez view` | Open the profiler |
 | `probez collect` | Collect one project, or every project under a folder |
+| `probez hook` · `hook --install` | Record Cursor stop-hook token usage (opt-in) |
 | `probez export <project>` | Write a project out as a file to send someone, `--darken` to redact it |
 | `probez import <file>` | Read a project someone sent you |
 | `probez clear` | Remove a project, everything, or everything older than a window |
@@ -254,6 +258,19 @@ Codex, or all). On the read commands — `sessions`, `tasks`, `rounds`, `analyze
 `trails`, `questions`, `view` — the same flag filters already-collected rounds and does not restrict
 discovery. `source:claude` is that filter in a query, and matches persisted `claude-code`. `--json`
 works everywhere. `probez --help` lists every flag under the command it belongs to.
+
+**Cursor token usage.** Transcripts do not include counts. Once:
+
+```bash
+probez hook --install
+```
+
+Cursor's `stop` hook writes each parent-agent turn's tokens into `~/.probez/cursor-usage.jsonl`.
+The next `probez collect` attaches them to matching Cursor tasks — split across tool-using rounds
+by the same weights as the work categories, not onto a trailing prose-only reply. Claude and Codex
+usage still come only from their own logs. Without the hook, Cursor Tokens and Cost stay blank.
+Past Cursor turns from before the hook was installed stay blank too — collect does not backfill
+them.
 
 ```console
 $ probez
@@ -370,55 +387,28 @@ commit covers every moment that repository has existed, and nothing else is cons
 And what the work actually was:
 
 ```console
-$ probez analyze flowz-agentic-sdlc
+$ probez analyze work
 
-  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
+  work  $TMPDIR/probez-readme-Jdv8al/work
 
-  WORK                  ROUNDS    SHARE      COST  ERRORS      TIME      OUT
-  Planning                 203     4.5%    $40.82     2.0      8.1m   116.3K
-    read                   171     3.4%    $30.77     2.0      3.2m    73.4K
-    clarify               14.0     0.4%     $3.30       ·      2.8m    25.1K
-    decompose             10.1     0.5%     $4.24       ·      2.1m    15.4K
-    design                 8.0     0.3%     $2.52       ·       1ms     2.4K
-  Reconstruction          1440    39.8%   $361.31    83.0     43.3m   963.5K
-    locate                 620    16.5%   $149.51    39.0     12.4m   329.1K
-    read                   481    12.2%   $110.48    28.0      8.8m   250.5K
-    inspect                324    10.8%    $98.32    16.0     21.8m   378.0K
-    graph                  9.5     0.2%     $1.86       ·     13.0s     4.6K
-    mcp                    6.0     0.1%     $1.14       ·      1.5s     1.3K
-  Implementation           867    22.4%   $203.24    10.0      1.2h   973.0K
-    modify                 744    17.2%   $156.35     6.0     41.2m   643.0K
-    create                 123     5.2%    $46.89     4.0     30.2m   330.0K
-  Testing                  322     7.9%    $71.88    13.0      5.5m   139.1K
-    run                    182     4.8%    $43.21    10.0      4.5m   105.7K
-    test                   140     3.2%    $28.67     3.0      1.0m    33.4K
-  Documentation            496    12.6%   $114.28     6.0     47.4m   561.6K
-    system                 437    10.5%    $94.90     6.0     41.2m   487.0K
-    agent                 55.9     2.1%    $18.94       ·      6.2m    70.5K
-    change                 3.0     0.0%     $0.44       ·      2.9s     4.1K
-  Delivery                 369     9.5%    $85.76    16.0      7.2m   172.1K
-    build                  183     4.3%    $39.15     3.0      2.2m    53.1K
-    commit                 117     3.2%    $28.70     4.0      2.5m    74.2K
-    branch                40.3     1.4%    $12.55     8.0      1.5m    29.9K
-    publish               29.5     0.6%     $5.36     1.0     58.4s    14.8K
-  Environment             34.7     2.1%    $18.66       ·     58.1s    20.2K
-    env                   29.3     1.9%    $17.45       ·     52.1s    18.5K
-    deps                   5.4     0.1%     $1.21       ·      6.0s     1.7K
-  Unclassified            37.7     1.3%    $11.50       ·      1.3m    31.3K
-    unknown               30.7     1.1%    $10.04       ·      1.1m    23.6K
-    incidental             7.0     0.2%     $1.46       ·     17.3s     7.7K
+  WORK                  ROUNDS    SHARE   TOKENS      COST  ERRORS      TIME      OUT
+  Reconstruction           1.0    59.1%    21.2%   $0.0016       ·      2.0s       40
+    read                   1.0    59.1%    21.2%   $0.0016       ·      2.0s       40
+  Implementation           1.0    21.9%    32.5%   $0.0006     1.0       0ms       20
+    modify                 1.0    21.9%    32.5%   $0.0006     1.0       0ms       20
+  Testing                  1.0    19.0%    46.3%   $0.0005       ·       0ms       15
+    test                   1.0    19.0%    46.3%   $0.0005       ·       0ms       15
 
-  3770 rounds did something a tool can see, out of 3922. Shares are of the $907.47 they cost
-  152 rounds of prose only (3.9%) · 1.0% unclassified · 70.8% of work has a known target
-  Unclassified is mostly ToolSearch, pnpm, Skill. --unclassified lists it
-  22.5% of the finding was inside 76 trails, 40 of which ended in a change
-  The deepest went 5 hops from a listing: `probez trail b2922aea#2.66`
+  3 rounds did something a tool can see, out of 5. Share is of the $0.0028 they cost. Tokens is of the 683 they moved
+  2 rounds of prose only (40.0%) · 66.7% of work has a known target
+  0.0% of the finding was inside 0 trails
 ```
 
-**A share is a share of money.** `ROUNDS` says how much of the work a category was; `SHARE` says how
-much of the bill. Cost is worked out per round from its own model's rates, then split across that
-round's work. The last lines are part of the answer: rounds of pure prose and tools with no entry in
-the table sit outside the shares, and are reported rather than guessed at.
+**Share is of money; Tokens is of volume.** `ROUNDS` says how much of the work a category was;
+`SHARE` says how much of the bill; `TOKENS` says how much of the input+output. Cost is worked out
+per round from its own model's rates, then split across that round's work. The last lines are part
+of the answer: rounds of pure prose, tools with no entry in the table, models with no rate, and
+rounds with no usage recorded sit outside those shares, and are reported rather than guessed at.
 
 Where *nothing* is priced there is no bill to divide — a Cursor transcript records no token counts at
 all — so `SHARE` falls back to the share of the rounds and the coverage line says which of the two

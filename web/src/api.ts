@@ -94,10 +94,16 @@ export interface Coverage {
   weight: number
   unclassified: number
   targeted: number
-  /** Dollars across the classified rounds — the denominator for every share. */
+  /** Dollars across the classified rounds — the denominator for the cost Share. */
   cost: number
   /** Classified rounds whose model has no rate, and so are outside `cost`. */
   unpriced: number
+  /** Input + output tokens across classified rounds with usage — the Tokens share denominator. */
+  tokens: number
+  /** Classified rounds with no usage recorded, and so outside `tokens`. */
+  tokenless: number
+  /** Tokens on prose-only rounds — in session totals, outside the Tokens column. */
+  outside_tokens: number
 }
 
 export interface Analysis {
@@ -296,6 +302,8 @@ export interface ViewSession extends Totals {
   tasks: number
   tool_calls: number
   errors: number
+  /** Round numbers in this session that had a harness-reported tool error. */
+  error_rounds: number[]
   first_ts: string | null
   last_ts: string | null
   model: string | null

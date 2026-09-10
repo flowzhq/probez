@@ -4,7 +4,7 @@ import { sourceAlias } from '../source'
 
 const TITLES: Record<string, string> = {
   claude: 'Claude Code sessions',
-  cursor: 'Cursor sessions. Cursor transcripts do not record token usage or cost.',
+  cursor: 'Cursor sessions. Token usage comes from `probez hook` when installed (not retroactive); transcripts alone have none.',
   codex: 'Codex CLI sessions',
   unknown: 'Sessions whose agent could not be determined',
 }

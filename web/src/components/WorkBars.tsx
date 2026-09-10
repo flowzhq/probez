@@ -4,12 +4,87 @@ import { useState } from 'react'
 
 import type { Analysis, CategoryRow } from '../api'
 import { fillOf, orderOf, shadeOf, styleOf, texturedSub } from '../categories'
-import { count, duration, money, percent, tokens } from '../format'
+import { count, duration, money, percent, shortId, tokens } from '../format'
 import { href, linkProps } from '../router'
+import type { SourceChoice } from '../router'
 import { Info } from './Chrome'
 import { Tip, useTip } from './Tip'
 import { TokenCells, TokenHeaders } from './Tokens'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
+
+/** Query atoms for "rounds where a tool failed", optionally narrowed by category / round / task / source. */
+export function errorSearchQuery(opts: {
+  category?: string
+  /** Round numbers to match (`round:n`, or OR-group when several). */
+  rounds?: number[]
+  session?: string
+  task?: number
+  source?: string | null
+}): string {
+  const parts = ['is:error']
+  if (opts.category !== undefined && opts.category !== '') {
+    parts.push(`category:${opts.category}`)
+  }
+  const roundNums = (opts.rounds ?? []).filter((n) => Number.isFinite(n))
+  if (roundNums.length === 1) {
+    parts.push(`round:${roundNums[0]}`)
+  } else if (roundNums.length > 1) {
+    parts.push(`(${roundNums.map((n) => `round:${n}`).join(' OR ')})`)
+  }
+  if (opts.session !== undefined && opts.session !== '') {
+    parts.push(`session:${shortId(opts.session)}`)
+  }
+  if (opts.task !== undefined) {
+    parts.push(`task:${opts.task}`)
+  }
+  if (opts.source !== undefined && opts.source !== null && opts.source !== '') {
+    parts.push(`source:${opts.source}`)
+  }
+  return parts.join(' ')
+}
+
+/**
+ * The Errors count as a real link to Search (`is:error` …).
+ *
+ * Only the number is clickable; row clicks stay with the parent. `linkProps` already stops
+ * propagation so a surrounding row navigator does not fire.
+ */
+export function ErrorsSearchLink({
+  count,
+  slug,
+  category,
+  rounds,
+  session,
+  task,
+  source = null,
+  children,
+  title,
+}: {
+  count: number
+  slug: string
+  category?: string
+  rounds?: number[]
+  session?: string
+  task?: number
+  source?: SourceChoice | null
+  children?: ReactNode
+  title?: string
+}): ReactElement {
+  if (!(count > 0)) return <span className="muted">·</span>
+  const to = href.search(errorSearchQuery({ category, rounds, session, task, source }), {
+    slug,
+    entity: 'rounds',
+  })
+  return (
+    <a
+      className="bad errors-link"
+      {...linkProps(to)}
+      title={title ?? 'Rounds where a tool failed'}
+    >
+      {children ?? count}
+    </a>
+  )
+}
 
 /**
  * Most of the work here has no price on it.
@@ -65,15 +140,24 @@ export function UnpricedMark({
  */
 export function WorkBars({
   analysis,
+  slug,
+  session,
+  source = null,
   onPick,
 }: {
   analysis: Analysis
+  /** Project slug — required so Errors can open Search in this project. */
+  slug: string
+  /** When set, Errors also narrows with `session:`. */
+  session?: string
+  source?: SourceChoice | null
   onPick?: (category: string) => void
 }): ReactElement {
   const { tip, show, hide } = useTip()
   const [open, setOpen] = useState<string | null>(null)
-  // Shares are of money. `classified` is still the round count the bars are drawn from, because a
-  // bar is a picture of how much work a category was, not of how much it cost.
+  // Shares are of money; Tokens of input+output. `classified` is still the round count the bars
+  // are drawn from, because a bar is a picture of how much work a category was, not of how much
+  // it cost or how many tokens it moved.
   const total = analysis.coverage.classified
   const spent = analysis.coverage.cost
   // Unless nothing here is priced at all — a Cursor project carries no token counts, so every
@@ -84,6 +168,7 @@ export function WorkBars({
   // Priced, but most of it isn't. The share stays a share of money — see `mostlyUnpriced` — and
   // says what it left out.
   const thin = !byRounds && mostlyUnpriced(analysis.coverage.unpriced, total)
+  const volume = analysis.coverage.tokens
 
   if (total === 0) {
     return <p className="note">No round in this span called a tool, so there is no work to divide.</p>
@@ -150,6 +235,13 @@ export function WorkBars({
                 <UnpricedMark unpriced={analysis.coverage.unpriced} classified={total} />
               ) : null}
             </th>
+            <th
+              className="r"
+              style={{ width: 66 }}
+              title="Share of input + output tokens across classified rounds that recorded usage. Cursor needs the stop hook (`probez hook`) for usage."
+            >
+              Tokens
+            </th>
             <th className="r" style={{ width: 66 }}>
               Rounds
             </th>
@@ -191,6 +283,11 @@ export function WorkBars({
                         <> of the {money(spent)} the classified rounds cost</>
                       )}
                       <br />
+                      <span className="tip-key">tokens </span>
+                      {volume === 0
+                        ? 'no usage recorded'
+                        : `${percent((row.in_tokens + row.out_tokens) / volume, 1)} of the ${tokens(volume)} they moved`}
+                      <br />
                       <span className="tip-key">weighted rounds </span>
                       {row.rounds.toFixed(1)} of {Math.round(total)}
                       <br />
@@ -213,12 +310,26 @@ export function WorkBars({
                 </td>
                 <td>{bar(row, null)}</td>
                 <td className="r num">{percent(share(row), 1)}</td>
+                <td className="r num">
+                  {volume === 0 ? (
+                    <span className="muted">—</span>
+                  ) : (
+                    percent((row.in_tokens + row.out_tokens) / volume, 1)
+                  )}
+                </td>
                 <td className="r num dim">{row.rounds.toFixed(1)}</td>
                 <td className="r num dim">{duration(row.ms)}</td>
                 <TokenCells of={row} />
                 <td className="r num dim">{money(row.cost)}</td>
-                <td className={`r num ${row.errors > 0 ? 'bad' : 'muted'}`}>
-                  {row.errors > 0 ? row.errors : '·'}
+                <td className="r num">
+                  <ErrorsSearchLink
+                    count={row.errors}
+                    slug={slug}
+                    category={row.name}
+                    session={session}
+                    source={source}
+                    title={`Search rounds with tool errors in ${row.label}`}
+                  />
                 </td>
               </tr>,
               ...(expanded
@@ -229,11 +340,25 @@ export function WorkBars({
                       </td>
                       <td>{bar(child, row.name)}</td>
                       <td className="r num dim">{percent(share(child), 1)}</td>
+                      <td className="r num muted">
+                        {volume === 0
+                          ? '—'
+                          : percent((child.in_tokens + child.out_tokens) / volume, 1)}
+                      </td>
                       <td className="r num muted">{child.rounds.toFixed(1)}</td>
                       <td className="r num muted">{duration(child.ms)}</td>
                       <TokenCells of={child} dim="muted" />
                       <td className="r num muted">{money(child.cost)}</td>
-                      <td className="r num muted">{child.errors > 0 ? child.errors : '·'}</td>
+                      <td className="r num">
+                        <ErrorsSearchLink
+                          count={child.errors}
+                          slug={slug}
+                          category={row.name}
+                          session={session}
+                          source={source}
+                          title={`Search rounds with tool errors in ${row.label}`}
+                        />
+                      </td>
                     </tr>
                   ))
                 : []),
@@ -248,8 +373,19 @@ export function WorkBars({
 }
 
 export function Coverage({ analysis }: { analysis: Analysis }): ReactElement {
-  const { rounds, classified, toolless, weight, unclassified, targeted, cost, unpriced } =
-    analysis.coverage
+  const {
+    rounds,
+    classified,
+    toolless,
+    weight,
+    unclassified,
+    targeted,
+    cost,
+    unpriced,
+    tokens: volume,
+    tokenless,
+    outside_tokens,
+  } = analysis.coverage
   const unknown = analysis.unknown
     .slice(0, 3)
     .map((row) => row.name)
@@ -258,9 +394,14 @@ export function Coverage({ analysis }: { analysis: Analysis }): ReactElement {
     <p className="note" style={{ marginTop: 12 }}>
       {Math.round(classified)} of {rounds} rounds did something a tool can see.{' '}
       {cost > 0 ? (
-        <>Shares are of the {money(cost)} they cost.</>
+        <>Share is of the {money(cost)} they cost.</>
       ) : (
         <>None of them has a priced model, so shares are of the rounds rather than of the cost.</>
+      )}{' '}
+      {volume > 0 ? (
+        <>Tokens is of the {tokens(volume)} they moved.</>
+      ) : (
+        <>None of them recorded usage, so there are no tokens to divide.</>
       )}
       <br />
       {toolless} {toolless === 1 ? 'round' : 'rounds'} of prose only (
@@ -287,11 +428,24 @@ export function Coverage({ analysis }: { analysis: Analysis }): ReactElement {
             </>
           ) : (
             <>
-              {unpriced} {unpriced === 1 ? 'round is' : 'rounds are'} outside that: no rate for{' '}
+              {unpriced} {unpriced === 1 ? 'round is' : 'rounds are'} outside Share: no rate for{' '}
               {analysis.unpriced.slice(0, 3).map((row) => row.model).join(', ')}.{' '}
               <a {...linkProps(href.settings())}>Set one</a>.
             </>
           )}
+        </>
+      )}
+      {tokenless === 0 ? null : (
+        <>
+          <br />
+          {tokenless} {tokenless === 1 ? 'round is' : 'rounds are'} outside Tokens: no usage
+          recorded (install `probez hook --install` for Cursor).
+        </>
+      )}
+      {outside_tokens === 0 ? null : (
+        <>
+          <br />
+          {tokens(Math.round(outside_tokens))} tokens sit outside Tokens on prose-only rounds.
         </>
       )}
     </p>

@@ -198,7 +198,12 @@ export function Task({
 
             <section>
               <h2>Where this task went</h2>
-              <WorkBars analysis={data.analysis} />
+              <WorkBars
+                analysis={data.analysis}
+                slug={slug}
+                session={session}
+                source={source}
+              />
             </section>
 
             <section>

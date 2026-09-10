@@ -282,13 +282,13 @@ test('`analyze` reports a distribution and says what it is a distribution of', (
 
   const out = read(env, ['analyze'])
   assert.equal(out.status, 0)
-  assert.match(out.stdout, /WORK\s+ROUNDS\s+SHARE\s+COST\s+ERRORS\s+TIME\s+OUT/)
+  assert.match(out.stdout, /WORK\s+ROUNDS\s+SHARE\s+TOKENS\s+COST\s+ERRORS\s+TIME\s+OUT/)
   // The coverage line is part of the answer, not a footnote: a share with no denominator behind it
-  // reads as a share of everything, and rounds that called no tool are outside it. The denominator
-  // is money, so the line names the amount rather than leaving "of those" to be guessed at.
+  // reads as a share of everything, and rounds that called no tool are outside it. The denominators
+  // are money and tokens, so the line names both rather than leaving "of those" to be guessed at.
   assert.match(
     out.stdout,
-    /rounds did something a tool can see, out of \d+\. Shares are of the \$[\d.]+ they cost/,
+    /rounds did something a tool can see, out of \d+\. Share is of the \$[\d.]+ they cost\. Tokens is of the .+ they moved/,
   )
   assert.match(out.stdout, /of work has a known target/)
 })
@@ -334,7 +334,7 @@ test('a model with no rate is reported rather than priced at nothing', () => {
   )
   const out = read(env, ['analyze'])
   assert.equal(out.status, 0)
-  assert.match(out.stdout, /rounds are outside that: no rate for claude-opus-5/)
+  assert.match(out.stdout, /rounds are outside Share: no rate for claude-opus-5/)
   assert.match(out.stdout, /Settings/)
 })
 
