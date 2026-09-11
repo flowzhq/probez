@@ -303,6 +303,26 @@ hr {
   color: var(--bad);
 }
 
+/* Errors count that opens Search (`is:error` …). Underline marks it as a link; hover lifts the
+   number itself, not only the line under it. */
+a.errors-link {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition:
+    color 0.12s ease,
+    background-color 0.12s ease,
+    font-weight 0.12s ease;
+}
+
+a.errors-link:hover {
+  font-weight: 700;
+  text-decoration-thickness: 2px;
+  color: color-mix(in srgb, var(--bad) 85%, var(--ink));
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+}
+
 /*
  * How full the context window a round's input was, in three bands.
  *

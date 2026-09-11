@@ -6,7 +6,7 @@ import { Actions } from '../components/Actions'
 import { Chrome, Facts, Info, Loading, Problem } from '../components/Chrome'
 import { SourceMarks, SourceTag } from '../components/SourceMarks'
 import { InTokens, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
-import { MixBar, WorkBars } from '../components/WorkBars'
+import { MixBar, WorkBars, ErrorsSearchLink } from '../components/WorkBars'
 import { QUESTIONS_ARIA, QuestionsTable, questionsExplained } from '../components/QuestionPanel'
 import { TRAILS_ARIA, trailsExplained } from '../components/TrailPanel'
 import { ago, count, duration, money, percent, shortId, shortModel, tokens, when } from '../format'
@@ -101,11 +101,13 @@ export function Project({
             />
             {data.unpriced > 0 || (data.project.sources ?? []).includes('cursor') ? (
               <p className="note">
-                Cost and token totals only include rounds whose model has a rate. Cursor transcripts
-                do not record usage. A + on a cost means some rounds in the total could not be
-                priced. Filtering by source (the Source control, or <span className="mono">source:</span> in
-                the query bar) does not change what Sync collects. The control filters this page;
-                typing <span className="mono">source:</span> in the bar is still a search.
+                Cost and token totals only include rounds whose model has a rate. Cursor usage
+                needs <span className="mono">probez hook --install</span>; transcripts alone have
+                none, and the hook is not retroactive — only turns after install get Tokens and
+                Cost. A + on a cost means some rounds in the total could not be priced. Filtering by
+                source (the Source control, or <span className="mono">source:</span> in the query
+                bar) does not change what Sync collects. The control filters this page; typing{' '}
+                <span className="mono">source:</span> in the bar is still a search.
               </p>
             ) : null}
 
@@ -124,7 +126,11 @@ export function Project({
                   </button>
                 </div>
               </div>
-              {tab === 'work' ? <WorkBars analysis={data.analysis} /> : <Tools slug={slug} read={read} source={source} />}
+              {tab === 'work' ? (
+                <WorkBars analysis={data.analysis} slug={slug} source={source} />
+              ) : (
+                <Tools slug={slug} read={read} source={source} />
+              )}
             </section>
 
             <section>
@@ -210,7 +216,20 @@ export function Project({
                       <td className="r num">{session.rounds}</td>
                       <td className="r num">
                         {session.tool_calls}
-                        {session.errors > 0 ? <span className="bad"> ✗{session.errors}</span> : null}
+                        {session.errors > 0 ? (
+                          <>
+                            {' '}
+                            <ErrorsSearchLink
+                              count={session.errors}
+                              slug={slug}
+                              rounds={session.error_rounds}
+                              source={source}
+                              title="Search rounds with tool errors"
+                            >
+                              ✗{session.errors}
+                            </ErrorsSearchLink>
+                          </>
+                        ) : null}
                       </td>
                       {/* The distribution rather than the name of its largest slice, which is what
                           the tasks table already does one level down. The widest band is the same

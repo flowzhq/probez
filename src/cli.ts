@@ -31,6 +31,13 @@ import {
 } from './discover.js'
 import { aliasOfSource, isSourceFilter, parentSession, storeSourceAlias, wantsClaude, wantsCodex, wantsCursor } from './agents/paths.js'
 import type { SourceFilter } from './agents/paths.js'
+import {
+  appendCursorUsage,
+  cursorHooksInstallSnippet,
+  defaultCursorHooksPath,
+  installCursorHooks,
+  parseCursorHookPayload,
+} from './cursor-usage.js'
 import { ago, clip, duration, pad, padStart, shortCommit, shorten, shortSession, span, tokens, wrap } from './format.js'
 import { contextShare } from './models.js'
 import {
@@ -130,6 +137,7 @@ const COMMANDS = new Set([
   'collect',
   'export',
   'import',
+  'hook',
   'projects',
   'sessions',
   'session',
@@ -202,6 +210,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   collect: ['full', 'since'],
   export: ['bundle', 'darken', 'out'],
   import: ['as'],
+  hook: ['install'],
   projects: [],
   sessions: ['limit', 'agent'],
   session: ['limit'],
@@ -393,6 +402,14 @@ Analysis
   --source claude|cursor|codex Only rounds this agent produced
   --limit <n>                  How many sub-rows to list under each category
 
+  Shares are of what the work cost, at the rates under Settings in \`probez view\` — or of the
+  classified rounds when nothing is priced. TOKENS is the same split over input+output tokens
+  (Claude and Codex when usage was recorded; Cursor when a \`stop\` hook has been collected — see
+  \`probez hook\`). ROUNDS still says how much of the work it was; the three disagree, which is the
+  point. Rounds of pure prose carry no label and are reported instead of guessed at, and so is
+  every tool with no entry in the table, every model with no rate, and every round with no usage.
+  All of that is on the coverage line.
+
 The view
   probez view                  Open the local profiler in your browser
   --port <n>                   Which port to listen on (default ${DEFAULT_PORT})
@@ -437,7 +454,34 @@ Collection
   --full                       Re-read every session instead of only what changed
   --since <span>               Only sessions written to inside this window, as 30d, 12h or 6w
   --source claude|cursor|codex|all
-                               Which agent directories to scan (default all)
+                               Which agent directories to scan (default all;
+                               \`both\` still means all). This is collection, not a
+                               store filter. On sessions, analyze, find, view and
+                               the other read commands the same flag filters rounds
+                               already collected; see Options below.
+
+  Claude Code sessions live under ~/.claude/projects. Cursor transcripts live under
+  ~/.cursor/projects/<slug>/agent-transcripts. Codex CLI rollouts live under
+  ~/.codex/sessions (or \$CODEX_HOME/sessions). A repository used by more than one
+  agent is one project.
+
+  Cursor transcripts do not record token usage. \`probez hook\` is the stop-hook receiver that
+  does: install it once, and the next \`collect\` attaches those counts to Cursor rounds. The
+  hook is not retroactive — turns from before it was installed stay without Tokens and Cost.
+  Claude and Codex usage still comes only from their own logs.
+
+  A store collected by an older probez is rebuilt on the next collect, from the session copies
+  it already keeps. Nothing leaves the machine and nothing is lost, but it is not instant.
+
+Cursor usage
+  probez hook                  Read one Cursor stop-hook payload from stdin and store it
+  probez hook --install        Wire ~/.cursor/hooks.json so Cursor calls \`probez hook\` on stop
+
+  The hook records input, output and cache tokens for the parent agent turn. Subagent usage is
+  not in the payload and is left blank rather than invented. \`collect\` merges stored events onto
+  matching Cursor tasks — split across tool-using rounds by work weight, never parked on a trailing
+  prose reply. Sessions without a hook stay at \`—\` for Tokens and Cost; so do Cursor turns that
+  finished before the hook was installed. Token Share does not need a priced model.
 
 Options (these work on every command)
   --json                       Machine-readable output
@@ -508,6 +552,76 @@ function printSummary(summary: Summary, extra?: string): void {
   if (extra !== undefined) console.log(`  ${extra}`)
   console.log(`  → ${shorten(summary.dir)}/rounds.jsonl`)
   console.log('')
+}
+
+/**
+ * Receive a Cursor stop-hook payload, or install the hook that will send them.
+ *
+ * Cursor calls this with JSON on stdin. probez stores the event under the data directory; the next
+ * `collect` attaches it to matching Cursor rounds. `--install` only edits `~/.cursor/hooks.json`.
+ */
+async function runHook(dataDir: string, install: boolean, json: boolean): Promise<void> {
+  if (install) {
+    const entry = process.argv[1] !== undefined ? resolve(process.argv[1]) : 'probez'
+    const command =
+      entry === 'probez' ? 'probez hook' : `${process.execPath} ${shellQuote(entry)} hook`
+    const path = defaultCursorHooksPath()
+    let result: 'created' | 'updated' | 'unchanged'
+    try {
+      result = await installCursorHooks(path, command)
+    } catch (error) {
+      fail(`cannot write ${path}: ${(error as Error).message}`)
+    }
+    if (json) {
+      console.log(JSON.stringify({ path, command, result, snippet: cursorHooksInstallSnippet(command) }))
+      return
+    }
+    if (result === 'unchanged') {
+      console.log(`Cursor hooks already call probez (${path})`)
+    } else {
+      console.log(`${result === 'created' ? 'Wrote' : 'Updated'} ${path}`)
+      console.log(`  stop → ${command}`)
+    }
+    console.log('Run a Cursor agent turn, then `probez collect` to attach token usage.')
+    return
+  }
+
+  const text = await readStdin()
+  if (text.trim() === '') fail('probez hook needs a Cursor stop-hook JSON payload on stdin')
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    fail('probez hook: stdin is not JSON')
+  }
+  const parsed = parseCursorHookPayload(raw)
+  if (!parsed.ok) {
+    // Cursor may call the same command for other events if the user merges hooks; exiting 0 keeps
+    // the agent loop unblocked, and the reason is what --json / stderr would otherwise hide.
+    if (json) console.log(JSON.stringify({ ok: false, reason: parsed.reason }))
+    else console.error(`probez hook: ${parsed.reason}`)
+    return
+  }
+  const file = await appendCursorUsage(dataDir, parsed.event)
+  // Empty JSON is a valid hook response; Cursor does not need our fields.
+  if (json) {
+    console.log(JSON.stringify({ ok: true, file, event: parsed.event }))
+  } else {
+    process.stdout.write('{}\n')
+  }
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:-]+$/.test(value)) return value
+  return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  }
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 /**
@@ -1400,11 +1514,11 @@ function amount(value: number): string {
 }
 
 /**
- * A share is a share of money, not of rounds.
+ * A share is a share of money or of tokens, not of rounds.
  *
- * The two disagree, and the disagreement is the point: a round of reconstruction reading a large
+ * The three disagree, and the disagreement is the point: a round of reconstruction reading a large
  * file and a round of implementation writing one line are one round each, and nothing like one
- * dollar each. `ROUNDS` still says how much of the work it was.
+ * dollar — or one token — each. `ROUNDS` still says how much of the work it was.
  *
  * `share` is passed in rather than computed here, because which denominator applies is a property
  * of the whole table and not of one row: with nothing priced there is no money to divide.
@@ -1414,9 +1528,12 @@ function categoryLine(
   indent: number,
   row: CategoryRow,
   share: (row: CategoryRow) => string,
+  wholeTokens: number,
 ): string {
   const width = 22 - indent
-  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(amount(row.rounds), 8)}  ${padStart(share(row), 7)}  ${padStart(money(row.cost), 8)}  ${padStart(row.errors >= 0.5 ? amount(row.errors) : '·', 6)}  ${padStart(duration(row.ms), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}`
+  const tokenShare =
+    wholeTokens === 0 ? '·' : percent(row.in_tokens + row.out_tokens, wholeTokens)
+  return `${' '.repeat(indent)}${pad(clip(name, width - 1), width)}${padStart(amount(row.rounds), 8)}  ${padStart(share(row), 7)}  ${padStart(tokenShare, 7)}  ${padStart(money(row.cost), 8)}  ${padStart(row.errors >= 0.5 ? amount(row.errors) : '·', 6)}  ${padStart(duration(row.ms), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}`
 }
 
 /**
@@ -1454,14 +1571,15 @@ function printAnalysis(
   const byRounds = coverage.cost === 0
   const share = (row: CategoryRow): string =>
     byRounds ? percent(row.rounds, coverage.classified) : percent(row.cost, coverage.cost)
+  const wholeTokens = coverage.tokens
   console.log(
-    `  ${pad('WORK', 20)}${padStart('ROUNDS', 8)}  ${padStart('SHARE', 7)}  ${padStart('COST', 8)}  ${padStart('ERRORS', 6)}  ${padStart('TIME', 8)}  ${padStart('OUT', 7)}`,
+    `  ${pad('WORK', 20)}${padStart('ROUNDS', 8)}  ${padStart('SHARE', 7)}  ${padStart('TOKENS', 7)}  ${padStart('COST', 8)}  ${padStart('ERRORS', 6)}  ${padStart('TIME', 8)}  ${padStart('OUT', 7)}`,
   )
   for (const row of analysis.rows) {
-    console.log(categoryLine(row.label, 2, row, share))
+    console.log(categoryLine(row.label, 2, row, share, wholeTokens))
     const sub = row.sub ?? []
     const shown = subLimit > 0 ? sub.slice(0, subLimit) : sub
-    for (const entry of shown) console.log(categoryLine(entry.name, 4, entry, share))
+    for (const entry of shown) console.log(categoryLine(entry.name, 4, entry, share, wholeTokens))
     if (shown.length < sub.length) {
       console.log(`      … ${sub.length - shown.length} more, --limit 0 for all`)
     }
@@ -1469,12 +1587,16 @@ function printAnalysis(
   console.log('')
   // With nothing priced there is no money to divide, and "shares are of the · they cost" would be
   // a sentence about a symbol. The line names the denominator SHARE actually used instead.
-  const of =
+  const ofCost =
     coverage.cost > 0
-      ? `Shares are of the ${money(coverage.cost)} they cost`
+      ? `Share is of the ${money(coverage.cost)} they cost`
       : 'None of them has a priced model, so SHARE is of the rounds rather than of the cost'
+  const ofTokens =
+    coverage.tokens > 0
+      ? `Tokens is of the ${tokens(coverage.tokens)} they moved`
+      : 'None of them recorded usage, so there are no tokens to divide'
   console.log(
-    `  ${coverage.classified} round${coverage.classified === 1 ? '' : 's'} did something a tool can see, out of ${coverage.rounds}. ${of}`,
+    `  ${coverage.classified} round${coverage.classified === 1 ? '' : 's'} did something a tool can see, out of ${coverage.rounds}. ${ofCost}. ${ofTokens}`,
   )
   const holes: string[] = []
   if (coverage.toolless > 0) {
@@ -1496,7 +1618,17 @@ function printAnalysis(
     console.log(
       byRounds
         ? `  Nothing prices ${models}. Set a rate in \`probez view\` → Settings and SHARE becomes a share of money`
-        : `  ${coverage.unpriced} round${coverage.unpriced === 1 ? '' : 's'} are outside that: no rate for ${models}. Set one in \`probez view\` → Settings`,
+        : `  ${coverage.unpriced} round${coverage.unpriced === 1 ? '' : 's'} are outside Share: no rate for ${models}. Set one in \`probez view\` → Settings`,
+    )
+  }
+  if (coverage.tokenless > 0) {
+    console.log(
+      `  ${coverage.tokenless} round${coverage.tokenless === 1 ? '' : 's'} are outside Tokens: no usage recorded`,
+    )
+  }
+  if (coverage.outside_tokens > 0) {
+    console.log(
+      `  ${tokens(Math.round(coverage.outside_tokens))} tokens sit outside Tokens: prose-only rounds`,
     )
   }
   if (axis === 'sub' && analysis.unknown.length > 0) {
@@ -2290,6 +2422,7 @@ async function main(): Promise<void> {
         bundle: { type: 'boolean', default: false },
         darken: { type: 'boolean', default: false },
         out: { type: 'string' },
+        install: { type: 'boolean', default: false },
         'no-open': { type: 'boolean', default: false },
         version: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
@@ -2367,6 +2500,12 @@ async function main(): Promise<void> {
   // Names this machine knows, before anything is classified. Absent is the ordinary case: probez
   // ships no such file, and without one every command is read by the shipped table alone.
   useCommandKinds(await readCommandKinds(dataDir))
+
+  // Cursor's stop hook calls this with a JSON payload on stdin. No agent directory is involved.
+  if (command === 'hook') {
+    await runHook(dataDir, values.install === true, values.json === true)
+    return
+  }
 
   const claudeDir = values['claude-dir'] ? resolve(values['claude-dir']) : defaultClaudeDir()
   const cursorDir = values['cursor-dir'] ? resolve(values['cursor-dir']) : defaultCursorDir()

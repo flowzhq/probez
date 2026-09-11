@@ -44,11 +44,14 @@ These are choices, not omissions:
   says what would have to be argued to add a third.
 - **Claude Code, Cursor, and Codex CLI.** Other agents follow once the round schema has proven
   itself against these formats. Cursor transcripts do not record token usage or model names; those
-  rounds are collected and classified, and cost stays blank rather than invented. Codex rollouts
-  often do record usage; cost still stays blank until a rate exists for that model. A repository
-  used by more than one agent is one project; `source` on the round is the filterable dimension,
-  not a second store. `--source` on collect selects which directories to scan; on read commands it
-  filters stored rounds and does not restrict discovery.
+  rounds are collected and classified, and cost stays blank rather than invented — unless the
+  optional Cursor `stop` hook (`probez hook`) has recorded turn usage, which `collect` merges onto
+  matching parent-agent rounds. The hook is not retroactive: turns that finished before it was
+  installed stay without usage. Subagent usage is not in the hook payload and stays blank. Codex
+  rollouts often do record usage; cost still stays blank until a rate exists for that model. A
+  repository used by more than one agent is one project; `source` on the round is the filterable
+  dimension, not a second store. `--source` on collect selects which directories to scan; on read
+  commands it filters stored rounds and does not restrict discovery.
 
 ## Users
 
@@ -150,15 +153,19 @@ did, not inside it.
 
 **Pricing is not in the round.** A round records tokens; what they cost depends on rates that change
 and that differ per contract, so they live in `~/.probez/pricing.json` and are applied at read time.
-Every share under "where agent work goes" is a share of cost, so a wrong rate is a wrong answer;
-the rates ship at published list prices and are editable in the view's Settings screen. What is
-saved is read *over* what ships, so correcting one rate does not freeze the rest at the table that
-was current when you corrected it, and a model deliberately left unpriced is written down as such
+Every share under "where agent work goes" has two denominators: **Share** is of cost (so a wrong
+rate is a wrong answer), and **Tokens** is of input+output tokens recorded on the round. The rates
+ship at published list prices and are editable in the view's Settings screen. What is saved is
+read *over* what ships, so correcting one rate does not freeze the rest at the table that was
+current when you corrected it, and a model deliberately left unpriced is written down as such
 rather than left out. The id is matched past a dated snapshot suffix — `claude-haiku-4-5-20251001`
-is priced as `claude-haiku-4-5` — but no further: a model with no rate is reported as outside the
-shares rather than counted as free, and never charged at the rate of one that looks like it. Where *nothing* is priced —
-a source that records no tokens at all, as Cursor does — there is no money to divide, so the shares
-are of the rounds instead and say so, rather than reading as a table of zeros.
+is priced as `claude-haiku-4-5` — but no further: a model with no rate is reported as outside Share
+rather than counted as free, and never charged at the rate of one that looks like it. Cursor
+transcripts alone usually record no usage; with `probez hook` installed, parent-agent turn usage
+is merged onto those rounds (not retroactive). Without it they sit outside Tokens the same way an
+unpriced model sits outside Share. Where *nothing* is priced — a source that records no tokens at
+all, as Cursor does without the hook — there is no money to divide, so the Share column falls back
+to the rounds instead and says so, rather than reading as a table of zeros.
 
 **How full the window was is derived, not stored.** `in_tokens` is already the size of the context a
 round was sent; what share of the window that is depends on the model, and a window is a published

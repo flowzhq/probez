@@ -7,7 +7,7 @@ import type { Fact } from '../components/Chrome'
 import { SourceTag } from '../components/SourceMarks'
 import { InTokens, Lines, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
 import { Trace } from '../components/Trace'
-import { MixBar, WorkBars } from '../components/WorkBars'
+import { MixBar, WorkBars, ErrorsSearchLink } from '../components/WorkBars'
 import { clip, count, duration, money, shortId, shortModel, tokens, when } from '../format'
 import { go, href, linkProps, withSource } from '../router'
 import type { SourceChoice } from '../router'
@@ -99,7 +99,7 @@ export function Session({
 
             <section>
               <h2>Work profile</h2>
-              <WorkBars analysis={data.analysis} />
+              <WorkBars analysis={data.analysis} slug={slug} session={session} source={source} />
             </section>
 
             <section>
@@ -144,7 +144,21 @@ export function Session({
                       <td className="r num">{task.rounds}</td>
                       <td className="r num">
                         {task.tool_calls}
-                        {task.errors > 0 ? <span className="bad"> ✗{task.errors}</span> : null}
+                        {task.errors > 0 ? (
+                          <>
+                            {' '}
+                            <ErrorsSearchLink
+                              count={task.errors}
+                              slug={slug}
+                              session={session}
+                              task={task.task}
+                              source={source}
+                              title="Search rounds with tool errors in this task"
+                            >
+                              ✗{task.errors}
+                            </ErrorsSearchLink>
+                          </>
+                        ) : null}
                       </td>
                       {/* The distribution rather than the name of its largest slice: the widest
                           band is the same answer the name gave, and the rest of the bar is the part

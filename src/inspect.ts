@@ -63,6 +63,11 @@ export interface SessionRow extends Totals {
   tasks: number
   tool_calls: number
   errors: number
+  /**
+   * Round numbers in this session that had at least one harness-reported tool error.
+   * Used to open Search with `round:` rather than only `session:`.
+   */
+  error_rounds: number[]
   first_ts: string | null
   last_ts: string | null
 }
@@ -181,7 +186,7 @@ export interface CategoryRow {
 export interface Coverage {
   /** Every round read. */
   rounds: number
-  /** Rounds that called at least one tool. The denominator for every share. */
+  /** Rounds that called at least one tool. The denominator for weighted rounds. */
   classified: number
   /** Rounds of pure prose, which carry no label. */
   toolless: number
@@ -191,10 +196,24 @@ export interface Coverage {
   unclassified: number
   /** Weight whose target the path table could name. */
   targeted: number
-  /** Dollars across the classified rounds. The denominator for every share. */
+  /** Dollars across the classified rounds. The denominator for the cost Share. */
   cost: number
   /** Classified rounds whose model has no rate, and so are outside `cost` entirely. */
   unpriced: number
+  /**
+   * Input + output tokens across classified rounds that recorded usage. The denominator for the
+   * Tokens share. Classified rounds with no usage sit in `tokenless`; usage parked on prose-only
+   * rounds (no category) sits in `outside_tokens`.
+   */
+  tokens: number
+  /** Classified rounds with no usage recorded, and so outside `tokens` entirely. */
+  tokenless: number
+  /**
+   * Tokens recorded on prose-only rounds. Visible in session totals but not in any category, so
+   * they reconcile top-level usage against the Tokens column: attributed + outside + (tokenless
+   * volume is zero by definition).
+   */
+  outside_tokens: number
 }
 
 export interface Analysis {
@@ -214,7 +233,10 @@ export interface Analysis {
  * same rule `summarize` applies when it totals them.
  */
 export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
-  const bySession = new Map<string, { row: SessionRow; tasks: Set<number> }>()
+  const bySession = new Map<
+    string,
+    { row: SessionRow; tasks: Set<number>; errorRounds: Set<number> }
+  >()
 
   for (const round of rounds) {
     let entry = bySession.get(round.session)
@@ -229,22 +251,27 @@ export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
           tasks: 0,
           tool_calls: 0,
           errors: 0,
+          error_rounds: [],
           ...noTotals(),
           first_ts: null,
           last_ts: null,
         },
         tasks: new Set(),
+        errorRounds: new Set(),
       }
       bySession.set(round.session, entry)
     }
-    const { row, tasks } = entry
+    const { row, tasks, errorRounds } = entry
     row.rounds += 1
     tasks.add(round.task)
     if (costOf(round, pricing) === null) row.unpriced += 1
     addTotals(row, round, pricing)
     for (const tool of round.tools ?? []) {
       row.tool_calls += 1
-      if (failed(tool)) row.errors += 1
+      if (failed(tool)) {
+        row.errors += 1
+        errorRounds.add(round.round)
+      }
     }
     if (typeof round.ts === 'string') {
       if (row.first_ts === null || round.ts < row.first_ts) row.first_ts = round.ts
@@ -253,8 +280,9 @@ export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
   }
 
   const rows: SessionRow[] = []
-  for (const { row, tasks } of bySession.values()) {
+  for (const { row, tasks, errorRounds } of bySession.values()) {
     row.tasks = tasks.size
+    row.error_rounds = [...errorRounds].sort((a, b) => a - b)
     rows.push(row)
   }
   rows.sort((a, b) => (a.last_ts ?? '').localeCompare(b.last_ts ?? ''))
@@ -476,6 +504,9 @@ export function categoryTally(
     targeted: 0,
     cost: 0,
     unpriced: 0,
+    tokens: 0,
+    tokenless: 0,
+    outside_tokens: 0,
   }
   const unpricedModels = new Map<string, number>()
 
@@ -484,11 +515,14 @@ export function categoryTally(
     const labels = labelled.get(round) ?? []
     if (labels.length === 0) {
       coverage.toolless += 1
+      // Usage on prose is kept for session totals but cannot enter a category share.
+      const parked = tokensOf(round)
+      if (parked !== null) coverage.outside_tokens += parked
       continue
     }
     coverage.classified += 1
 
-    // A round whose model has no rate contributes nothing to the shares. That is a hole, not a
+    // A round whose model has no rate contributes nothing to the cost share. That is a hole, not a
     // zero, so it is counted and named rather than quietly averaged in at nothing.
     const spent = costOf(round, pricing)
     if (spent === null) {
@@ -498,6 +532,12 @@ export function categoryTally(
     } else {
       coverage.cost += spent
     }
+
+    // Same bargain for tokens: a transcript that never recorded usage is outside the Tokens share
+    // rather than counted as free volume. Cost and Tokens are independent denominators.
+    const measured = tokensOf(round)
+    if (measured === null) coverage.tokenless += 1
+    else coverage.tokens += measured
 
     for (const label of labels) {
       coverage.weight += label.weight
@@ -898,6 +938,20 @@ export function traceOf(rounds: Round[], options: { window?: number } = {}): Tra
       active_ms: active,
     },
   }
+}
+
+/**
+ * Input + output tokens a round recorded, or null when the transcript had no usage at all.
+ *
+ * Null and zero are different: Cursor writes neither field, Claude and Codex write numbers when
+ * the rollout recorded them. Only the first case is outside the Tokens share.
+ */
+export function tokensOf(round: {
+  in_tokens?: number | null
+  out_tokens?: number | null
+}): number | null {
+  if (round.in_tokens == null && round.out_tokens == null) return null
+  return (round.in_tokens ?? 0) + (round.out_tokens ?? 0)
 }
 
 /**

@@ -8,6 +8,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+### Added
+
+- **Cursor stop-hook token usage.** `probez hook` reads Cursor's official `stop` (or
+  `afterAgentResponse`) payload from stdin and appends it under `~/.probez/cursor-usage.jsonl`.
+  `probez hook --install` wires `~/.cursor/hooks.json` so Cursor calls that command when an agent
+  turn ends. The next `collect` merges each event onto a Cursor parent-agent task by temporal join
+  (same conversation, task start ≤ event time, within `MAX_CURSOR_USAGE_TASK_DELTA_MS` / 30 minutes,
+  latest start wins; no match leaves the event in the sidecar). Within a matched task: a single
+  tool round gets the full event; otherwise usage is split across tool-using rounds by the same
+  classify weights `analyze` uses (never parked on a trailing prose-only round). Prose-only tasks
+  keep tokens for session totals but they sit in Outside Tokens, not the category Tokens column.
+  Claude and Codex extractors are unchanged. Cursor's `input_tokens` is treated as inclusive of
+  cache read/write. Subagent usage is not in the hook payload and stays `—`. Sessions without a
+  hook keep Tokens and Cost blank; so do Cursor turns from before the hook was installed (not
+  retroactive). Token Share does not require a priced model. Merge clears and
+  re-applies so repeated collect does not duplicate Cursor totals.
+
+- **Tokens share beside cost Share.** Under *where agent work goes* (and `probez analyze`), a
+  Tokens column is the same category split over input+output tokens. Share stays of cost. Rounds
+  with no usage recorded sit outside Tokens the same way an unpriced model sits outside Share.
+  Cursor rounds without a stop-hook event are in that set; with `probez hook` they join Tokens.
+
 ## [0.7.2] - 2026-09-09
 
 ### Added

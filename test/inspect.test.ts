@@ -720,6 +720,91 @@ test('a share is a share of money, and the money splits the way the rounds do', 
   assert.equal(analysis.coverage.unpriced, 0)
 })
 
+test('Tokens share is of input+output, and splits the way the rounds do', () => {
+  const analysis = categoryTally(
+    [
+      round({
+        session: 'iiii9999',
+        round: 0,
+        model: 'claude-opus-5',
+        source: 'claude-code',
+        in_tokens: 900,
+        in_uncached: 900,
+        out_tokens: 300,
+        tools: [tool('Read'), tool('Read'), tool('Write')],
+      }),
+    ],
+    PRICING,
+  )
+  assert.equal(analysis.coverage.tokens, 1200)
+  assert.equal(analysis.coverage.tokenless, 0)
+  const moved = analysis.rows.reduce((sum, row) => sum + row.in_tokens + row.out_tokens, 0)
+  assert.ok(Math.abs(moved - 1200) < 1e-9)
+})
+
+test('a Cursor round with no usage is outside Tokens rather than a free share', () => {
+  const analysis = categoryTally(
+    [
+      round({
+        session: 'jjjj0000',
+        round: 0,
+        model: null,
+        source: 'cursor',
+        in_tokens: null,
+        in_uncached: null,
+        in_cache_write: null,
+        in_cache_write_5m: null,
+        in_cache_write_1h: null,
+        in_cache_read: null,
+        out_tokens: null,
+        tools: [tool('Read')],
+      }),
+      round({
+        session: 'kkkk1111',
+        round: 0,
+        model: 'claude-opus-5',
+        source: 'claude-code',
+        in_tokens: 500,
+        in_uncached: 500,
+        out_tokens: 100,
+        tools: [tool('Write')],
+      }),
+    ],
+    PRICING,
+  )
+  assert.equal(analysis.coverage.tokenless, 1)
+  assert.equal(analysis.coverage.tokens, 600)
+  assert.equal(analysis.coverage.classified, 2)
+})
+
+test('a Codex round without usage is tokenless; one with usage is not', () => {
+  const analysis = categoryTally(
+    [
+      round({
+        session: 'llll2222',
+        round: 0,
+        model: 'gpt-5',
+        source: 'codex',
+        in_tokens: null,
+        out_tokens: null,
+        tools: [tool('Read')],
+      }),
+      round({
+        session: 'mmmm3333',
+        round: 0,
+        model: 'gpt-5',
+        source: 'codex',
+        in_tokens: 200,
+        out_tokens: 50,
+        tools: [tool('Bash')],
+      }),
+    ],
+    PRICING,
+  )
+  assert.equal(analysis.coverage.tokenless, 1)
+  assert.equal(analysis.coverage.tokens, 250)
+})
+
 test('a model with no rate is named rather than counted as free', () => {
   const analysis = categoryTally(
     [

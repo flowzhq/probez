@@ -146,9 +146,10 @@ export function Settings(): ReactElement {
               <span className="muted">dollars per million tokens</span>
             </div>
             <p className="note">
-              Shares under <em>where agent work goes</em> are shares of cost, so these rates decide
-              them — and where nothing is priced there is no cost to divide, so that table falls back
-              to the round share. They ship at the published list prices; edit any that are wrong for you — a
+              Share under <em>where agent work goes</em> is a share of cost, so these rates decide
+              it — and where nothing is priced there is no cost to divide, so that table falls back
+              to the round share. Tokens is a separate column over input+output volume and does not
+              use these rates. They ship at the published list prices; edit any that are wrong for you — a
               negotiated rate, a price that has moved, or a model probez does not know. Stored at{' '}
               <span className="mono">{data.file}</span>, owner-only, and never sent anywhere — like
               everything else probez holds, apart from the one thing the reader below sends when you
