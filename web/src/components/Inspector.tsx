@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Label, ResultPayload, RoundPayload, ToolCall } from '../api'
 import { orderOf, styleOf } from '../categories'
+import { failed } from '../errors'
 import { duration, percent, shortModel, tokens, when } from '../format'
 import type { ReactElement } from 'react'
 
@@ -92,7 +93,7 @@ export function Inspector({
   }
 
   const { round: it, labels, context_share: fill } = payload
-  const errors = it.tools.filter((tool) => tool.is_error === true).length
+  const errors = it.tools.filter(failed).length
 
   const compaction = it.compaction
 
@@ -307,7 +308,12 @@ function Call({
         <span className="muted num">
           {tool.result_chars === null ? 'no result' : `${tokens(tool.result_chars)} chars back`}
         </span>
-        {tool.is_error === true ? <span className="bad">failed</span> : null}
+        {/* The flag alone fires for a `grep` that matched nothing as readily as for an edit whose
+            anchor moved, so only a fault is painted as one. The kind rides alongside either way —
+            plainly, since it is the detail and not the alarm — the way the CLI's round line prints
+            `✗` and the kind as separate things. */}
+        {failed(tool) ? <span className="bad">failed</span> : null}
+        {tool.error_kind === null ? null : <span className="muted">{tool.error_kind}</span>}
         {/* The harness flag above says the call was accepted. These say what it did. */}
         {tool.interrupted === true ? <span className="bad">interrupted</span> : null}
         {tool.stderr_chars !== null && tool.stderr_chars > 0 ? (
