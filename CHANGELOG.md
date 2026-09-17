@@ -30,6 +30,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   with no usage recorded sit outside Tokens the same way an unpriced model sits outside Share.
   Cursor rounds without a stop-hook event are in that set; with `probez hook` they join Tokens.
 
+- **Context usage on the session page.** Below the round-by-round trace, a collapsible *Context
+  usage* section (closed by default) opens on a peak / last / median summary of `in_tokens` — the
+  size of the model's input window for that round, never a running total — plus the fraction of
+  rounds that recorded it at all (`138 / 665 rounds have context data`) and, when a window limit is
+  known, peak as a percent of it. The chart itself is a sparkline built only from the rounds that
+  have data: no slot, no connecting line, and no estimate for the rounds that don't, which is what
+  keeps thin coverage from rendering as a mostly-empty graph. Hover shows the round or time and the
+  exact token count. A session with no data says so instead of drawing an empty chart.
+
 ## [0.7.2] - 2026-09-09
 
 ### Added

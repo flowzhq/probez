@@ -6,6 +6,7 @@ import { Chrome, Facts, Loading, Problem } from '../components/Chrome'
 import type { Fact } from '../components/Chrome'
 import { SourceTag } from '../components/SourceMarks'
 import { InTokens, Lines, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
+import { ContextUsage } from '../components/ContextUsage'
 import { Trace } from '../components/Trace'
 import { MixBar, WorkBars, ErrorsSearchLink } from '../components/WorkBars'
 import { clip, count, duration, money, shortId, shortModel, tokens, when } from '../format'
@@ -110,6 +111,7 @@ export function Session({
                 onSelect={(round) => setSelected(round.round)}
                 onOpenTask={(task) => go(withSource(href.task(slug, session, task), source))}
               />
+              <ContextUsage trace={data.trace} />
             </section>
 
             <section>

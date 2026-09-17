@@ -798,6 +798,46 @@ button.save.grave:hover {
   padding: 12px 14px 6px;
 }
 
+/* Context usage (session page, under the trace) -------------------------------- */
+
+.context-usage {
+  margin-top: 10px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 8px 14px 6px;
+}
+
+.context-usage-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  text-align: left;
+}
+
+.context-usage-toggle:hover {
+  color: var(--ink);
+}
+
+.context-usage-chevron {
+  display: inline-block;
+  width: 0.9em;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.context-usage-body {
+  margin-top: 4px;
+}
+
+.context-usage-body > .facts {
+  margin-bottom: 8px;
+}
+
 .trace-bar {
   display: flex;
   align-items: center;

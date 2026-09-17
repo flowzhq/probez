@@ -4,6 +4,7 @@ import { CATEGORIES, categoryInfo, classifyCall } from './classify.js'
 import type { Category, Label } from './classify.js'
 import { benign, failed } from './errors.js'
 import { shortSession } from './format.js'
+import { contextShare, contextWindow } from './models.js'
 import { costOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
 import type { Question } from './question.js'
@@ -766,6 +767,13 @@ export interface TraceRound {
   in_tokens: number | null
   in_cache_read: number | null
   out_tokens: number | null
+  /**
+   * How full the model's input window this round's `in_tokens` were, from 0 to 1.
+   * Null when the window is unknown or the round recorded no usage — never a guess.
+   */
+  context_share: number | null
+  /** The model's published input room in tokens, or null when unknown. */
+  context_window: number | null
   thinking_chars: number
   tools: number
   errors: number
@@ -869,6 +877,8 @@ export function traceOf(rounds: Round[], options: { window?: number } = {}): Tra
       in_tokens: round.in_tokens,
       in_cache_read: round.in_cache_read,
       out_tokens: round.out_tokens,
+      context_share: contextShare(round),
+      context_window: contextWindow(round.model),
       thinking_chars: round.thinking_chars || 0,
       tools: tools.length,
       errors: tools.filter(failed).length,
