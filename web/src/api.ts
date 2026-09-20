@@ -154,6 +154,8 @@ export interface TraceRound {
   in_tokens: number | null
   in_cache_read: number | null
   out_tokens: number | null
+  context_share: number | null
+  context_window: number | null
   thinking_chars: number
   tools: number
   errors: number

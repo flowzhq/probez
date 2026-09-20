@@ -26,7 +26,7 @@ import type { ReactElement } from 'react'
  * archived copy, and `Result` below reads it from there per call, when asked.
  */
 /** Which band a context share falls in, decided on the rounded percent the reader actually sees. */
-function contextBand(share: number): string {
+export function contextBand(share: number): string {
   const shown = Number(percent(share, 0).replace('%', ''))
   if (shown <= 20) return 'context-low'
   return shown <= 80 ? 'context-mid' : 'context-high'

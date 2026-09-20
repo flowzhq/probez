@@ -582,6 +582,29 @@ test('a round on the timeline is named the way probez round takes it', () => {
   )
 })
 
+test('a traced round carries context share from the model window, never a guess', () => {
+  // claude-opus-5 is 1M input room in CONTEXT_WINDOWS; 1000 tokens is a thousandth of it.
+  const known = traceOf([
+    round({ session: 'cccc3333', round: 0, task: 4, model: 'claude-opus-5', in_tokens: 1000 }),
+  ])
+  assert.equal(known.rounds[0]!.context_window, 1_000_000)
+  assert.ok(Math.abs(known.rounds[0]!.context_share! - 1000 / 1_000_000) < 1e-12)
+
+  // No usage recorded → no share, even when the window is known.
+  const blank = traceOf([
+    round({ session: 'cccc3333', round: 1, task: 4, model: 'claude-opus-5', in_tokens: null }),
+  ])
+  assert.equal(blank.rounds[0]!.context_window, 1_000_000)
+  assert.equal(blank.rounds[0]!.context_share, null)
+
+  // An unknown model has no window and no share — not a fabricated limit.
+  const stranger = traceOf([
+    round({ session: 'cccc3333', round: 2, task: 4, model: 'mystery-model-9', in_tokens: 50_000 }),
+  ])
+  assert.equal(stranger.rounds[0]!.context_window, null)
+  assert.equal(stranger.rounds[0]!.context_share, null)
+})
+
 test('the work index answers for a span without relabelling it', () => {
   const index = workIndex(rounds)
   const session = index.session('aaaa1111')

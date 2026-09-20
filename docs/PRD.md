@@ -475,6 +475,18 @@ Three decisions in it are worth recording, because each was a choice with an alt
 **Every share carries its denominator**, the same coverage line the CLI prints, in the chart rather
 than under it.
 
+**Context usage sits under the session strip, collapsed.** Each point is that round's `in_tokens`:
+how many tokens were currently in the model's input window for the round — not a cumulative total,
+so a drop after compaction is real. Coverage is often partial (a late Cursor hook, a model that
+never reports usage), so opening it leads with a peak / last / median summary and the coverage
+count (`138 / 665 rounds have context data`) rather than a graph — those numbers answer "how full
+does this get" even when too few rounds recorded it to show a trend. The chart underneath is a
+sparkline over exactly the rounds that have data: no slot for the ones that don't, so it never
+connects across or interpolates a missing round, and thin coverage stays readable instead of
+stretching into a mostly-empty graph. The chart mounts only when opened. A published model window
+draws a dashed limit and lets peak be shown as a percent of it; an unknown window draws neither.
+Never an estimate.
+
 **The inspector marks the call, not only the round.** A round's labels are its calls added up, which
 is the number every chart above is built from; each call now carries the categories it contributed,
 so a `Bash` call that ran three commands shows all three and a share you disagree with leads back to
