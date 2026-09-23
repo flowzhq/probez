@@ -10,6 +10,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ### Added
 
+- **Rates for `claude-opus-5-5`.** $4 input, $20 output, and a cache read at 0.05× input — half the
+  0.1× most models use, so it is stated rather than inherited. Its context window is the 1M the rest
+  of the Opus 5 generation has. A store here already held 97 rounds of it, 84 of them classified and
+  every one outside Share; `probez analyze` on that project went from `$447.08` to `$452.63` with no
+  unpriced line. Settings still overrides, as it does for every row.
+
 - **Cursor stop-hook token usage.** `probez hook` reads Cursor's official `stop` (or
   `afterAgentResponse`) payload from stdin and appends it under `~/.probez/cursor-usage.jsonl`.
   `probez hook --install` wires `~/.cursor/hooks.json` so Cursor calls that command when an agent
