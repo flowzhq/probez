@@ -120,11 +120,16 @@ export function defaultPricing(): Pricing {
   return {
     schema_version: PRICING_VERSION,
     models: {
-      // Claude. Cache reads on the 5.1 pair are 0.025× input, not the 0.1× every other model uses.
+      // Claude. The 0.1× cache read is the usual multiplier, not a universal one: the 5.1 pair read
+      // at 0.025× input and Opus 5.5 at 0.05×, so both say so rather than inheriting the default.
       'claude-fable-5-1': rates(10, 50, { cacheRead: 0.025 }),
       'claude-mythos-5-1': rates(10, 50, { cacheRead: 0.025 }),
       'claude-fable-5': rates(10, 50),
       'claude-mythos-5': rates(10, 50),
+      // Cheaper than the Opus 5 it follows — $4/$20 against $5/$25 — which is the first time that
+      // has happened in this table, and the reason a store spanning the two cannot read a fall in
+      // cost per round as a fall in how much was asked for.
+      'claude-opus-5-5': rates(4, 20, { cacheRead: 0.05 }),
       'claude-opus-5': rates(5, 25),
       'claude-opus-4-8': rates(5, 25),
       'claude-opus-4-7': rates(5, 25),

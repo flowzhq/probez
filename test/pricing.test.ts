@@ -12,6 +12,7 @@ import {
   readPricing,
   writePricing,
 } from '../src/pricing.js'
+import { CONTEXT_WINDOWS } from '../src/models.js'
 import { ROUND_DEFAULTS } from './support.js'
 
 function store(): string {
@@ -183,4 +184,23 @@ test('a rate typed for a model also prices the dated rounds of it', async () => 
   const pricing = await readPricing(dir)
   const round = { ...ROUND_DEFAULTS, model: 'claude-haiku-4-5-20251001', in_uncached: 1_000_000 }
   assert.equal(costOf(round, pricing), 2)
+})
+
+test('a model that reads cache at its own multiplier is not charged the default one', () => {
+  // Opus 5.5 reads at 0.05× input, half the usual tenth. Inheriting the default would have charged
+  // every reused token double — and on a store that is 97% cache reads, that is most of the bill.
+  const opus = defaultPricing().models['claude-opus-5-5']!
+  assert.equal(opus.in, 4)
+  assert.equal(opus.out, 20)
+  assert.equal(opus.cache_write_5m, 5)
+  assert.equal(opus.cache_write_1h, 8)
+  assert.equal(opus.cache_read, 0.2)
+})
+
+test('every priced model has a context window, and every window a price', () => {
+  // The two tables are keyed the same way and read by the same `resolveModel`. A model in one and
+  // not the other is not an error anywhere — it is a round priced with no context share, or a share
+  // with no cost, and both read as data rather than as the omission they are.
+  const priced = Object.keys(defaultPricing().models).sort()
+  assert.deepEqual(Object.keys(CONTEXT_WINDOWS).sort(), priced)
 })
