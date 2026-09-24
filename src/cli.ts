@@ -949,7 +949,7 @@ function printSessions(all: ReturnType<typeof sessionRows>, limit: number, work:
   // need a column saying so on every row.
   const kinds = rows.some((row) => row.agent === 'sub')
   console.log(
-    `  ${pad('SESSION', idWidth)}${kinds ? pad('AGENT', 6) : ''}${pad('SOURCE', 9)}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('OUT', 7)}  ${padStart('COST', 9)}  ${pad('WORK', 11)}LAST`,
+    `  ${pad('SESSION', idWidth)}${kinds ? pad('AGENT', 6) : ''}${pad('SOURCE', 9)}${padStart('ROUNDS', 6)}  ${padStart('TASKS', 5)}  ${pad('TOOLS', 10)}${padStart('IN', 8)}  ${padStart('PEAK', 10)}  ${padStart('OUT', 7)}  ${padStart('COST', 9)}  ${pad('WORK', 11)}LAST`,
   )
   for (const row of rows) {
     const calls = `${row.tool_calls}${row.errors > 0 ? ` ✗${row.errors}` : ''}`
@@ -959,8 +959,14 @@ function printSessions(all: ReturnType<typeof sessionRows>, limit: number, work:
     // unmeasured value here does, rather than a `$0.00` that would read as free.
     const cost =
       row.unpriced === row.rounds ? '—' : `${money(row.cost)}${row.unpriced > 0 ? '+' : ''}`
+    const peak =
+      row.peak_in_tokens === null
+        ? '—'
+        : row.peak_context_window !== null && row.peak_context_window > 0
+          ? `${tokens(row.peak_in_tokens)}/${Math.round((row.peak_in_tokens / row.peak_context_window) * 100)}%`
+          : tokens(row.peak_in_tokens)
     console.log(
-      `  ${pad(shortSession(row.session), idWidth)}${kinds ? pad(row.agent, 6) : ''}${pad(aliasOfSource(row.source), 9)}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}  ${padStart(cost, 9)}  ${pad(work.session(row.session), 11)}${last}`,
+      `  ${pad(shortSession(row.session), idWidth)}${kinds ? pad(row.agent, 6) : ''}${pad(aliasOfSource(row.source), 9)}${padStart(String(row.rounds), 6)}  ${padStart(String(row.tasks), 5)}  ${pad(calls, 10)}${padStart(tokens(row.in_tokens), 8)}  ${padStart(peak, 10)}  ${padStart(tokens(Math.round(row.out_tokens)), 7)}  ${padStart(cost, 9)}  ${pad(work.session(row.session), 11)}${last}`,
     )
   }
   console.log('')

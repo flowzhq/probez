@@ -487,6 +487,12 @@ stretching into a mostly-empty graph. The chart mounts only when opened. A publi
 draws a dashed limit and lets peak be shown as a percent of it; an unknown window draws neither.
 Never an estimate.
 
+**Peak context is on the sessions table.** The same max `in_tokens` the session page summarises as
+Peak, shown per row (and in `probez sessions`) so a wasteful session is findable without opening it.
+A window share appears only when the peak round's model is in the published table; Cursor without a
+known window stays absolute-only. No usage stays `—`, never a fabricated zero. Distinct from the
+session's summed `in_tokens`.
+
 **The inspector marks the call, not only the round.** A round's labels are its calls added up, which
 is the number every chart above is built from; each call now carries the categories it contributed,
 so a `Bash` call that ran three commands shows all three and a share you disagree with leads back to

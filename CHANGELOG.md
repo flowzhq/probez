@@ -45,6 +45,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   keeps thin coverage from rendering as a mostly-empty graph. Hover shows the round or time and the
   exact token count. A session with no data says so instead of drawing an empty chart.
 
+- **Peak context on the sessions table.** Each session row (view and `probez sessions`) carries the
+  largest `in_tokens` any of its rounds recorded — not the sum — so a wasteful session is visible
+  without opening it. When the model on that peak round has a published window, a share is shown
+  beside the count (`466.1K (47%)`); Cursor and other unknown windows stay absolute-only. No usage
+  recorded stays `—`, never a fabricated zero.
+
 ## [0.7.2] - 2026-09-09
 
 ### Added
