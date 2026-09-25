@@ -197,6 +197,12 @@ export function Project({
                     <TokenHeaders />
                     <th
                       className="r"
+                      title="Largest input context any round in this session recorded (max in_tokens). When the model has a published window, the share of that window is shown too. Not the sum of input tokens."
+                    >
+                      Peak context
+                    </th>
+                    <th
+                      className="r"
                       title="What this session cost at the rates under Settings, worked out per round from its own model's prices and summed. Rounds whose model has no rate are left out, and the row is marked."
                     >
                       Cost
@@ -267,6 +273,27 @@ export function Project({
                         )}
                       </td>
                       <TokenCells of={session} />
+                      <td
+                        className="r num"
+                        title={
+                          session.peak_in_tokens === null
+                            ? 'No round in this session recorded input tokens'
+                            : session.peak_context_window === null
+                              ? 'Largest input context any round recorded. No published window for that model, so no share.'
+                              : `Largest input context any round recorded — ${percent(session.peak_in_tokens / session.peak_context_window, 0)} of the model's ${tokens(session.peak_context_window)} input room`
+                        }
+                      >
+                        {session.peak_in_tokens === null ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          <>
+                            {tokens(session.peak_in_tokens)}
+                            {session.peak_context_window !== null && session.peak_context_window > 0
+                              ? ` (${percent(session.peak_in_tokens / session.peak_context_window, 0)})`
+                              : null}
+                          </>
+                        )}
+                      </td>
                       {/* What is shown is what could be priced. Some rounds unpriced marks the
                           figure `+`, since it is real but short; none priced shows the same dash
                           every unmeasured value does, rather than a total that would read as free. */}

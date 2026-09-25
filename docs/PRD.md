@@ -497,6 +497,11 @@ context** is each day's average of task `max(in_tokens)` — Occupancy % over th
 deliberately not named Write, which ProbeZ already uses for cache-write rates). Null components are
 skipped rather than invented; days without eligible data are gaps. The Sessions table and the
 per-session Context usage strip are unchanged.
+**Peak context is on the sessions table.** The same max `in_tokens` the session page summarises as
+Peak, shown per row (and in `probez sessions`) so a wasteful session is findable without opening it.
+A window share appears only when the peak round's model is in the published table; Cursor without a
+known window stays absolute-only. No usage stays `—`, never a fabricated zero. Distinct from the
+session's summed `in_tokens`.
 
 **The inspector marks the call, not only the round.** A round's labels are its calls added up, which
 is the number every chart above is built from; each call now carries the categories it contributed,

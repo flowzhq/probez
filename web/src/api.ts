@@ -306,6 +306,10 @@ export interface ViewSession extends Totals {
   errors: number
   /** Round numbers in this session that had a harness-reported tool error. */
   error_rounds: number[]
+  /** Largest `in_tokens` any round recorded; null when none had usage. Not the session sum. */
+  peak_in_tokens: number | null
+  /** Input room of the model on the peak round, or null when unknown. */
+  peak_context_window: number | null
   first_ts: string | null
   last_ts: string | null
   model: string | null
