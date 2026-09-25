@@ -69,6 +69,16 @@ export interface SessionRow extends Totals {
    * Used to open Search with `round:` rather than only `session:`.
    */
   error_rounds: number[]
+  /**
+   * Largest `in_tokens` any round in this session recorded. Null when no round had usage — not the
+   * same as a peak of zero. Distinct from `in_tokens`, which is the sum across rounds.
+   */
+  peak_in_tokens: number | null
+  /**
+   * Published input room of the model on the round that set `peak_in_tokens`, or null when that
+   * model has no known window. Used for a peak % in the sessions table; never guessed.
+   */
+  peak_context_window: number | null
   first_ts: string | null
   last_ts: string | null
 }
@@ -253,6 +263,8 @@ export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
           tool_calls: 0,
           errors: 0,
           error_rounds: [],
+          peak_in_tokens: null,
+          peak_context_window: null,
           ...noTotals(),
           first_ts: null,
           last_ts: null,
@@ -267,6 +279,12 @@ export function sessionRows(rounds: Round[], pricing: Pricing): SessionRow[] {
     tasks.add(round.task)
     if (costOf(round, pricing) === null) row.unpriced += 1
     addTotals(row, round, pricing)
+    if (typeof round.in_tokens === 'number') {
+      if (row.peak_in_tokens === null || round.in_tokens > row.peak_in_tokens) {
+        row.peak_in_tokens = round.in_tokens
+        row.peak_context_window = contextWindow(round.model)
+      }
+    }
     for (const tool of round.tools ?? []) {
       row.tool_calls += 1
       if (failed(tool)) {

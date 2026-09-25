@@ -79,8 +79,32 @@ test('a session row counts its tool calls, errors and tokens', () => {
   assert.equal(first.errors, 1)
   assert.equal(first.in_tokens, 3000)
   assert.equal(first.out_tokens, 30)
+  // Peak is max per round, not the sum — three rounds of 1000 → peak 1000, sum 3000.
+  assert.equal(first.peak_in_tokens, 1000)
+  // Default test model is claude-opus-5 (1M input room).
+  assert.equal(first.peak_context_window, 1_000_000)
   assert.equal(first.first_ts, '2026-01-01T00:00:00.000Z')
   assert.equal(first.last_ts, '2026-01-03T00:00:00.000Z')
+})
+
+test('a session peak is the max in_tokens, and stays blank without usage', () => {
+  const peaked = sessionRows(
+    [
+      round({ session: 'cccc3333', round: 0, in_tokens: 80_000 }),
+      round({ session: 'cccc3333', round: 1, in_tokens: 466_000 }),
+      round({ session: 'cccc3333', round: 2, in_tokens: 390_000 }),
+    ],
+    PRICING,
+  )
+  assert.equal(peaked[0]!.peak_in_tokens, 466_000)
+  assert.equal(peaked[0]!.in_tokens, 80_000 + 466_000 + 390_000)
+
+  const blank = sessionRows(
+    [round({ session: 'dddd4444', round: 0, source: 'cursor', in_tokens: null, model: null })],
+    PRICING,
+  )
+  assert.equal(blank[0]!.peak_in_tokens, null)
+  assert.equal(blank[0]!.peak_context_window, null)
 })
 
 test('sessions are ordered by when they were last active, not by the order rounds arrive', () => {

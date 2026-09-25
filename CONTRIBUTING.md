@@ -46,7 +46,7 @@ npm run dev                               # then open http://localhost:5173/?t=<
 
 ## The rules that shape this codebase
 
-Three constraints are not up for negotiation in a PR, because they are the product:
+Four constraints are not up for negotiation in a PR, because they are the product:
 
 1. **Zero runtime dependencies.** `package.json` has no `dependencies` block and will not grow one.
    Node's standard library covers everything probez does. `typescript` and `@types/node` are
@@ -155,6 +155,10 @@ Three constraints are not up for negotiation in a PR, because they are the produ
    the view shows the same figures in the panel that asks — so the numbers you are shown and the
    thing that happens have to come from one place. A new destructive operation belongs in that
    shape, and in the tests listed under `test/clear.test.ts` below.
+
+4. **All three sources stay first-class.** Features must account for Claude Code, Cursor, and Codex
+   together — including Cursor's missing usage and context-window cases — unless a change explicitly
+   scopes one of them out. Which agent is used to write the code does not change that.
 
 ## Code style
 
