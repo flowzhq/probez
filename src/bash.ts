@@ -438,7 +438,7 @@ function nameSegment(segment: string): Command | null {
   if (raw.startsWith('#')) return null
   if (KEYWORDS.has(raw)) return null
 
-  // A path names its program by its last segment: tools/bin/flowz is flowz.
+  // A path names its program by its last segment: tools/bin/scanner is scanner.
   const head = raw.includes('/') ? (raw.split('/').pop() ?? '') : raw
   if (!NAME.test(head)) return null
 

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
-import { benign, countsAsFailure, errorKindOf, failed, isErrorKind } from '../src/errors.js'
+import { ERROR_KINDS, benign, countsAsFailure, errorKindOf, failed, isErrorKind } from '../src/errors.js'
 import type { ToolCall } from '../src/types.js'
 import { TOOL_DEFAULTS } from './support.js'
 
@@ -89,4 +92,18 @@ test('only the kinds in the table are kinds', () => {
   assert.equal(isErrorKind('nomatch'), true)
   assert.equal(isErrorKind('repair'), false)
   assert.equal(isErrorKind(''), false)
+})
+
+test('the view’s copy of what counts as a failure matches this one', () => {
+  // `web/src/errors.ts` is built separately and cannot import from here. A drift would not throw —
+  // it would paint a `grep` that matched nothing as a failure in the Inspector while the round line
+  // two commands away calls it `nomatch`, which is the disagreement this whole field exists to end.
+  const here = dirname(fileURLToPath(import.meta.url))
+  const source = readFileSync(join(here, '..', '..', 'web', 'src', 'errors.ts'), 'utf8')
+  const table = source.slice(source.indexOf('const BENIGN'))
+  const kinds = [...table.slice(0, table.indexOf('])')).matchAll(/'([a-z]+)'/g)].map((match) => match[1])
+  assert.deepEqual(
+    kinds.sort(),
+    ERROR_KINDS.filter((kind) => !countsAsFailure(kind)).slice().sort(),
+  )
 })

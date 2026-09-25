@@ -61,6 +61,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   beside the count (`466.1K (47%)`); Cursor and other unknown windows stay absolute-only. No usage
   recorded stays `—`, never a fabricated zero.
 
+### Fixed
+
+- **A `grep` that matched nothing no longer reads as `failed` in the view.** 0.7.0 gave every
+  flagged call a kind and excluded `nomatch` and `denied` from what counts as a failure, but the
+  round Inspector recounted from the raw `is_error` bit — so a search answering "no" got a red
+  **failed** badge in the panel while `probez round` two commands away printed `nomatch` and counted
+  zero errors. The Inspector's badge and its "N failed" count now ask the kind, and the kind is
+  shown beside the call the way the CLI's round line already prints it. Rounds collected before
+  0.7.0 carry no kind and still count as failures by design; `probez collect --full` re-extracts
+  them.
+
 ## [0.7.2] - 2026-09-09
 
 ### Added

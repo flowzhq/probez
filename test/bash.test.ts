@@ -49,7 +49,7 @@ test('an inline credential never reaches a row', () => {
 })
 
 test('a program is named by its basename, however it was reached', () => {
-  assert.deepEqual(names('tools/scanner-cli/bin/flowz scan .'), ['flowz'])
+  assert.deepEqual(names('tools/scanner-cli/bin/scanner scan .'), ['scanner'])
   assert.deepEqual(names('./scripts/check.sh --fix'), ['check.sh'])
   assert.deepEqual(names('~/.local/bin/probez collect'), ['probez'])
 })
