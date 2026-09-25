@@ -290,21 +290,17 @@ probez  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 Sessions of a project, newest last:
 
 ```console
-$ probez sessions flowz-mcp
+$ probez sessions flowz-agentic-sdlc
 
-  flowz-mcp  ~/Dev/workspace/flowz-mcp
+  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
 
-  SESSION    SOURCE   ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  0bfa7fe3   claude      127      5  122 ✗1       21.6M   186.4K     $18.08  Impl 37%   29 days ago
-  0b2cc149   claude       87      4  84 ✗2        10.1M    97.6K      $9.18  Impl 38%   29 days ago
-  51cced08   claude      134      4  131          24.3M   138.1K     $22.57  Impl 39%   28 days ago
-  be254122   claude       21      2  19 ✗1         1.0M     8.2K      $1.08  Recon 55%  28 days ago
-  bfd594d9   claude       73      2  72 ✗1        10.4M    74.6K      $8.87  Recon 34%  28 days ago
-  6ffef9bc   claude       33      4  30            2.2M    17.5K      $2.19  Recon 52%  24 days ago
-  c21c7448   claude      146      2  145 ✗4       22.8M   112.6K     $18.83  Recon 43%  23 days ago
-  069d8593   claude       31      1  30 ✗2         1.9M    11.3K      $1.76  Recon 72%  22 days ago
+  SESSION    SOURCE   ROUNDS  TASKS  TOOLS           IN        PEAK      OUT       COST  WORK       LAST
+  9654bb28   claude        6      2  5           296.7K    56.0K/6%     7.4K      $0.62  Recon 100% 27 days ago
+  c19fb0d0   claude       16      3  21            1.0M    85.6K/9%    13.5K      $1.63  Recon 79%  27 days ago
+  b53b6b6b   claude       98      2  110 ✗9       14.3M  216.8K/22%    66.0K     $12.85  Recon 60%  26 days ago
+  5ac80871   claude       58      5  53            7.7M  173.5K/17%    45.6K      $6.57  Recon 97%  25 days ago
 
-  8 sessions · 652 rounds · $82.58
+  4 sessions · 178 rounds · $21.67
   `probez session <id>` shows one of them, task by task.
 ```
 
@@ -313,19 +309,19 @@ handed it over. It is a separate context with its own model and its own bill, so
 separately rather than folded into the session that delegated it:
 
 ```console
-$ probez sessions flowz-agentic-sdlc --limit 6
+$ probez sessions delivery-bench --limit 6
 
-  flowz-agentic-sdlc  ~/Dev/workspace/flowz-agentic-sdlc
+  delivery-bench  ~/Dev/benchmarks/delivery-bench
 
-  SESSION            AGENT SOURCE   ROUNDS  TASKS  TOOLS           IN      OUT       COST  WORK       LAST
-  6b45d8d7/a5420a73  sub   claude        7      1  17          182.4K     5.8K      $0.84  Recon 83%  1 mo ago
-  6b45d8d7/ab80aaad  sub   claude        8      1  16          197.9K     5.4K      $0.86  Recon 86%  1 mo ago
-  6b45d8d7           main  claude      122      8  234 ✗1       58.6M   139.5K     $76.13  Docs 29%   1 mo ago
-  15ac167d/a29da1c6  sub   claude        7      1  19          135.0K     9.1K      $0.94  Recon 93%  1 mo ago
-  15ac167d/ad108a22  sub   claude       18      1  38          515.5K    17.7K      $1.99  Plan 65%   1 mo ago
-  15ac167d           main  claude      150     16  298 ✗3       27.6M   180.4K     $42.13  Docs 28%   1 mo ago
+  SESSION            AGENT SOURCE   ROUNDS  TASKS  TOOLS           IN        PEAK      OUT       COST  WORK       LAST
+  3d345edb/ae4f9f73  sub   claude        9      1  16          244.9K    44.4K/4%     7.9K      $0.55  Recon 77%  29 days ago
+  3d345edb/aa4460b1  sub   claude       12      1  20          388.7K    53.1K/5%    10.8K      $0.74  Recon 100% 29 days ago
+  3d345edb/af20cf33  sub   claude       15      1  26          532.1K    56.0K/6%     5.6K      $0.73  Recon 98%  29 days ago
+  3d345edb           main  claude      298     51  249 ✗3       78.4M  480.9K/48%   301.5K     $52.89  Recon 78%  29 days ago
+  973db092           main  claude      327     20  321 ✗9       70.0M  381.8K/38%   192.3K     $43.34  Recon 63%  29 days ago
+  890b47ba           main  claude       20      4  21            1.1M    67.2K/7%    10.7K      $1.97  Recon 83%  28 days ago
 
-  showing 6 of 27 sessions · 3922 rounds · $963.20, --limit 0 for all
+  showing 6 of 13 sessions · 1286 rounds · $200.57, --limit 0 for all
   `probez session <id>` shows one of them, task by task.
 ```
 

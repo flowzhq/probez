@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-25
+
 ### Added
 
 - **Trends on the project page: peak context and reused vs fresh input.** Beside *work* and
@@ -1674,7 +1676,8 @@ First release.
   above them. Errors, result size and time belong to the call, which has one result and one
   duration, so every command in a multi-command call is charged the whole of it.
 
-[Unreleased]: https://github.com/flowzhq/probez/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/flowzhq/probez/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/flowzhq/probez/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/flowzhq/probez/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/flowzhq/probez/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/flowzhq/probez/compare/v0.6.0...v0.7.0
