@@ -7,6 +7,7 @@ import { Chrome, Facts, Info, Loading, Problem } from '../components/Chrome'
 import { SourceMarks, SourceTag } from '../components/SourceMarks'
 import { InTokens, Reused, TokenCells, TokenHeaders } from '../components/Tokens'
 import { MixBar, WorkBars, ErrorsSearchLink } from '../components/WorkBars'
+import { ProjectTrends } from '../components/ProjectTrends'
 import { QUESTIONS_ARIA, QuestionsTable, questionsExplained } from '../components/QuestionPanel'
 import { TRAILS_ARIA, trailsExplained } from '../components/TrailPanel'
 import { ago, count, duration, money, percent, shortId, shortModel, tokens, when } from '../format'
@@ -31,7 +32,7 @@ export function Project({
   // Bumped after a sync, which is what makes every table on this page re-read the store.
   const [read, setRead] = useState(0)
   const { data, error, loading } = useData(() => api.project(slug, source), [slug, read, source])
-  const [tab, setTab] = useState<'work' | 'tools'>('work')
+  const [tab, setTab] = useState<'work' | 'tools' | 'trends'>('work')
   const [list, setList] = useState<'sessions' | 'trails' | 'questions'>('sessions')
 
   return (
@@ -114,7 +115,11 @@ export function Project({
             <section>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <h2 style={{ margin: 0 }}>
-                  {tab === 'work' ? 'Where agent work goes' : 'What it called'}
+                  {tab === 'work'
+                    ? 'Where agent work goes'
+                    : tab === 'tools'
+                      ? 'What it called'
+                      : 'Trends'}
                 </h2>
                 <span className="spacer" style={{ flex: 1 }} />
                 <div className="toggle">
@@ -124,12 +129,20 @@ export function Project({
                   <button aria-pressed={tab === 'tools'} onClick={() => setTab('tools')}>
                     tools
                   </button>
+                  <button aria-pressed={tab === 'trends'} onClick={() => setTab('trends')}>
+                    trends
+                  </button>
                 </div>
               </div>
               {tab === 'work' ? (
                 <WorkBars analysis={data.analysis} slug={slug} source={source} />
-              ) : (
+              ) : tab === 'tools' ? (
                 <Tools slug={slug} read={read} source={source} />
+              ) : (
+                <ProjectTrends
+                  peak={data.trends.peak_context_occupancy}
+                  reusedFresh={data.trends.reused_vs_fresh}
+                />
               )}
             </section>
 

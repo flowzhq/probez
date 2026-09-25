@@ -17,8 +17,21 @@ import {
   traceOf,
   trailShare,
   workIndex,
+  peakContextOccupancyDaily,
+  reusedVsFreshDaily,
 } from './inspect.js'
-import type { Analysis, Dominant, RoundLabel, SessionRow, Share, TaskRow, ToolRow, Trace } from './inspect.js'
+import type {
+  Analysis,
+  Dominant,
+  PeakContextDay,
+  ReusedFreshDay,
+  RoundLabel,
+  SessionRow,
+  Share,
+  TaskRow,
+  ToolRow,
+  Trace,
+} from './inspect.js'
 import {
   collectProject,
   findStored,
@@ -194,6 +207,14 @@ export interface ProjectPayload {
   unpriced: number
   analysis: Analysis
   sessions: ViewSession[]
+  /**
+   * Daily Trends series. Peak context (occupancy / peak tokens) and reused vs fresh input volume.
+   * Days with tasks but no usable metric stay out of that series rather than inventing zeros.
+   */
+  trends: {
+    peak_context_occupancy: PeakContextDay[]
+    reused_vs_fresh: ReusedFreshDay[]
+  }
 }
 
 export interface SessionPayload {
@@ -600,6 +621,10 @@ export async function projectPayload(
     analysis: categoryTally(rounds, pricing),
     // Newest first: the view is for looking at what just happened.
     sessions: sessions.reverse(),
+    trends: {
+      peak_context_occupancy: peakContextOccupancyDaily(rounds),
+      reused_vs_fresh: reusedVsFreshDaily(rounds),
+    },
   }
 }
 

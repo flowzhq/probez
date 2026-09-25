@@ -483,6 +483,31 @@ export interface ProjectPayload {
   unpriced: number
   analysis: Analysis
   sessions: ViewSession[]
+  trends: {
+    peak_context_occupancy: PeakContextDay[]
+    reused_vs_fresh: ReusedFreshDay[]
+  }
+}
+
+/** One day of peak context (occupancy % and/or peak tokens). See `peakContextOccupancyDaily`. */
+export interface PeakContextDay {
+  day: string
+  average_occupancy: number | null
+  max_occupancy: number | null
+  with_window: number
+  average_peak_tokens: number | null
+  max_peak_tokens: number | null
+  with_tokens: number
+  tasks: number
+}
+
+/** One day of reused vs fresh input volume. See `reusedVsFreshDaily`. */
+export interface ReusedFreshDay {
+  day: string
+  reused: number | null
+  fresh: number | null
+  tasks: number
+  with_split: number
 }
 
 export interface SessionPayload {
