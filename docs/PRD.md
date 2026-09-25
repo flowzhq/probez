@@ -487,6 +487,16 @@ stretching into a mostly-empty graph. The chart mounts only when opened. A publi
 draws a dashed limit and lets peak be shown as a percent of it; an unknown window draws neither.
 Never an estimate.
 
+**Trends on the project page answers whether that fill is getting worse over time, and how much
+input was reused.** Beside *work* and *tools*, a *trends* tab shares one 7 / 30 / 90 day range
+(ending at the latest task day from `first_ts`, default **7 days**) across two charts. **Peak
+context** is each day's average of task `max(in_tokens)` — Occupancy % over the published
+`CONTEXT_WINDOWS` lookup when known, or Peak Tokens when only usage exists (default metric is
+**Occupancy %**). **Reused vs Fresh** is a stacked daily *sum* of input volume: Reused =
+`in_cache_read`, Fresh = `in_uncached + in_cache_write` (everything that was not a cache read —
+deliberately not named Write, which ProbeZ already uses for cache-write rates). Null components are
+skipped rather than invented; days without eligible data are gaps. The Sessions table and the
+per-session Context usage strip are unchanged.
 **Peak context is on the sessions table.** The same max `in_tokens` the session page summarises as
 Peak, shown per row (and in `probez sessions`) so a wasteful session is findable without opening it.
 A window share appears only when the peak round's model is in the published table; Cursor without a

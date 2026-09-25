@@ -9,6 +9,8 @@ import {
   findTask,
   looksLikeSelector,
   matchSession,
+  peakContextOccupancyDaily,
+  reusedVsFreshDaily,
   SelectorError,
   sessionRows,
   taskRows,
@@ -893,4 +895,292 @@ test('a round with no model is unpriced rather than a $0 share', () => {
   assert.equal(analysis.coverage.cost, 0)
   assert.equal(analysis.coverage.unpriced, 1)
   assert.deepEqual(analysis.unpriced, [{ model: '(no model recorded)', rounds: 1 }])
+})
+
+test('peak context occupancy is the daily mean of each task peak over its window', () => {
+  // claude-opus-5 window is 1_000_000. Two tasks on the 1st at 40% and 60% → average 50%, max 60%.
+  // A third task on the 2nd at 25%. Days sort chronologically.
+  const days = peakContextOccupancyDaily([
+    round({
+      session: 'aaaa1111',
+      round: 0,
+      task: 1,
+      ts: '2026-03-01T10:00:00.000Z',
+      in_tokens: 400_000,
+    }),
+    round({
+      session: 'aaaa1111',
+      round: 1,
+      task: 1,
+      ts: '2026-03-01T11:00:00.000Z',
+      in_tokens: 300_000,
+    }),
+    round({
+      session: 'aaaa1111',
+      round: 2,
+      task: 2,
+      ts: '2026-03-01T12:00:00.000Z',
+      in_tokens: 600_000,
+    }),
+    round({
+      session: 'bbbb2222',
+      round: 0,
+      task: 1,
+      ts: '2026-03-02T09:00:00.000Z',
+      in_tokens: 250_000,
+    }),
+  ])
+  assert.deepEqual(days, [
+    {
+      day: '2026-03-01',
+      average_occupancy: 0.5,
+      max_occupancy: 0.6,
+      with_window: 2,
+      average_peak_tokens: 500_000,
+      max_peak_tokens: 600_000,
+      with_tokens: 2,
+      tasks: 2,
+    },
+    {
+      day: '2026-03-02',
+      average_occupancy: 0.25,
+      max_occupancy: 0.25,
+      with_window: 1,
+      average_peak_tokens: 250_000,
+      max_peak_tokens: 250_000,
+      with_tokens: 1,
+      tasks: 1,
+    },
+  ])
+})
+
+test('a task with no known window counts in tasks but not in the occupancy average', () => {
+  const days = peakContextOccupancyDaily([
+    round({
+      session: 'aaaa1111',
+      round: 0,
+      task: 1,
+      ts: '2026-03-01T10:00:00.000Z',
+      model: 'claude-opus-5',
+      in_tokens: 500_000,
+    }),
+    round({
+      session: 'bbbb2222',
+      round: 0,
+      task: 1,
+      ts: '2026-03-01T11:00:00.000Z',
+      model: 'cursor-mystery',
+      source: 'cursor',
+      in_tokens: 466_000,
+    }),
+  ])
+  assert.equal(days.length, 1)
+  assert.equal(days[0]!.day, '2026-03-01')
+  assert.equal(days[0]!.tasks, 2)
+  assert.equal(days[0]!.with_window, 1)
+  assert.equal(days[0]!.average_occupancy, 0.5)
+  assert.equal(days[0]!.max_occupancy, 0.5)
+  assert.equal(days[0]!.with_tokens, 2)
+  assert.equal(days[0]!.average_peak_tokens, (500_000 + 466_000) / 2)
+  assert.equal(days[0]!.max_peak_tokens, 500_000)
+})
+
+test('a day of only unknown windows keeps a null occupancy but still averages peak tokens', () => {
+  const days = peakContextOccupancyDaily([
+    round({
+      session: 'cccc3333',
+      round: 0,
+      task: 1,
+      ts: '2026-03-03T08:00:00.000Z',
+      model: 'cursor-mystery',
+      source: 'cursor',
+      in_tokens: 100_000,
+    }),
+  ])
+  assert.deepEqual(days, [
+    {
+      day: '2026-03-03',
+      average_occupancy: null,
+      max_occupancy: null,
+      with_window: 0,
+      average_peak_tokens: 100_000,
+      max_peak_tokens: 100_000,
+      with_tokens: 1,
+      tasks: 1,
+    },
+  ])
+})
+
+test('tasks with no timestamp are dropped from the occupancy series', () => {
+  assert.deepEqual(
+    peakContextOccupancyDaily([
+      round({ session: 'dddd4444', round: 0, task: 1, ts: null, in_tokens: 100_000 }),
+    ]),
+    [],
+  )
+})
+
+test('a day with tasks but no in_tokens keeps null peak-token averages', () => {
+  const days = peakContextOccupancyDaily([
+    round({
+      session: 'eeee5555',
+      round: 0,
+      task: 1,
+      ts: '2026-03-04T08:00:00.000Z',
+      model: 'cursor-mystery',
+      source: 'cursor',
+      in_tokens: null,
+    }),
+  ])
+  assert.deepEqual(days, [
+    {
+      day: '2026-03-04',
+      average_occupancy: null,
+      max_occupancy: null,
+      with_window: 0,
+      average_peak_tokens: null,
+      max_peak_tokens: null,
+      with_tokens: 0,
+      tasks: 1,
+    },
+  ])
+})
+
+test('reused vs fresh sums cache-read and uncached+cache-write per task-day', () => {
+  // Fresh = uncached + cache_write. Two tasks on the 1st; one on the 2nd.
+  const days = reusedVsFreshDaily([
+    round({
+      session: 'aaaa1111',
+      round: 0,
+      task: 1,
+      ts: '2026-03-01T10:00:00.000Z',
+      in_tokens: 480_000,
+      in_uncached: 50_000,
+      in_cache_write: 30_000,
+      in_cache_read: 400_000,
+    }),
+    round({
+      session: 'aaaa1111',
+      round: 1,
+      task: 1,
+      ts: '2026-03-01T11:00:00.000Z',
+      in_tokens: 100_000,
+      in_uncached: 10_000,
+      in_cache_write: 0,
+      in_cache_read: 90_000,
+    }),
+    round({
+      session: 'aaaa1111',
+      round: 2,
+      task: 2,
+      ts: '2026-03-01T12:00:00.000Z',
+      in_tokens: 200_000,
+      in_uncached: 20_000,
+      in_cache_write: 10_000,
+      in_cache_read: 170_000,
+    }),
+    round({
+      session: 'bbbb2222',
+      round: 0,
+      task: 1,
+      ts: '2026-03-02T09:00:00.000Z',
+      in_tokens: 100_000,
+      in_uncached: 5_000,
+      in_cache_write: 5_000,
+      in_cache_read: 90_000,
+    }),
+  ])
+  assert.deepEqual(days, [
+    {
+      day: '2026-03-01',
+      // task1: reused 490k, fresh 90k; task2: reused 170k, fresh 30k
+      reused: 660_000,
+      fresh: 120_000,
+      tasks: 2,
+      with_split: 2,
+    },
+    {
+      day: '2026-03-02',
+      reused: 90_000,
+      fresh: 10_000,
+      tasks: 1,
+      with_split: 1,
+    },
+  ])
+})
+
+test('reused vs fresh skips null components rather than treating them as zero', () => {
+  const days = reusedVsFreshDaily([
+    round({
+      session: 'cccc3333',
+      round: 0,
+      task: 1,
+      ts: '2026-03-03T08:00:00.000Z',
+      in_tokens: 120_000,
+      in_uncached: 20_000,
+      in_cache_write: null,
+      in_cache_read: 100_000,
+    }),
+  ])
+  assert.deepEqual(days, [
+    {
+      day: '2026-03-03',
+      reused: 100_000,
+      fresh: 20_000,
+      tasks: 1,
+      with_split: 1,
+    },
+  ])
+})
+
+test('reused vs fresh omits days with no known input-split fields', () => {
+  assert.deepEqual(
+    reusedVsFreshDaily([
+      round({
+        session: 'dddd4444',
+        round: 0,
+        task: 1,
+        ts: '2026-03-04T08:00:00.000Z',
+        in_tokens: null,
+        in_uncached: null,
+        in_cache_write: null,
+        in_cache_read: null,
+      }),
+    ]),
+    [],
+  )
+})
+
+test('reused vs fresh attributes a multi-round task to its first_ts day', () => {
+  const days = reusedVsFreshDaily([
+    round({
+      session: 'eeee5555',
+      round: 0,
+      task: 1,
+      ts: '2026-03-05T23:00:00.000Z',
+      in_tokens: 50_000,
+      in_uncached: 10_000,
+      in_cache_write: 0,
+      in_cache_read: 40_000,
+    }),
+    round({
+      session: 'eeee5555',
+      round: 1,
+      task: 1,
+      ts: '2026-03-06T01:00:00.000Z',
+      in_tokens: 80_000,
+      in_uncached: 5_000,
+      in_cache_write: 0,
+      in_cache_read: 75_000,
+    }),
+  ])
+  assert.deepEqual(days, [
+    {
+      day: '2026-03-05',
+      reused: 115_000,
+      fresh: 15_000,
+      tasks: 1,
+      with_split: 1,
+    },
+  ])
 })

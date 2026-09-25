@@ -368,6 +368,246 @@ export function taskRows(rounds: Round[], pricing: Pricing): TaskRow[] {
   )
 }
 
+/**
+ * One calendar day of peak context across tasks — occupancy % when a window is known, and absolute
+ * peak tokens whenever usage was recorded. Both share the same day bucketing (`first_ts`).
+ *
+ * Occupancy is only defined for tasks whose peak round's model has a published window
+ * (`CONTEXT_WINDOWS` via `contextWindow`). Unknown windows still count in `tasks` but never invent
+ * a percent — they sit in `tasks - with_window`. Peak tokens need no window.
+ */
+export interface PeakContextDay {
+  /** `YYYY-MM-DD` from the task's `first_ts` (UTC date of the ISO timestamp). */
+  day: string
+  /**
+   * Mean of eligible tasks' peak/window that day, from 0 to 1. Null when none of the day's tasks
+   * had a known window — not the same as an empty day, and not a fabricated 0%.
+   */
+  average_occupancy: number | null
+  /** Highest eligible peak/window that day, from 0 to 1. Null with `average_occupancy`. */
+  max_occupancy: number | null
+  /** Tasks that contributed an occupancy percent (known window on the peak round). */
+  with_window: number
+  /**
+   * Mean of each task's `max(in_tokens)` that day. Null when no task recorded usage — not a
+   * fabricated zero.
+   */
+  average_peak_tokens: number | null
+  /** Highest task peak that day. Null with `average_peak_tokens`. */
+  max_peak_tokens: number | null
+  /** Tasks that recorded at least one `in_tokens` and contributed to the token averages. */
+  with_tokens: number
+  /** Every task that started this day, whether or not it recorded usage or a window. */
+  tasks: number
+}
+
+interface TaskPeak {
+  day: string
+  peak: number | null
+  occupancy: number | null
+}
+
+/**
+ * Daily peak context series: average (and max) occupancy %, and average (and max) peak tokens.
+ *
+ * Per task: `max(in_tokens)`, then that count over `contextWindow` of the round that set the peak
+ * when a window is published. No window → no percent for that task; the peak tokens still count.
+ * Days are the UTC date of `first_ts`; tasks with no timestamp are dropped from the series rather
+ * than inventing a bucket.
+ */
+export function peakContextOccupancyDaily(rounds: Round[]): PeakContextDay[] {
+  const byTask = new Map<
+    string,
+    { first_ts: string | null; peak: number | null; window: number | null }
+  >()
+
+  for (const round of rounds) {
+    const key = `${round.session} ${round.task}`
+    let entry = byTask.get(key)
+    if (entry === undefined) {
+      entry = { first_ts: null, peak: null, window: null }
+      byTask.set(key, entry)
+    }
+    if (typeof round.ts === 'string' && (entry.first_ts === null || round.ts < entry.first_ts)) {
+      entry.first_ts = round.ts
+    }
+    if (typeof round.in_tokens !== 'number') continue
+    if (entry.peak === null || round.in_tokens > entry.peak) {
+      entry.peak = round.in_tokens
+      entry.window = contextWindow(round.model)
+    } else if (
+      entry.peak === round.in_tokens &&
+      entry.window === null &&
+      contextWindow(round.model) !== null
+    ) {
+      // Same peak height; prefer a round whose model publishes a window so the task can contribute.
+      entry.window = contextWindow(round.model)
+    }
+  }
+
+  const peaks: TaskPeak[] = []
+  for (const entry of byTask.values()) {
+    if (entry.first_ts === null) continue
+    const day = entry.first_ts.slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue
+    const occupancy =
+      entry.peak !== null && entry.window !== null && entry.window > 0
+        ? entry.peak / entry.window
+        : null
+    peaks.push({ day, peak: entry.peak, occupancy })
+  }
+
+  const byDay = new Map<string, { occupancies: number[]; peaks: number[]; tasks: number }>()
+  for (const one of peaks) {
+    let bucket = byDay.get(one.day)
+    if (bucket === undefined) {
+      bucket = { occupancies: [], peaks: [], tasks: 0 }
+      byDay.set(one.day, bucket)
+    }
+    bucket.tasks += 1
+    if (one.occupancy !== null) bucket.occupancies.push(one.occupancy)
+    if (one.peak !== null) bucket.peaks.push(one.peak)
+  }
+
+  return [...byDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day, bucket]) => {
+      const with_window = bucket.occupancies.length
+      const with_tokens = bucket.peaks.length
+      return {
+        day,
+        average_occupancy:
+          with_window === 0
+            ? null
+            : bucket.occupancies.reduce((a, b) => a + b, 0) / with_window,
+        max_occupancy: with_window === 0 ? null : Math.max(...bucket.occupancies),
+        with_window,
+        average_peak_tokens:
+          with_tokens === 0 ? null : bucket.peaks.reduce((a, b) => a + b, 0) / with_tokens,
+        max_peak_tokens: with_tokens === 0 ? null : Math.max(...bucket.peaks),
+        with_tokens,
+        tasks: bucket.tasks,
+      }
+    })
+}
+
+/**
+ * One calendar day of reused vs fresh input volume across tasks.
+ *
+ * Reused is cache read; Fresh is everything else that was recorded as input
+ * (`in_uncached + in_cache_write`). Null components are skipped, never treated as zero — so a day
+ * with only cache reads still has Fresh null rather than a fabricated 0.
+ */
+export interface ReusedFreshDay {
+  /** `YYYY-MM-DD` from the task's `first_ts` (same day bucketing as peak context). */
+  day: string
+  /** Sum of known `in_cache_read` that day. Null when no task contributed a cache-read figure. */
+  reused: number | null
+  /**
+   * Sum of known `in_uncached` and `in_cache_write` that day. Null when neither was recorded on any
+   * task — not the same as a day that processed nothing new.
+   */
+  fresh: number | null
+  /** Every task that started this day. */
+  tasks: number
+  /** Tasks that recorded at least one of the three input-split fields. */
+  with_split: number
+}
+
+/**
+ * Daily sums of reused (`in_cache_read`) and fresh (`in_uncached + in_cache_write`) input tokens.
+ *
+ * Attribution uses the same task-day as peak context (`first_ts`). Only numeric fields are summed;
+ * missing parts are left out rather than invented. Days with no known split at all are omitted.
+ */
+export function reusedVsFreshDaily(rounds: Round[]): ReusedFreshDay[] {
+  const byTask = new Map<
+    string,
+    {
+      first_ts: string | null
+      reused: number
+      fresh: number
+      saw_reused: boolean
+      saw_fresh: boolean
+    }
+  >()
+
+  for (const round of rounds) {
+    const key = `${round.session} ${round.task}`
+    let entry = byTask.get(key)
+    if (entry === undefined) {
+      entry = {
+        first_ts: null,
+        reused: 0,
+        fresh: 0,
+        saw_reused: false,
+        saw_fresh: false,
+      }
+      byTask.set(key, entry)
+    }
+    if (typeof round.ts === 'string' && (entry.first_ts === null || round.ts < entry.first_ts)) {
+      entry.first_ts = round.ts
+    }
+    if (typeof round.in_cache_read === 'number') {
+      entry.reused += round.in_cache_read
+      entry.saw_reused = true
+    }
+    if (typeof round.in_uncached === 'number') {
+      entry.fresh += round.in_uncached
+      entry.saw_fresh = true
+    }
+    if (typeof round.in_cache_write === 'number') {
+      entry.fresh += round.in_cache_write
+      entry.saw_fresh = true
+    }
+  }
+
+  const byDay = new Map<
+    string,
+    { reused: number; fresh: number; saw_reused: boolean; saw_fresh: boolean; tasks: number; with_split: number }
+  >()
+
+  for (const entry of byTask.values()) {
+    if (entry.first_ts === null) continue
+    const day = entry.first_ts.slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue
+    let bucket = byDay.get(day)
+    if (bucket === undefined) {
+      bucket = {
+        reused: 0,
+        fresh: 0,
+        saw_reused: false,
+        saw_fresh: false,
+        tasks: 0,
+        with_split: 0,
+      }
+      byDay.set(day, bucket)
+    }
+    bucket.tasks += 1
+    const has_split = entry.saw_reused || entry.saw_fresh
+    if (has_split) bucket.with_split += 1
+    if (entry.saw_reused) {
+      bucket.reused += entry.reused
+      bucket.saw_reused = true
+    }
+    if (entry.saw_fresh) {
+      bucket.fresh += entry.fresh
+      bucket.saw_fresh = true
+    }
+  }
+
+  return [...byDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .filter(([, bucket]) => bucket.with_split > 0)
+    .map(([day, bucket]) => ({
+      day,
+      reused: bucket.saw_reused ? bucket.reused : null,
+      fresh: bucket.saw_fresh ? bucket.fresh : null,
+      tasks: bucket.tasks,
+      with_split: bucket.with_split,
+    }))
+}
+
 function add(row: ToolRow, tool: ToolCall): void {
   row.calls += 1
   if (failed(tool)) row.errors += 1

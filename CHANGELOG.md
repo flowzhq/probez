@@ -10,6 +10,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ### Added
 
+- **Trends on the project page: peak context and reused vs fresh input.** Beside *work* and
+  *tools*, a *trends* tab charts two daily series over a shared 7 / 30 / 90 day range (default
+  **7 days**, ending at the latest task day). **Peak context** is each day's average of task
+  `max(in_tokens)` as Occupancy % (published `CONTEXT_WINDOWS` only; the default metric) or Peak
+  Tokens. **Reused vs Fresh** is a stacked bar of daily sums: Reused = `in_cache_read`, Fresh =
+  `in_uncached + in_cache_write` — not called "Write", so it is not confused with cache-write rates.
+  Null components are skipped, never invented as zero; days without eligible data are gaps. Hover
+  names coverage (`with window` / `with tokens` / `with_split`). Sessions and Work/Tools are
+  unchanged.
+
 - **Rates for `claude-opus-5-5`.** $4 input, $20 output, and a cache read at 0.05× input — half the
   0.1× most models use, so it is stated rather than inherited. Its context window is the 1M the rest
   of the Opus 5 generation has. A store here already held 97 rounds of it, 84 of them classified and
