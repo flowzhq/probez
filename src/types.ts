@@ -72,14 +72,14 @@ export interface RoundEvent {
 }
 
 /** Which coding agent produced a session. Persisted as-is; the CLI aliases `claude-code` to `claude`. */
-export type AgentSource = 'claude-code' | 'cursor' | 'codex' | 'copilot'
+export type AgentSource = 'claude-code' | 'cursor' | 'codex' | 'copilot' | 'pi' | 'opencode' | 'goose' | 'cline'
 
 /**
  * What a stored round records as its agent origin.
  *
  * `unknown` is only for data whose origin could not be determined — a sniff that did not recognise
  * the transcript, an import with no field, a round written before this was collected. Live
- * collection always writes one of the four `AgentSource` values.
+ * collection always writes one of the `AgentSource` values.
  */
 export type RoundSource = AgentSource | 'unknown'
 
@@ -231,7 +231,43 @@ export interface SessionFile {
    * this is what tells `collectProject` which extractor to run.
    */
   vs?: true
+  /**
+   * Set only on an `opencode` session read live from OpenCode's own storage, which keeps every
+   * session in one database rather than a file each. `collectProject` exports the session to a
+   * JSONL copy and reads that; an archived copy has no reference and is read as it is.
+   */
+  opencode?: OpencodeRef
+  /**
+   * Set only on a `goose` session read live from Goose's own storage, which keeps every session in
+   * one database. Handled the way `opencode` is: exported to a JSONL copy, which is what is read.
+   */
+  goose?: GooseRef
+  /** Set only on a `cline` session read live from Cline's storage; exported to a JSONL copy. */
+  cline?: ClineRef
 }
+
+/** Where one OpenCode session lives: its database, or the older per-message JSON storage. */
+export interface OpencodeRef {
+  db?: string
+  storage?: string
+  session: string
+}
+
+/** Where one Goose session lives: its database, or the JSONL file Goose wrote before it had one. */
+export interface GooseRef {
+  db?: string
+  legacy?: string
+  session: string
+}
+
+/**
+ * Where one Cline session lives: an SDK session's manifest and messages file, or a legacy task's
+ * folder. `legacyCovered` marks a resumed legacy task whose original is still on disk, so its
+ * converted copy of that history is not read again.
+ */
+export type ClineRef =
+  | { kind: 'sdk'; manifest: string; messages: string; legacyCovered: boolean }
+  | { kind: 'legacy'; dir: string; modelId?: string }
 
 /** A project the agent has been run in. */
 export interface Project {

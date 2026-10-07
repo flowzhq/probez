@@ -1,0 +1,14 @@
+[
+ {
+  "ts": 1791360000000,
+  "type": "say",
+  "say": "task",
+  "text": "hello"
+ },
+ {
+  "ts": 1791360001000,
+  "type": "say",
+  "say": "api_req_started",
+  "text": "{\"request\": \"<task>\\u2026</task>\", \"tokensIn\": 10, \"tokensOut\": 2}"
+ }
+]

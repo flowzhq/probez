@@ -11,7 +11,11 @@ import { benign, ERROR_MEANING, failed } from './errors.js'
 import type { ErrorKind } from './types.js'
 import {
   defaultClaudeDir,
+  defaultClineDirs,
   defaultCodexDir,
+  defaultGooseDir,
+  defaultOpencodeDir,
+  defaultPiDir,
   defaultCopilotDir,
   defaultCursorDir,
   discoverProjects,
@@ -27,7 +31,11 @@ import {
   parentSession,
   storeSourceAlias,
   wantsClaude,
+  wantsCline,
   wantsCodex,
+  wantsGoose,
+  wantsOpencode,
+  wantsPi,
   wantsCopilot,
   wantsCursor,
 } from './agents/paths.js'
@@ -197,6 +205,10 @@ const GLOBAL_FLAGS = new Set([
   'codex-dir',
   'copilot-dir',
   'copilot-vs-log-dir',
+  'pi-dir',
+  'opencode-dir',
+  'goose-dir',
+  'cline-dir',
   'source',
   'version',
   'help',
@@ -310,7 +322,7 @@ Search
   --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT}, 0 for all)
   --plan                       Print what probez made of the query and run nothing
   --json                       The whole result: totals, share, distribution, rows
-  --source claude|cursor|codex|copilot Same as a \`source:\` atom in the query. Does not collect
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline Same as a \`source:\` atom in the query. Does not collect
 
   Bare words are free text; \`key:value\` filters, \`-\` negates, adjacency is and, \`OR\` is or,
   brackets regroup, a quoted run is searched for as written:
@@ -324,7 +336,7 @@ Sessions
   probez sessions [project]    One row per session
   probez session <id>          One session: its tasks, and what each one asked
   --agent <main|sub>           Only sessions someone opened, or only ones handed to a subagent
-  --source claude|cursor|codex|copilot Filter already-collected sessions by which agent produced them
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline Filter already-collected sessions by which agent produced them
   --limit <n>                  How many rows to list (default ${DEFAULT_LIMIT} for the list,
                                all of them for one session; 0 for all)
 
@@ -332,7 +344,7 @@ Tasks
   probez tasks [project]       One row per task, across every session
   probez task <id>             One task: what it asked, and every round it took
   --session <id>               Only tasks from this session
-  --source claude|cursor|codex|copilot Only tasks whose rounds this agent produced
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline Only tasks whose rounds this agent produced
   --limit <n>                  As above
 
 Rounds
@@ -351,7 +363,7 @@ Rounds
                                ${CATEGORIES.slice(4).map((c) => c.id).join(' · ')}
   --target <name>              Only rounds that worked on this: ${TARGETS.join(' · ')}
   --agent <main|sub>           Only main-agent or only subagent rounds
-  --source claude|cursor|codex|copilot Only rounds this agent produced
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline Only rounds this agent produced
   --errors                     Only rounds where a tool failed
   --limit <n>                  How many rounds to list (default ${DEFAULT_LIMIT}, 0 for all)
 
@@ -365,7 +377,7 @@ Trails
   --outcome <name>             Only trails that ended this way: ${OUTCOMES.join(' · ')}
   --session <id>               Only this session
   --task <n>                   Only this task number
-  --source claude|cursor|codex|copilot Only trails whose rounds this agent produced
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline Only trails whose rounds this agent produced
   --limit <n>                  How many trails to list (default ${DEFAULT_LIMIT}, 0 for all)
 
 Questions
@@ -379,13 +391,13 @@ ${ASKS.map((kind) => `                               ${pad(kind, 10)}${ASK_MEANI
   --min-calls <n>              Only questions that took at least this many calls
   --session <id>               Only this session
   --task <n>                   Only this task number
-  --source claude|cursor|codex|copilot Only questions whose rounds this agent produced
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline Only questions whose rounds this agent produced
   --limit <n>                  How many questions to list (default ${DEFAULT_LIMIT}, 0 for all)
 
 Tools
   probez tools [project]       Every tool called, and what Bash actually ran
   --kinds                      Group Bash by kind of work instead of by command
-  --source claude|cursor|codex|copilot Only calls this agent produced
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline Only calls this agent produced
   --limit <n>                  How many commands to list under each tool
                                (default ${DEFAULT_SUB_LIMIT}, 0 for all)
 
@@ -398,7 +410,7 @@ Analysis
                                that inputs alone cannot show
   --session <id>               Only this session
   --task <n>                   Only this task number
-  --source claude|cursor|codex|copilot Only rounds this agent produced
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline Only rounds this agent produced
   --limit <n>                  How many sub-rows to list under each category
 
   Shares are of what the work cost, at the rates under Settings in \`probez view\` — or of the
@@ -413,7 +425,7 @@ The view
   probez view                  Open the local profiler in your browser
   --port <n>                   Which port to listen on (default ${DEFAULT_PORT})
   --no-open                    Print the URL instead of opening a browser
-  --source claude|cursor|codex|copilot Open the project page filtered to that agent
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline Open the project page filtered to that agent
 
   It listens on 127.0.0.1 and nothing leaves the machine. The URL carries a token that is new
   on every run, without which the data neither answers nor syncs.
@@ -452,7 +464,7 @@ Collection
   probez collect --all         Collect every project on this machine
   --full                       Re-read every session instead of only what changed
   --since <span>               Only sessions written to inside this window, as 30d, 12h or 6w
-  --source claude|cursor|codex|copilot|all
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline|all
                                Which agent directories to scan (default all;
                                \`both\` still means all). This is collection, not a
                                store filter. On sessions, analyze, find, view and
@@ -462,8 +474,14 @@ Collection
   Claude Code sessions live under ~/.claude/projects. Cursor transcripts live under
   ~/.cursor/projects/<slug>/agent-transcripts. Codex CLI rollouts live under
   ~/.codex/sessions (or \$CODEX_HOME/sessions). GitHub Copilot CLI sessions live under
-  ~/.copilot/session-state (or \$COPILOT_HOME/session-state). A repository used by more
-  than one agent is one project.
+  ~/.copilot/session-state (or \$COPILOT_HOME/session-state). Pi sessions live under
+  ~/.pi/agent/sessions (or \$PI_CODING_AGENT_SESSION_DIR). OpenCode sessions live in
+  ~/.local/share/opencode (or \$XDG_DATA_HOME/opencode), which needs Node 22.13 or later to read.
+  Goose sessions live under ~/.local/share/goose/sessions (%APPDATA%\\Block\\goose\\data\\sessions
+  on Windows, or \$GOOSE_PATH_ROOT/data/sessions), whose database also needs Node 22.13.
+  Cline sessions live under ~/.cline/data (or \$CLINE_DATA_DIR), and the tasks its VS Code
+  extension wrote before moving there under each editor's globalStorage/saoudrizwan.claude-dev.
+  A repository used by more than one agent is one project.
 
   Visual Studio's GitHub Copilot Chat is a different surface from the CLI and is discovered
   differently: it writes each session inside the project itself, under
@@ -508,7 +526,17 @@ Options (these work on every command)
                                (default ~/.copilot/session-state, or \$COPILOT_HOME/session-state)
   --copilot-vs-log-dir <dir>   Where to read Visual Studio's Copilot Chat logs from, for tokens,
                                cost and context (default %TEMP%\\VSGitHubCopilotLogs)
-  --source claude|cursor|codex|copilot|all
+  --pi-dir <dir>               Where to read Pi coding-agent sessions from
+                               (default ~/.pi/agent/sessions, or \$PI_CODING_AGENT_SESSION_DIR)
+  --opencode-dir <dir>         Where to read OpenCode's data directory from
+                               (default ~/.local/share/opencode, or \$XDG_DATA_HOME/opencode)
+  --goose-dir <dir>            Where to read Goose's sessions directory from
+                               (default ~/.local/share/goose/sessions; on Windows
+                               %APPDATA%\\Block\\goose\\data\\sessions)
+  --cline-dir <dir>            A Cline data directory to read, holding sessions/ or tasks/;
+                               repeat it for several (default ~/.cline/data and the
+                               extension's storage in VS Code, Cursor, Windsurf and VSCodium)
+  --source claude|cursor|codex|copilot|pi|opencode|goose|cline|all
                                On collect and projects: which agent directories to scan.
                                On read commands: filter stored rounds, collecting nothing.
                                \`source:claude\` is the same filter in the query language
@@ -2269,6 +2297,10 @@ async function runView(
   cursorDir: string,
   codexDir: string,
   copilotDir: string,
+  piDir: string,
+  opencodeDir: string,
+  gooseDir: string,
+  clineDirs: string[],
   target: string | undefined,
   options: { port?: string; open: boolean; json: boolean; source?: SourceFilter },
 ): Promise<void> {
@@ -2305,6 +2337,10 @@ async function runView(
     cursorDir,
     codexDir,
     copilotDir,
+    piDir,
+    opencodeDir,
+    gooseDir,
+    clineDirs,
     port,
     pinned: options.port !== undefined,
   })
@@ -2356,6 +2392,10 @@ async function main(): Promise<void> {
         'codex-dir': { type: 'string' },
         'copilot-dir': { type: 'string' },
         'copilot-vs-log-dir': { type: 'string' },
+        'pi-dir': { type: 'string' },
+        'opencode-dir': { type: 'string' },
+        'goose-dir': { type: 'string' },
+        'cline-dir': { type: 'string', multiple: true },
         source: { type: 'string' },
         json: { type: 'boolean', default: false },
         all: { type: 'boolean', default: false },
@@ -2481,8 +2521,12 @@ async function main(): Promise<void> {
   const cursorDir = values['cursor-dir'] ? resolve(values['cursor-dir']) : defaultCursorDir()
   const codexDir = values['codex-dir'] ? resolve(values['codex-dir']) : defaultCodexDir()
   const copilotDir = values['copilot-dir'] ? resolve(values['copilot-dir']) : defaultCopilotDir()
+  const piDir = values['pi-dir'] ? resolve(values['pi-dir']) : defaultPiDir()
+  const opencodeDir = values['opencode-dir'] ? resolve(values['opencode-dir']) : defaultOpencodeDir()
+  const gooseDir = values['goose-dir'] ? resolve(values['goose-dir']) : defaultGooseDir()
+  const clineDirs = values['cline-dir'] ? values['cline-dir'].map((dir) => resolve(dir)) : defaultClineDirs()
   if (values.source !== undefined && !isSourceFilter(values.source)) {
-    fail(`--source takes claude, cursor, codex, copilot or all, got "${values.source}"`)
+    fail(`--source takes claude, cursor, codex, copilot, pi, opencode, goose, cline or all, got "${values.source}"`)
   }
   const source: SourceFilter = values.source === undefined ? 'both' : (values.source as SourceFilter)
 
@@ -2531,7 +2575,7 @@ async function main(): Promise<void> {
   // been collected stays browsable whether or not the sessions it came from still do; the agent's
   // directory is consulted only when you press Sync, and only then can it be missing.
   if (command === 'view') {
-    await runView(dataDir, claudeDir, cursorDir, codexDir, copilotDir, target, {
+    await runView(dataDir, claudeDir, cursorDir, codexDir, copilotDir, piDir, opencodeDir, gooseDir, clineDirs, target, {
       port: values.port,
       open: values['no-open'] !== true,
       json: values.json,
@@ -2541,7 +2585,17 @@ async function main(): Promise<void> {
   }
 
   const discoverySource: SourceFilter = STORE_SOURCE_COMMANDS.has(command) ? 'all' : source
-  const projects = await discoverProjects({ claudeDir, cursorDir, codexDir, copilotDir, source: discoverySource })
+  const projects = await discoverProjects({
+    claudeDir,
+    cursorDir,
+    codexDir,
+    copilotDir,
+    piDir,
+    opencodeDir,
+    gooseDir,
+    clineDirs,
+    source: discoverySource,
+  })
 
   // An empty agent directory is only a dead end if the store is empty too. Someone who was sent an
   // export and has never run an agent has nothing to discover and a project to read all the same.
@@ -2551,6 +2605,10 @@ async function main(): Promise<void> {
     if (wantsCursor(discoverySource)) parts.push(shorten(cursorDir))
     if (wantsCodex(discoverySource)) parts.push(shorten(codexDir))
     if (wantsCopilot(discoverySource)) parts.push(shorten(copilotDir))
+    if (wantsPi(discoverySource)) parts.push(shorten(piDir))
+    if (wantsOpencode(discoverySource)) parts.push(shorten(opencodeDir))
+    if (wantsGoose(discoverySource)) parts.push(shorten(gooseDir))
+    if (wantsCline(discoverySource)) parts.push(shorten(clineDirs[0] ?? ''))
     const where =
       parts.length === 0
         ? shorten(claudeDir)

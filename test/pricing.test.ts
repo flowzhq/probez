@@ -186,6 +186,28 @@ test('a rate typed for a model also prices the dated rounds of it', async () => 
   assert.equal(costOf(round, pricing), 2)
 })
 
+test('a model named by the provider serving it is priced at the rate of the model', () => {
+  const pricing = defaultPricing()
+  const base = { ...ROUND_DEFAULTS, model: 'claude-sonnet-4-5', in_uncached: 1_000_000 }
+  // OpenRouter's spelling, as Goose and OpenCode record it: a provider, a slash, a dotted version.
+  assert.equal(costOf({ ...base, model: 'anthropic/claude-sonnet-4.5' }, pricing), costOf(base, pricing))
+  assert.equal(costOf({ ...base, model: 'openrouter/anthropic/claude-sonnet-4-5-20250929' }, pricing), costOf(base, pricing))
+  // The prefix is the only thing dropped; a model nobody priced is still unpriced behind one.
+  assert.equal(costOf({ ...base, model: 'anthropic/claude-opus-6' }, pricing), null)
+  assert.equal(costOf({ ...base, model: 'anthropic/' }, pricing), null)
+})
+
+test('a rate typed for the prefixed spelling wins over the model it names', async () => {
+  const dir = store()
+  await writePricing(dir, {
+    schema_version: PRICING_VERSION,
+    models: { 'anthropic/claude-sonnet-4.5': { in: 7, cache_write_5m: 7, cache_write_1h: 7, cache_read: 7, out: 7 } },
+  })
+  const pricing = await readPricing(dir)
+  const round = { ...ROUND_DEFAULTS, model: 'anthropic/claude-sonnet-4.5', in_uncached: 1_000_000 }
+  assert.equal(costOf(round, pricing), 7)
+})
+
 test('a model that reads cache at its own multiplier is not charged the default one', () => {
   // Opus 5.5 reads at 0.05× input, half the usual tenth. Inheriting the default would have charged
   // every reused token double — and on a store that is 97% cache reads, that is most of the bill.

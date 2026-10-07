@@ -83,6 +83,11 @@ const DOTTED_VERSION = /(\d)\.(\d)/g
  * dotted point version, tried next against whatever the snapshot strip left, is the second — the
  * same failure in a different spelling, this time from Copilot CLI.
  *
+ * The third is a provider in front of the model. A router names the model by who serves it —
+ * OpenRouter's `anthropic/claude-sonnet-4.5`, which Goose and OpenCode record as configured — so
+ * when the whole spelling finds nothing, the id after the last `/` is tried the same way. The
+ * whole spelling is always tried first, so a rate typed against the prefixed id still wins.
+ *
  * Deliberately no further than that. There is no family-prefix fallback, so a `claude-opus-6-…`
  * nobody has priced yet stays unpriced rather than being charged at Opus 5's rate. That is the same
  * rule `costOf` states from the other side: a round that cost something unknown must not be counted
@@ -94,6 +99,14 @@ export function resolveModel(
   known: (id: string) => boolean,
 ): string | null {
   if (model === null) return null
+  const found = resolveSpelling(model, known)
+  if (found !== null) return found
+  const slash = model.lastIndexOf('/')
+  return slash >= 0 && slash < model.length - 1 ? resolveSpelling(model.slice(slash + 1), known) : null
+}
+
+/** One spelling of a model, as recorded, then without its snapshot, then with its version dashed. */
+function resolveSpelling(model: string, known: (id: string) => boolean): string | null {
   if (known(model)) return model
   const base = model.replace(SNAPSHOT, '')
   if (base !== model && known(base)) return base

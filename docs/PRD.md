@@ -38,7 +38,7 @@ These are choices, not omissions:
   question's calls and gets a sentence back, which sits beside the measured kind and never replaces
   it. Every number stays derived from the rounds. See CONTRIBUTING § rule 2, which names the caller
   and says what would have to be argued to add a second.
-- **Claude Code, Cursor, Codex CLI, GitHub Copilot CLI, and Visual Studio's GitHub Copilot Chat.**
+- **Claude Code, Cursor, Codex CLI, GitHub Copilot CLI, Visual Studio's GitHub Copilot Chat, Pi, OpenCode, Goose and Cline.**
   Other agents follow once the round schema has proven itself against these formats. Cursor
   transcripts do not record token usage or model names; those rounds are collected and classified,
   and cost stays blank rather than invented — unless the optional Cursor `stop` hook (`probez hook`)
@@ -128,7 +128,7 @@ One JSON object per LLM round, appended to `~/.probez/projects/<project>/rounds.
 | --- | --- |
 | `session`, `task`, `round` | Group rounds into tasks and order them |
 | `agent` | Separate the main agent from subagent work (`main` \| `sub`). Not which product produced the session |
-| `source` | Which product produced the session (`claude-code` \| `cursor` \| `codex` \| `copilot` \| `unknown`). Stamped at collect from the session; missing or unrecognised is `unknown`, never assumed Claude. The query language's `source:claude` matches persisted `claude-code` |
+| `source` | Which product produced the session (`claude-code` \| `cursor` \| `codex` \| `copilot` \| `pi` \| `opencode` \| `goose` \| `cline` \| `unknown`). Stamped at collect from the session; missing or unrecognised is `unknown`, never assumed Claude. The query language's `source:claude` matches persisted `claude-code` |
 | `commit` | Which state of the tree a task was asked against, read at collect time from git's HEAD reflog, and from the commit history behind it for a task older than that log reaches |
 | `in_tokens`, `out_tokens`, `ms` | Weight each category, giving the percentages |
 | `in_uncached`, `in_cache_write`, `in_cache_read` | The three price differently, so the sum alone says little about cost |
@@ -621,8 +621,8 @@ half-written all mean the same thing, which is read the rounds, and the result s
 projects had to.
 ## Agent source as a dimension
 
-The project boundary is the checkout. Claude Code, Cursor, Codex, Copilot CLI and Visual Studio
-Copilot Chat sessions in the same repository are one project; `source` on the round is which
+The project boundary is the checkout. Claude Code, Cursor, Codex, Copilot CLI, Visual Studio
+Copilot Chat, Pi, OpenCode, Goose and Cline sessions in the same repository are one project; `source` on the round is which
 product wrote the session. `--source` on collect
 selects which directories to scan. On read commands it filters stored rounds and is not passed
 through to discovery. `source:claude` matches persisted `claude-code`. A sniff that does not

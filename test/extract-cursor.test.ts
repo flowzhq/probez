@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -104,9 +105,25 @@ test('safeSessionFilename flattens nested Cursor ids', () => {
 
 test('a Cursor slug infers a path, lossily', () => {
   assert.equal(
-    pathFromCursorSlug('Users-me-Dev-workspace-probez'),
+    pathFromCursorSlug('Users-me-Dev-workspace-probez', 'linux'),
     '/Users/me/Dev/workspace/probez',
   )
+})
+
+test('on Windows a Cursor slug opens with the drive letter, its colon dropped', () => {
+  // Read as a POSIX path this was `/c/Users/me/repo`, which exists nowhere on Windows, so no Cursor
+  // project there met the same checkout from any other agent.
+  assert.equal(pathFromCursorSlug('c-Users-me-repo', 'win32'), 'C:\\Users\\me\\repo')
+  // A drive letter is only ever one letter; anything else is an ordinary first folder.
+  assert.equal(pathFromCursorSlug('Users-me-repo', 'linux'), '/Users/me/repo')
+})
+
+test('on Windows a folder whose name has dashes in it, or two together, is found on disk', { skip: process.platform !== 'win32' }, () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'probez-work--')))
+  const project = join(root, 'flowz-agentic-sdlc')
+  mkdirSync(project)
+  const slug = `${project[0]!.toLowerCase()}-${project.slice(3).replaceAll('\\', '-')}`
+  assert.equal(pathFromCursorSlug(slug, 'win32'), project)
 })
 
 test('a Cursor slug prefers the path that still exists when a name contains dashes', () => {

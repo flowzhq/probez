@@ -377,7 +377,7 @@ export class BadRequest extends Error {}
  * `unknown` is a query value (`source:unknown`), not a page filter: the dropdown does not offer it,
  * and a `?source=` that names it is refused the same way any other misspelling is.
  */
-export const PAGE_SOURCES = ['claude', 'cursor', 'codex', 'copilot'] as const
+export const PAGE_SOURCES = ['claude', 'cursor', 'codex', 'copilot', 'pi', 'opencode', 'goose', 'cline'] as const
 export type PageSource = (typeof PAGE_SOURCES)[number]
 
 /**
@@ -390,8 +390,19 @@ export function pageSourceOf(value: string | null | undefined): PageSource | nul
   if (value === null || value === undefined || value === '') return null
   const wanted = value.trim().toLowerCase()
   if (wanted === 'all') return null
-  if (wanted === 'claude' || wanted === 'cursor' || wanted === 'codex' || wanted === 'copilot') return wanted
-  throw new BadRequest(`source must be claude, cursor, codex or copilot, got "${value}"`)
+  if (
+    wanted === 'claude' ||
+    wanted === 'cursor' ||
+    wanted === 'codex' ||
+    wanted === 'copilot' ||
+    wanted === 'pi' ||
+    wanted === 'opencode' ||
+    wanted === 'goose' ||
+    wanted === 'cline'
+  ) {
+    return wanted
+  }
+  throw new BadRequest(`source must be claude, cursor, codex, copilot, pi, opencode, goose or cline, got "${value}"`)
 }
 
 /**
@@ -1384,6 +1395,10 @@ export async function syncProject(
   cursorDir: string,
   codexDir: string,
   copilotDir: string,
+  piDir: string,
+  opencodeDir: string,
+  gooseDir: string,
+  clineDirs: string[],
   slug: string,
 ): Promise<SyncResult> {
   const held = running.get(slug)
@@ -1395,7 +1410,7 @@ export async function syncProject(
 
     // Every agent, always. A page `?source=` or a `source:` query is a display filter and must
     // not decide what this collects.
-    const projects = await discoverProjects({ claudeDir, cursorDir, codexDir, copilotDir })
+    const projects = await discoverProjects({ claudeDir, cursorDir, codexDir, copilotDir, piDir, opencodeDir, gooseDir, clineDirs })
     // Visual Studio's Copilot Chat sessions live inside the project itself, not under a directory
     // the sweep above walks, so they only surface once a path is known — which, for a project this
     // store already has, is `stored.path`. See `mergeCopilotVsSessions`.

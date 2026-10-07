@@ -1,0 +1,15 @@
+[
+ {
+  "role": "user",
+  "content": [
+   {
+    "type": "text",
+    "text": "<task>\nhello\n</task>"
+   },
+   {
+    "type": "text",
+    "text": "<environment_details>\n# Current Working Directory (/tmp/other) Files\nREADME.md\n</environment_details>"
+   }
+  ]
+ }
+]

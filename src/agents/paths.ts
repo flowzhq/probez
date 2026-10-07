@@ -1,16 +1,16 @@
 import { realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, win32 } from 'node:path'
 
 import type { AgentSource, RoundSource } from '../types.js'
 
 /**
  * Which agents to collect from.
  *
- * `both` is the historic default and still means every agent probez knows, including Codex and
- * Copilot. `all` is the same thing under a name that does not count them.
+ * `both` is the historic default and still means every agent probez knows, including Codex,
+ * Copilot, Pi, OpenCode, Goose and Cline. `all` is the same thing under a name that does not count them.
  */
-export type SourceFilter = 'claude' | 'cursor' | 'codex' | 'copilot' | 'both' | 'all'
+export type SourceFilter = 'claude' | 'cursor' | 'codex' | 'copilot' | 'pi' | 'opencode' | 'goose' | 'cline' | 'both' | 'all'
 
 export function defaultClaudeDir(): string {
   return join(homedir(), '.claude', 'projects')
@@ -46,6 +46,95 @@ export function defaultCopilotDir(): string {
   return join(home, 'session-state')
 }
 
+/**
+ * Pi coding-agent sessions: `$PI_CODING_AGENT_SESSION_DIR` when that is set, otherwise `sessions`
+ * under `$PI_CODING_AGENT_DIR`, otherwise `~/.pi/agent/sessions` — the same precedence Pi itself
+ * applies.
+ *
+ * One folder per working directory (`--<cwd>--/`), named by an encoding that cannot be reversed,
+ * so discovery ignores the folder name and reads the `cwd` each session's header recorded.
+ */
+export function defaultPiDir(): string {
+  const sessions = process.env.PI_CODING_AGENT_SESSION_DIR?.trim()
+  if (sessions !== undefined && sessions !== '') return sessions
+  const override = process.env.PI_CODING_AGENT_DIR?.trim()
+  const agent = override !== undefined && override !== '' ? override : join(homedir(), '.pi', 'agent')
+  return join(agent, 'sessions')
+}
+
+/**
+ * OpenCode's data directory: `$XDG_DATA_HOME/opencode`, otherwise `~/.local/share/opencode` — on
+ * Windows too, where OpenCode uses the same XDG layout rather than `%APPDATA%`.
+ *
+ * It holds `opencode.db` (v1.14 and later) and, from earlier versions, `storage/`. Every session of
+ * every project is in there; discovery groups them by the directory each session recorded.
+ */
+export function defaultOpencodeDir(): string {
+  const xdg = process.env.XDG_DATA_HOME?.trim()
+  const data = xdg !== undefined && xdg !== '' ? xdg : join(homedir(), '.local', 'share')
+  return join(data, 'opencode')
+}
+
+/**
+ * Goose's sessions directory, which is where Goose itself puts it: `$GOOSE_PATH_ROOT/data/sessions`
+ * when that is set to an absolute path; otherwise `%APPDATA%\Block\goose\data\sessions` on Windows;
+ * otherwise `$XDG_DATA_HOME/goose/sessions`, or `~/.local/share/goose/sessions` — on macOS too,
+ * since Goose uses the XDG layout there rather than `~/Library`.
+ *
+ * It holds `sessions.db` and, from versions before it, a `<id>.jsonl` file per session. Every
+ * session of every project is in there; discovery groups them by the directory each recorded.
+ */
+export function defaultGooseDir(): string {
+  const root = process.env.GOOSE_PATH_ROOT?.trim()
+  if (root !== undefined && root !== '' && isAbsolute(root)) return join(root, 'data', 'sessions')
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA?.trim()
+    const roaming = appData !== undefined && appData !== '' ? appData : join(homedir(), 'AppData', 'Roaming')
+    return join(roaming, 'Block', 'goose', 'data', 'sessions')
+  }
+  const xdg = process.env.XDG_DATA_HOME?.trim()
+  const data = xdg !== undefined && xdg !== '' ? xdg : join(homedir(), '.local', 'share')
+  return join(data, 'goose', 'sessions')
+}
+
+/** The extension id Cline's VS Code extension stores its data under. */
+const CLINE_EXTENSION = 'saoudrizwan.claude-dev'
+
+/** Editors built on VS Code that Cline's extension runs in, by the folder each keeps its data in. */
+const VSCODE_EDITORS = ['Code', 'Code - Insiders', 'VSCodium', 'Cursor', 'Windsurf']
+
+/**
+ * Cline's data directories. Each can hold `sessions/` — the SDK sessions Cline's CLI and current
+ * extension write — and `tasks/`, the legacy tasks the extension wrote before the SDK.
+ *
+ * The first is Cline's own: `$CLINE_DATA_DIR`, else `$CLINE_DIR/data`, else `~/.cline/data`, the
+ * same precedence Cline applies. Then the extension's storage in each VS Code-family editor —
+ * `<config>/<editor>/User/globalStorage/saoudrizwan.claude-dev`, where `<config>` is `%APPDATA%` on
+ * Windows, `~/Library/Application Support` on macOS and `$XDG_CONFIG_HOME` or `~/.config` elsewhere —
+ * which holds the legacy tasks of every window that ran the extension before the SDK.
+ */
+export function defaultClineDirs(): string[] {
+  const explicit = process.env.CLINE_DATA_DIR?.trim()
+  const clineDir = process.env.CLINE_DIR?.trim()
+  const own =
+    explicit !== undefined && explicit !== ''
+      ? explicit
+      : clineDir !== undefined && clineDir !== ''
+        ? join(clineDir, 'data')
+        : join(homedir(), '.cline', 'data')
+  let config: string
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA?.trim()
+    config = appData !== undefined && appData !== '' ? appData : join(homedir(), 'AppData', 'Roaming')
+  } else if (process.platform === 'darwin') {
+    config = join(homedir(), 'Library', 'Application Support')
+  } else {
+    const xdg = process.env.XDG_CONFIG_HOME?.trim()
+    config = xdg !== undefined && xdg !== '' ? xdg : join(homedir(), '.config')
+  }
+  return [own, ...VSCODE_EDITORS.map((editor) => join(config, editor, 'User', 'globalStorage', CLINE_EXTENSION))]
+}
+
 function isDir(path: string): boolean {
   try {
     return statSync(path).isDirectory()
@@ -63,8 +152,19 @@ function isDir(path: string): boolean {
  * `…-flowz-agentic-sdlc` becomes `…/flowz-agentic-sdlc` rather than `…/flowz/agentic/sdlc`.
  * Nothing on disk keeps the slash-everywhere reading. Discovery still marks `path_inferred`.
  */
-export function pathFromCursorSlug(slug: string): string {
+export function pathFromCursorSlug(slug: string, platform: NodeJS.Platform = process.platform): string {
   const parts = slug.replace(/^-/, '').split('-').filter((part) => part !== '')
+  // On Windows the slug opens with the drive letter, its colon dropped: `c-Users-me-repo` is
+  // `C:\Users\me\repo`. Read as a POSIX path it named `/c/Users/me/repo`, which exists nowhere, so
+  // no Cursor project on Windows ever met the same checkout from another agent.
+  if (platform === 'win32' && parts.length > 0 && /^[a-zA-Z]$/.test(parts[0]!)) {
+    const drive = `${parts[0]!.toUpperCase()}:`
+    // Empty pieces are kept here: `C--Users` is one folder with a dash in its name, and dropping the
+    // piece between the dashes would read it as two folders.
+    const rest = slug.replace(/^-/, '').split('-').slice(1)
+    const found = existingPath(rest, 0, [], `${drive}/`)
+    return win32.normalize(found ?? `${drive}/${parts.slice(1).join('/')}`)
+  }
   const naive = `/${parts.join('/')}`
   const found = existingPath(parts, 0, [])
   if (found === null) return naive
@@ -75,12 +175,15 @@ export function pathFromCursorSlug(slug: string): string {
   }
 }
 
-function existingPath(parts: string[], i: number, chosen: string[]): string | null {
-  if (i === parts.length) return chosen.length === 0 ? null : `/${chosen.join('/')}`
+function existingPath(parts: string[], i: number, chosen: string[], root = '/'): string | null {
+  if (i === parts.length) return chosen.length === 0 ? null : `${root}${chosen.join('/')}`
   for (let j = i + 1; j <= parts.length; j++) {
-    const next = [...chosen, parts.slice(i, j).join('-')]
-    if (!isDir(`/${next.join('/')}`)) continue
-    const found = existingPath(parts, j, next)
+    const segment = parts.slice(i, j).join('-')
+    // A folder is never named by nothing, and `a//b` would otherwise pass for `a/b` on disk.
+    if (segment === '' || segment.startsWith('-') || segment.endsWith('-')) continue
+    const next = [...chosen, segment]
+    if (!isDir(`${root}${next.join('/')}`)) continue
+    const found = existingPath(parts, j, next, root)
     if (found !== null) return found
   }
   return null
@@ -142,7 +245,18 @@ export function sessionIdFromFilename(name: string): string {
 
 export function parseSourceFilter(value: string | undefined): SourceFilter {
   if (value === undefined || value === 'both' || value === 'all') return value === 'all' ? 'all' : 'both'
-  if (value === 'claude' || value === 'cursor' || value === 'codex' || value === 'copilot') return value
+  if (
+    value === 'claude' ||
+    value === 'cursor' ||
+    value === 'codex' ||
+    value === 'copilot' ||
+    value === 'pi' ||
+    value === 'opencode' ||
+    value === 'goose' ||
+    value === 'cline'
+  ) {
+    return value
+  }
   return 'both'
 }
 
@@ -166,8 +280,33 @@ export function wantsCopilot(source: SourceFilter): boolean {
   return wantsEvery(source) || source === 'copilot'
 }
 
+export function wantsPi(source: SourceFilter): boolean {
+  return wantsEvery(source) || source === 'pi'
+}
+
+export function wantsOpencode(source: SourceFilter): boolean {
+  return wantsEvery(source) || source === 'opencode'
+}
+
+export function wantsGoose(source: SourceFilter): boolean {
+  return wantsEvery(source) || source === 'goose'
+}
+
+export function wantsCline(source: SourceFilter): boolean {
+  return wantsEvery(source) || source === 'cline'
+}
+
 export function isAgentSource(value: string): value is AgentSource {
-  return value === 'claude-code' || value === 'cursor' || value === 'codex' || value === 'copilot'
+  return (
+    value === 'claude-code' ||
+    value === 'cursor' ||
+    value === 'codex' ||
+    value === 'copilot' ||
+    value === 'pi' ||
+    value === 'opencode' ||
+    value === 'goose' ||
+    value === 'cline'
+  )
 }
 
 export function isRoundSource(value: string): value is RoundSource {
@@ -178,7 +317,7 @@ export function isRoundSource(value: string): value is RoundSource {
  * The names `source:` and `--source` accept, including `unknown` for data whose origin was not
  * determined. `claude` is the alias for the persisted value `claude-code`.
  */
-export const SOURCE_ALIASES = ['claude', 'cursor', 'codex', 'copilot', 'unknown'] as const
+export const SOURCE_ALIASES = ['claude', 'cursor', 'codex', 'copilot', 'pi', 'opencode', 'goose', 'cline', 'unknown'] as const
 
 export type SourceAlias = (typeof SOURCE_ALIASES)[number]
 
@@ -200,7 +339,18 @@ export function aliasOfSource(source: RoundSource): SourceAlias {
 export function sourceFromAlias(value: string): RoundSource | null {
   const wanted = value.toLowerCase()
   if (wanted === 'claude' || wanted === 'claude-code') return 'claude-code'
-  if (wanted === 'cursor' || wanted === 'codex' || wanted === 'copilot' || wanted === 'unknown') return wanted
+  if (
+    wanted === 'cursor' ||
+    wanted === 'codex' ||
+    wanted === 'copilot' ||
+    wanted === 'pi' ||
+    wanted === 'opencode' ||
+    wanted === 'goose' ||
+    wanted === 'cline' ||
+    wanted === 'unknown'
+  ) {
+    return wanted
+  }
   return null
 }
 
@@ -215,6 +365,10 @@ export function isSourceFilter(value: string): value is SourceFilter {
     value === 'cursor' ||
     value === 'codex' ||
     value === 'copilot' ||
+    value === 'pi' ||
+    value === 'opencode' ||
+    value === 'goose' ||
+    value === 'cline' ||
     value === 'both' ||
     value === 'all'
   )
@@ -226,6 +380,17 @@ export function isSourceFilter(value: string): value is SourceFilter {
  * `both` and `all` are discovery spellings and mean "do not filter the store".
  */
 export function storeSourceAlias(filter: SourceFilter): SourceAlias | null {
-  if (filter === 'claude' || filter === 'cursor' || filter === 'codex' || filter === 'copilot') return filter
+  if (
+    filter === 'claude' ||
+    filter === 'cursor' ||
+    filter === 'codex' ||
+    filter === 'copilot' ||
+    filter === 'pi' ||
+    filter === 'opencode' ||
+    filter === 'goose' ||
+    filter === 'cline'
+  ) {
+    return filter
+  }
   return null
 }

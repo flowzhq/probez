@@ -1,0 +1,30 @@
+{"kind":"opencode.session","id":"ses_fixture","directory":"/tmp/demo","parent":null,"title":"fix loop","version":"1.18.34","created":1767693600000}
+{"kind":"opencode.message","id":"msg_copied_user","created":1767693500000,"data":{"role":"user","time":{"created":1767693500000}}}
+{"kind":"opencode.part","id":"prt_0001","message":"msg_copied_user","created":1767693500000,"data":{"type":"text","text":"an earlier question"}}
+{"kind":"opencode.message","id":"msg_copied_asst","created":1767693501000,"data":{"role":"assistant","modelID":"claude-sonnet-4-5","time":{"created":1767693501000,"completed":1767693502000},"tokens":{"total":1098,"input":999,"output":99,"reasoning":0,"cache":{"read":0,"write":0}}}}
+{"kind":"opencode.part","id":"prt_0002","message":"msg_copied_asst","created":1767693502000,"data":{"type":"step-finish","reason":"stop","tokens":{"total":1098,"input":999,"output":99,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0}}
+{"kind":"opencode.message","id":"msg_u1","created":1767693601000,"data":{"role":"user","time":{"created":1767693601000}}}
+{"kind":"opencode.part","id":"prt_0003","message":"msg_u1","created":1767693601000,"data":{"type":"text","text":"fix the off-by-one in loop.ts"}}
+{"kind":"opencode.part","id":"prt_0004","message":"msg_u1","created":1767693601000,"data":{"type":"text","text":"<contents of loop.ts>","synthetic":true}}
+{"kind":"opencode.message","id":"msg_a1","created":1767693601200,"data":{"role":"assistant","modelID":"claude-sonnet-4-5","providerID":"anthropic","time":{"created":1767693601200,"completed":1767693609000},"tokens":{"total":8370,"input":1250,"output":100,"reasoning":20,"cache":{"read":4000,"write":3000}}}}
+{"kind":"opencode.part","id":"prt_0005","message":"msg_a1","created":1767693601300,"data":{"type":"step-start"}}
+{"kind":"opencode.part","id":"prt_0006","message":"msg_a1","created":1767693601500,"data":{"type":"reasoning","text":"Look first."}}
+{"kind":"opencode.part","id":"prt_0007","message":"msg_a1","created":1767693602000,"data":{"type":"tool","tool":"read","callID":"call_1","state":{"status":"completed","input":{"filePath":"src/loop.ts"},"output":"for (let i = 0; i <= n; i++) {}","metadata":{},"time":{"start":1767693602000,"end":1767693602050}}}}
+{"kind":"opencode.part","id":"prt_0008","message":"msg_a1","created":1767693603000,"data":{"type":"step-finish","reason":"tool-calls","tokens":{"total":4260,"input":1200,"output":40,"reasoning":20,"cache":{"read":0,"write":3000}},"cost":0}}
+{"kind":"opencode.part","id":"prt_0009","message":"msg_a1","created":1767693603100,"data":{"type":"step-start"}}
+{"kind":"opencode.part","id":"prt_0010","message":"msg_a1","created":1767693605000,"data":{"type":"tool","tool":"edit","callID":"call_2","state":{"status":"completed","input":{"filePath":"src/loop.ts","oldString":"i <= n","newString":"i < n"},"output":"Edit applied.","metadata":{"filediff":{"additions":1,"deletions":1}},"time":{"start":1767693605000,"end":1767693605100}}}}
+{"kind":"opencode.part","id":"prt_0011","message":"msg_a1","created":1767693606000,"data":{"type":"tool","tool":"bash","callID":"call_3","state":{"status":"error","input":{"command":"npm test"},"error":"1 failing\nCommand exited with code 1","time":{"start":1767693606000,"end":1767693608000}}}}
+{"kind":"opencode.part","id":"prt_0012","message":"msg_a1","created":1767693609000,"data":{"type":"step-finish","reason":"tool-calls","tokens":{"total":4110,"input":50,"output":60,"reasoning":0,"cache":{"read":4000,"write":0}},"cost":0}}
+{"kind":"opencode.message","id":"msg_c","created":1767693660000,"data":{"role":"user","time":{"created":1767693660000}}}
+{"kind":"opencode.part","id":"prt_0013","message":"msg_c","created":1767693660000,"data":{"type":"compaction","auto":true}}
+{"kind":"opencode.message","id":"msg_sum","created":1767693660500,"data":{"role":"assistant","summary":true,"modelID":"claude-sonnet-4-5","time":{"created":1767693660500,"completed":1767693664000},"tokens":{"total":8300,"input":8000,"output":300,"reasoning":0,"cache":{"read":0,"write":0}}}}
+{"kind":"opencode.part","id":"prt_0014","message":"msg_sum","created":1767693660600,"data":{"type":"step-start"}}
+{"kind":"opencode.part","id":"prt_0015","message":"msg_sum","created":1767693663000,"data":{"type":"text","text":"Summary: fixed loop.ts."}}
+{"kind":"opencode.part","id":"prt_0016","message":"msg_sum","created":1767693664000,"data":{"type":"step-finish","reason":"stop","tokens":{"total":8300,"input":8000,"output":300,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0}}
+{"kind":"opencode.message","id":"msg_u2","created":1767693680000,"data":{"role":"user","time":{"created":1767693680000}}}
+{"kind":"opencode.part","id":"prt_0017","message":"msg_u2","created":1767693680000,"data":{"type":"text","text":"now write a note"}}
+{"kind":"opencode.message","id":"msg_a2","created":1767693680300,"data":{"role":"assistant","modelID":"gpt-5.1","providerID":"openai","time":{"created":1767693680300,"completed":1767693684000},"tokens":{"total":942,"input":900,"output":30,"reasoning":12,"cache":{"read":0,"write":0}}}}
+{"kind":"opencode.part","id":"prt_0018","message":"msg_a2","created":1767693680400,"data":{"type":"step-start"}}
+{"kind":"opencode.part","id":"prt_0019","message":"msg_a2","created":1767693682000,"data":{"type":"tool","tool":"write","callID":"call_4","state":{"status":"completed","input":{"filePath":"NOTES.md","content":"a\nb\nc"},"output":"Wrote file.","metadata":{},"time":{"start":1767693682000,"end":1767693682100}}}}
+{"kind":"opencode.part","id":"prt_0020","message":"msg_a2","created":1767693683000,"data":{"type":"tool","tool":"read","callID":"call_5","state":{"status":"running","input":{"filePath":"big.log"}}}}
+{"kind":"opencode.part","id":"prt_0021","message":"msg_a2","created":1767693684000,"data":{"type":"step-finish","reason":"tool-calls","tokens":{"total":942,"input":900,"output":30,"reasoning":12,"cache":{"read":0,"write":0}},"cost":0}}

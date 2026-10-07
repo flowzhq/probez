@@ -1,0 +1,25 @@
+{
+ "version": 1,
+ "session_id": "1791373390304_fix01",
+ "source": "cli",
+ "pid": 1,
+ "started_at": "2026-10-07T11:43:10.311Z",
+ "ended_at": "2026-10-07T11:44:40.000Z",
+ "exit_code": 0,
+ "status": "completed",
+ "interactive": false,
+ "provider": "cline",
+ "model": "anthropic/claude-sonnet-4.5",
+ "cwd": "/tmp/demo",
+ "workspace_root": "/tmp/demo",
+ "enable_tools": true,
+ "enable_spawn": true,
+ "enable_teams": false,
+ "metadata": {
+  "sessionHistoryOrigin": {
+   "mode": "user"
+  },
+  "title": "fix sum"
+ },
+ "messages_path": "/home/demo/.cline/data/sessions/1791373390304_fix01/1791373390304_fix01.messages.json"
+}

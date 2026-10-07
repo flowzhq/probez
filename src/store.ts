@@ -27,6 +27,10 @@ import {
 import { applyCursorUsage, readCursorUsage } from './cursor-usage.js'
 import { readToolResults } from './result.js'
 import { extractCodexSession, isCodexRecord } from './extract-codex.js'
+import { exportClineSession, extractClineSession, isClineRecord } from './extract-cline.js'
+import { exportGooseSession, extractGooseSession, isGooseRecord } from './extract-goose.js'
+import { exportOpencodeSession, extractOpencodeSession, isOpencodeRecord } from './extract-opencode.js'
+import { extractPiSession, isPiRecord } from './extract-pi.js'
 import { extractCopilotSession, isCopilotRecord } from './extract-copilot.js'
 import { extractCopilotVsSession } from './extract-copilot-vs.js'
 import { extractCursorSession } from './extract-cursor.js'
@@ -702,6 +706,10 @@ export async function sniffSource(file: string): Promise<RoundSource> {
     const row = record as Record<string, unknown>
     if (isCodexRecord(row)) return 'codex'
     if (isCopilotRecord(row)) return 'copilot'
+    if (isPiRecord(row)) return 'pi'
+    if (isOpencodeRecord(row)) return 'opencode'
+    if (isGooseRecord(row)) return 'goose'
+    if (isClineRecord(row)) return 'cline'
     if (typeof row.type === 'string' || typeof row.sessionId === 'string') return 'claude-code'
     if (typeof row.role === 'string') return 'cursor'
   }
@@ -840,7 +848,23 @@ export async function collectProject(
   }
 
   let newRounds = 0
-  for (const session of stale) {
+  for (const listed of stale) {
+    // An OpenCode or Goose session lives in a database every session shares, and a Cline session is
+    // spread over several files, so each is exported to its own JSONL copy first and read from that.
+    // A session that can no longer be exported — deleted, or a database this Node cannot open —
+    // keeps the copy it has, and is read from that if there is one.
+    let session = listed
+    if (listed.opencode !== undefined || listed.goose !== undefined || listed.cline !== undefined) {
+      const archived = join(sessionsDir, safeSessionFilename(listed.id))
+      const exported =
+        listed.opencode !== undefined
+          ? await exportOpencodeSession(listed.opencode, archived)
+          : listed.goose !== undefined
+            ? await exportGooseSession(listed.goose, archived)
+            : await exportClineSession(listed.cline!, archived)
+      if (!exported && (await stat(archived).catch(() => null)) === null) continue
+      session = { ...listed, file: archived }
+    }
     const rounds =
       session.source === 'cursor'
         ? await extractCursorSession(session.file, session.id, head)
@@ -850,7 +874,15 @@ export async function collectProject(
             ? session.vs === true
               ? await extractCopilotVsSession(session.file, session.id, head, copilotVsCalls)
               : await extractCopilotSession(session.file, session.id, head)
-            : await extractSession(session.file, session.id, head)
+            : session.source === 'pi'
+              ? await extractPiSession(session.file, session.id, head)
+              : session.source === 'opencode'
+                ? await extractOpencodeSession(session.file, session.id, head)
+                : session.source === 'goose'
+                  ? await extractGooseSession(session.file, session.id, head)
+                  : session.source === 'cline'
+                    ? await extractClineSession(session.file, session.id, head)
+                    : await extractSession(session.file, session.id, head)
     // Cursor transcripts have no usage. Hook events under the data dir are merged here so a
     // rebuild still picks them up. Claude and Codex rounds already carry their own counts and
     // applyCursorUsage redistributes onto tool-using rounds (or parks prose-only as outside).

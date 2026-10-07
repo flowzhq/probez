@@ -11,7 +11,7 @@ import type { MouseEvent } from 'react'
  * `source` on browse routes is a page filter, not a search: the layout stays, the rounds change.
  * The search route keeps `source:` inside `q`.
  */
-export type SourceChoice = 'claude' | 'cursor' | 'codex' | 'copilot'
+export type SourceChoice = 'claude' | 'cursor' | 'codex' | 'copilot' | 'pi' | 'opencode' | 'goose' | 'cline'
 
 export type Route =
   | { name: 'projects'; source: SourceChoice | null }
@@ -90,7 +90,16 @@ function asEntity(value: string | null): Entity | null {
 }
 
 function asSource(value: string | null): SourceChoice | null {
-  return value === 'claude' || value === 'cursor' || value === 'codex' || value === 'copilot' ? value : null
+  return value === 'claude' ||
+    value === 'cursor' ||
+    value === 'codex' ||
+    value === 'copilot' ||
+    value === 'pi' ||
+    value === 'opencode' ||
+    value === 'goose' ||
+    value === 'cline'
+    ? value
+    : null
 }
 
 /** Carry a page-filter `source` on a path that may already have a query. */

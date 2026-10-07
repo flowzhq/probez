@@ -743,6 +743,12 @@ const SHELL_TOOLS = new Set([
   // `npm test` and `git status` it ran straight to `unclassified/unknown`. Its non-Windows name,
   // if different, is not confirmed from a real session and so is not guessed at here.
   'powershell',
+  // Goose's developer extension (`extract-goose.ts`), which namespaces each tool by its extension.
+  'developer__shell',
+  // Cline (`extract-cline.ts`): its SDK's `run_commands`, whose list of commands the extractor joins
+  // a line each into `command`, and the legacy extension's `execute_command`.
+  'run_commands',
+  'execute_command',
 ])
 
 export function isShellTool(name: string): boolean {

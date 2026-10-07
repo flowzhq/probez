@@ -10,6 +10,101 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ### Added
 
+- **Cline as an eighth source.** `probez collect` reads [Cline](https://cline.bot) in both of the
+  formats it writes. Its CLI and the current VS Code extension keep **SDK sessions** under
+  `~/.cline/data/sessions` (or `$CLINE_DATA_DIR`, or `$CLINE_DIR/data`): a manifest naming the
+  working directory, and a messages file following Cline's documented messages contract. The
+  extension's **legacy tasks** — what it wrote before its SDK, and still writes from a window running
+  its legacy bundle — are read from its storage in VS Code, VS Code Insiders, VSCodium, Cursor and
+  Windsurf (`<editor>/User/globalStorage/saoudrizwan.claude-dev`) and from `~/.cline/data/tasks`.
+  Sessions are grouped by the directory each recorded; a legacy task with no history entry is placed
+  by the environment details of its first request. Each session is exported to a JSONL copy in the
+  project's `sessions/`, as OpenCode's and Goose's are. In an SDK session a round is one model call,
+  closed by the message carrying its metrics; `inputTokens` is the whole prompt, so the cache is taken
+  out of it. A real CLI session showed three things the contract does not: typed text wrapped in
+  `<user_input>`, which is unwrapped; a `run_commands` list sent as a JSON string; and a failed
+  command reported only per command (`success: false`, with the exit status and stderr in the text),
+  which is read as the failure it is, with its stderr size and exit status. A subagent's messages,
+  kept beside its parent's, are a session nested under it. A fork's copy of the session it came
+  from, and a session imported from Claude Code, Codex or OpenCode, are left to where they came from
+  — probez reads those agents directly — until Cline continues them. In a legacy task a round is one
+  `api_req_started` event; the model and provider in use come from `task_metadata.json`, and the
+  provider decides how `tokensIn` is read, since Cline's legacy handlers disagreed: Anthropic,
+  OpenRouter, Cline's own provider and most others reported the uncached part with the cache beside
+  it, while OpenAI-compatible endpoints, LM Studio, xAI, LiteLLM and a few more reported the whole
+  prompt. Each legacy tool takes its result — its size, and whether it failed or was refused, in
+  Cline's own wording — from the task's API history, where every result opens with a header naming
+  its tool; a result is only given to the next tool of the same name, so a misaligned one is left
+  out rather than misattributed. Those results carry no time, so only commands, MCP calls and browser
+  actions, which the chat log times, have a result time. A legacy compaction
+  marks the round after it with its mode and sizes. Usage Cline logged apart from any one call — calls
+  a checkpoint restore removed, and a batch of subagents — is a round of its own, so a task's total is
+  Cline's. A legacy task resumed in the SDK is read from the legacy task, and from the SDK only after
+  it was resumed, so the history Cline converts with no timestamps and its lifetime usage on one
+  message is not counted twice. `--cline-dir` (repeatable) points elsewhere; `--source cline` /
+  `source:cline` filters it.
+- **Goose as a seventh source.** `probez collect` reads [Goose](https://goose-docs.ai) sessions —
+  its CLI and desktop app share one store — from `~/.local/share/goose/sessions` (or
+  `$XDG_DATA_HOME/goose/sessions`; macOS uses the same path), `%APPDATA%\Block\goose\data\sessions` on Windows,
+  or `$GOOSE_PATH_ROOT/data/sessions`. Current versions keep every project's sessions in one SQLite
+  database, `sessions.db`, read with Node's built-in SQLite, so it needs Node 22.13 or later; on an
+  older Node those sessions are skipped with a notice. The JSONL file per session that earlier
+  versions wrote is read on any Node, and one Goose has already imported into its database is read
+  from there. Sessions are grouped by the working directory each recorded. As with OpenCode,
+  `collect` exports each changed session to a JSONL copy in the project's `sessions/` and reads that.
+  A round is one model call. Goose splits a reply into several messages — streamed text, then one per
+  tool requested, each followed by its response — and stores the call's usage on the message holding
+  the reply, so further tool requests after it are the same call, and the model's thinking Goose
+  copies onto each of them is counted once. Goose's `input_tokens` already includes the cache, so the
+  uncached part is what is left; the cache write has no retention split and is charged at the
+  5-minute rate. Timing comes from each call's own `elapsedMs`, since Goose's timestamps are whole
+  seconds. A fork, and a session Goose imported from another agent, hold a copied history older than
+  the session itself; it is left to where it came from, so no call is counted twice. A compaction's
+  own model call is recorded only in Goose's usage ledger; it is counted from there, and its mark
+  lands on the round after it, as `auto` or `manual` from the fixed text Goose writes after it. A
+  shell call records its stderr and exit status, which Goose reports apart from stdout. A subagent's session (`parent_session_id`) is nested under its parent.
+  Built-in tools classify like their counterparts, whether Goose recorded them bare, as a real
+  1.53 session does (`shell`, `edit`, `write`, `tree`), or as `<extension>__<tool>`: `shell` as a
+  shell, `edit` and `write` sized from their own arguments, the older `developer__text_editor` by its
+  `command`; every other extension is an MCP
+  server, stored as `mcp__<extension>__<tool>`. Sessions written before Goose recorded usage per
+  message have no tokens or cost, and split a call wherever a tool answered. `--goose-dir` points
+  elsewhere; `--source goose` / `source:goose` filters it.
+- **OpenCode as a sixth source.** `probez collect` reads [OpenCode](https://opencode.ai) sessions —
+  its terminal app and desktop app share one store — from `~/.local/share/opencode` (or
+  `$XDG_DATA_HOME/opencode`; the same path on Windows). From v1.14 that is one SQLite database for
+  every project, read with Node's built-in SQLite, so it needs Node 22.13 or later; on an older Node
+  those sessions are skipped with a notice. The JSON-per-message layout earlier versions wrote under
+  `storage/` is read on any Node. Sessions are grouped by the directory each recorded. Because no
+  session is a file of its own, `collect` exports each changed session to a JSONL copy in the
+  project's `sessions/` and reads that, so archiving, rebuilding and sessions OpenCode has since
+  deleted work as for every other source, and only sessions that changed are re-read. A round is one
+  model call — a `step-start`/`step-finish` pair, several of which can share an assistant message —
+  with the step's own usage: OpenCode already takes the cache out of `input`, and takes reasoning
+  out of `output`, so reasoning is added back to output as it is billed. The cache write has no
+  retention split and is charged at the 5-minute rate. A session OpenCode started from another (the
+  `task` tool) is a subagent nested under it. A fork copies the session it came from under new ids
+  but the original times; those copies are older than the fork itself and are left to the original,
+  so no call is counted twice. The compaction summary is a model call and is counted; the compaction
+  mark lands on the round after it, with the size it summarized. `--opencode-dir` points elsewhere;
+  `--source opencode` / `source:opencode` filters it.
+- **Pi as a fifth source.** `probez collect` reads [Pi](https://pi.dev) coding-agent sessions from
+  `~/.pi/agent/sessions` (or `$PI_CODING_AGENT_SESSION_DIR`, or `sessions` under
+  `$PI_CODING_AGENT_DIR`), one JSONL file per session under a folder named from the cwd. The folder
+  name is a lossy encoding, so sessions are grouped by the `cwd` each file's header records. A round
+  is one assistant message, which Pi writes once the call has finished, carrying the model that
+  answered and its usage: `input` is already the uncached part, and `cacheWrite1h` splits the cache
+  write between its two prices. A round begins at the message's own timestamp and ends at the
+  entry's. Every branch in the file is read, since a call on an abandoned branch was still paid for.
+  `edit` is sized from the diff Pi returns and `write` from the lines it wrote; `read`, `edit`,
+  `write`, `grep`, `find` and `ls` classify like their counterparts in other agents. A `compaction`
+  entry lands on the next round with the size it summarized. `/fork` and `/clone` seed the new file
+  with a copy of the parent's history; entries older than the new file's header are that copy and
+  are left to the parent, so no call is counted twice. A v1 file (no `version` on the header) is
+  still recognized as Pi. Not read: model calls Pi records outside
+  an assistant message — a compaction's or a branch summary's own usage, `usage` entries such as
+  cache warming, and nested model work a tool reports — so a session's total can sit below Pi's own.
+  `--pi-dir` points elsewhere; `--source pi` / `source:pi` filters it like any other agent.
 - **GitHub Copilot CLI as a fourth source.** `probez collect` reads sessions from
   `~/.copilot/session-state` (or `$COPILOT_HOME/session-state`), one directory per session, each
   carrying a `workspace.yaml` naming the cwd it ran in and an `events.jsonl` event stream. A round
@@ -67,6 +162,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ### Changed
 
+- **A model named by the provider serving it is priced as the model.** A router spells a model
+  with its provider in front — OpenRouter's `anthropic/claude-sonnet-4.5`, which Goose and OpenCode
+  record as configured — and those rounds used to be unpriced and have no context window. When the
+  whole spelling matches nothing, the id after the last `/` is now looked up the same way (snapshot
+  stripped, dotted version dashed). The whole spelling is tried first, so a rate typed against the
+  prefixed id still wins, and a model nobody priced stays unpriced behind a prefix too. Nothing is
+  re-collected: prices are worked out when read, so stored rounds are priced the next time they are
+  shown.
 - **The store is rebuilt on upgrade** (schema 10), which re-reads Copilot CLI sessions collected
   before the context reading above existed, and Visual Studio Copilot Chat sessions collected
   before their log was read. `probez collect` does it; nothing needs re-running by hand. A Visual

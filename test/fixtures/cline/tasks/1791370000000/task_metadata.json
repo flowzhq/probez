@@ -1,0 +1,18 @@
+{
+ "files_in_context": [],
+ "model_usage": [
+  {
+   "ts": 1791370000050,
+   "model_id": "claude-sonnet-4-5-20250929",
+   "model_provider_id": "anthropic",
+   "mode": "act"
+  },
+  {
+   "ts": 1791370020050,
+   "model_id": "qwen2.5-coder:32b",
+   "model_provider_id": "openai",
+   "mode": "act"
+  }
+ ],
+ "environment_history": []
+}

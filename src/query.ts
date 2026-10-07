@@ -135,7 +135,7 @@ export const FIELDS: Field[] = [
   { key: 'commit', kind: 'text', group: 'where', match: 'loose', says: 'the commit the task started from', example: '9e4e660' },
   { key: 'model', kind: 'text', group: 'where', match: 'loose', says: 'the model that answered', example: 'opus' },
   { key: 'agent', kind: 'enum', group: 'where', says: 'who ran it: main agent or subagent, not which product', values: ['main', 'sub'] },
-  { key: 'source', kind: 'enum', group: 'where', says: 'which product wrote it: claude, cursor, codex, or copilot (claude matches persisted claude-code)', values: [...SOURCE_ALIASES] },
+  { key: 'source', kind: 'enum', group: 'where', says: 'which product wrote it: claude, cursor, codex, copilot, pi, opencode, goose, or cline (claude matches persisted claude-code)', values: [...SOURCE_ALIASES] },
   { key: 'skill', kind: 'text', group: 'where', match: 'loose', says: 'the skill the work was attributed to', example: 'code-review' },
   { key: 'mcp', kind: 'text', group: 'where', match: 'loose', says: 'the MCP server the work was attributed to', example: 'github' },
 
@@ -767,7 +767,7 @@ export function print(query: Query): string {
  */
 export function setSourceQuery(text: string, alias: string | null): string {
   const stripped = text
-    .replace(/(?:^|\s)-?source:(?:claude-code|claude|cursor|codex|copilot|unknown)\b/gi, ' ')
+    .replace(/(?:^|\s)-?source:(?:claude-code|claude|cursor|codex|copilot|pi|opencode|goose|cline|unknown)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim()
   if (alias === null || alias === '') return stripped
@@ -776,7 +776,7 @@ export function setSourceQuery(text: string, alias: string | null): string {
 
 /** The last `source:` token in a query, as a CLI alias, or null when the query does not name one. */
 export function sourceQueryOf(text: string): string | null {
-  const matches = [...text.matchAll(/\bsource:(claude-code|claude|cursor|codex|copilot|unknown)\b/gi)]
+  const matches = [...text.matchAll(/\bsource:(claude-code|claude|cursor|codex|copilot|pi|opencode|goose|cline|unknown)\b/gi)]
   if (matches.length === 0) return null
   const raw = matches[matches.length - 1]![1]!.toLowerCase()
   return raw === 'claude-code' ? 'claude' : raw
@@ -1171,7 +1171,7 @@ export interface RoundFilter {
   category?: string
   target?: string
   agent?: 'main' | 'sub'
-  /** CLI/query alias: `claude` (not `claude-code`), `cursor`, `codex`, `copilot`, or `unknown`. */
+  /** CLI/query alias: `claude` (not `claude-code`), `cursor`, `codex`, `copilot`, `pi`, `opencode`, `goose`, `cline`, or `unknown`. */
   source?: string
   errorsOnly?: boolean
 }

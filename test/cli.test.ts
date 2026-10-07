@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -35,6 +36,9 @@ const CURSOR_SUB = join(here, '..', '..', 'test', 'fixtures', 'cursor-subagent.j
 const CODEX_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'codex-session.jsonl')
 const CODEX_SUB = join(here, '..', '..', 'test', 'fixtures', 'codex-subagent.jsonl')
 const COPILOT_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'copilot-session.jsonl')
+const PI_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'pi-session.jsonl')
+const GOOSE_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'goose-session.jsonl')
+const CLINE_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'cline')
 const WALK_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'walk-session.jsonl')
 const SUBAGENT_FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'claude-subagent.jsonl')
 
@@ -63,6 +67,10 @@ function makeSource(sessions: number, delegated = false): {
   cursorDir: string
   codexDir: string
   copilotDir: string
+  piDir: string
+  opencodeDir: string
+  gooseDir: string
+  clineDir: string
   dataDir: string
   project: string
 } {
@@ -73,12 +81,17 @@ function makeSource(sessions: number, delegated = false): {
   const cursorDir = join(root, 'cursor')
   const codexDir = join(root, 'codex')
   const copilotDir = join(root, 'copilot')
+  const piDir = join(root, 'pi')
+  const opencodeDir = join(root, 'opencode')
+  const gooseDir = join(root, 'goose')
+  const clineDir = join(root, 'cline')
   const dataDir = join(root, 'data')
   const project = join(root, 'work')
   mkdirSync(project, { recursive: true })
   mkdirSync(cursorDir, { recursive: true })
   mkdirSync(codexDir, { recursive: true })
   mkdirSync(copilotDir, { recursive: true })
+  mkdirSync(piDir, { recursive: true })
   const sourceDir = join(claudeDir, 'encoded-project-name')
   mkdirSync(sourceDir, { recursive: true })
 
@@ -96,7 +109,7 @@ function makeSource(sessions: number, delegated = false): {
       readFileSync(SUBAGENT_FIXTURE, 'utf8').replaceAll('/tmp/demo', project),
     )
   }
-  return { claudeDir, cursorDir, codexDir, copilotDir, dataDir, project }
+  return { claudeDir, cursorDir, codexDir, copilotDir, piDir, opencodeDir, gooseDir, clineDir, dataDir, project }
 }
 
 function collect(env: ReturnType<typeof makeSource>, extra: string[] = []): Run {
@@ -113,6 +126,14 @@ function collect(env: ReturnType<typeof makeSource>, extra: string[] = []): Run 
     env.codexDir,
     '--copilot-dir',
     env.copilotDir,
+    '--pi-dir',
+    env.piDir,
+    '--opencode-dir',
+    env.opencodeDir,
+    '--goose-dir',
+    env.gooseDir,
+    '--cline-dir',
+    env.clineDir,
     ...extra,
   ])
 }
@@ -134,6 +155,14 @@ function read(env: ReturnType<typeof makeSource>, args: string[]): Run {
     env.codexDir,
     '--copilot-dir',
     env.copilotDir,
+    '--pi-dir',
+    env.piDir,
+    '--opencode-dir',
+    env.opencodeDir,
+    '--goose-dir',
+    env.gooseDir,
+    '--cline-dir',
+    env.clineDir,
   ])
 }
 
@@ -536,6 +565,14 @@ function collectAll(env: ReturnType<typeof makeSource>, extra: string[] = []): R
     env.codexDir,
     '--copilot-dir',
     env.copilotDir,
+    '--pi-dir',
+    env.piDir,
+    '--opencode-dir',
+    env.opencodeDir,
+    '--goose-dir',
+    env.gooseDir,
+    '--cline-dir',
+    env.clineDir,
   ])
 }
 
@@ -811,6 +848,14 @@ test('a project exported from one store imports into another and reads the same'
     join(theirs, 'none-codex'),
     '--copilot-dir',
     join(theirs, 'none-copilot'),
+    '--pi-dir',
+    join(theirs, 'none-pi'),
+    '--opencode-dir',
+    join(theirs, 'none-opencode'),
+    '--goose-dir',
+    join(theirs, 'none-goose'),
+    '--cline-dir',
+    join(theirs, 'none-cline'),
   ])
   assert.equal(after.status, 0, after.stderr)
   // Every figure the analysis prints, in order. The first line names the project and differs: one
@@ -857,6 +902,10 @@ test('a darkened export reads the same, and says nothing', () => {
     '--cursor-dir', join(theirs, 'none-cursor'),
     '--codex-dir', join(theirs, 'none-codex'),
     '--copilot-dir', join(theirs, 'none-copilot'),
+    '--pi-dir', join(theirs, 'none-pi'),
+    '--opencode-dir', join(theirs, 'none-opencode'),
+    '--goose-dir', join(theirs, 'none-goose'),
+    '--cline-dir', join(theirs, 'none-cline'),
   ])
   assert.equal(after.status, 0, after.stderr)
   // The header says so on every read, not only at import.
@@ -954,7 +1003,7 @@ test('collect merges Claude and Cursor sessions for the same checkout', () => {
 test('--help names the agents', () => {
   const help = run(['--help'])
   assert.equal(help.status, 0, help.stderr)
-  assert.match(help.stdout, /--source claude\|cursor\|codex\|copilot\|all/)
+  assert.match(help.stdout, /--source claude\|cursor\|codex\|copilot\|pi\|opencode\|goose\|cline\|all/)
   assert.match(help.stdout, /Does not collect/)
   assert.match(help.stdout, /source:claude/)
   assert.match(help.stdout, /--cursor-dir/)
@@ -962,6 +1011,13 @@ test('--help names the agents', () => {
   assert.match(help.stdout, /Codex CLI rollouts/)
   assert.match(help.stdout, /--copilot-dir/)
   assert.match(help.stdout, /GitHub Copilot CLI sessions/)
+  assert.match(help.stdout, /--pi-dir/)
+  assert.match(help.stdout, /--opencode-dir/)
+  assert.match(help.stdout, /Pi sessions live under/)
+  assert.match(help.stdout, /--goose-dir/)
+  assert.match(help.stdout, /Goose sessions live under/)
+  assert.match(help.stdout, /--cline-dir/)
+  assert.match(help.stdout, /Cline sessions live under/)
 })
 
 test('collecting a Cursor project twice does not duplicate rounds', () => {
@@ -1016,6 +1072,108 @@ test('collect --source codex reads Codex rollouts and not Claude', () => {
   const onlyClaude = collect(env, ['--source', 'claude', '--json'])
   assert.equal(onlyClaude.status, 1)
   assert.match(onlyClaude.stderr, /no project matched|no agent sessions/)
+})
+
+test('collect --source pi reads Pi sessions, stamped pi, and not Claude', () => {
+  const env = makeSource(0)
+  // Pi files sessions under a folder named from the cwd; discovery reads the header, not this.
+  const folder = join(env.piDir, '--encoded-work--')
+  mkdirSync(folder, { recursive: true })
+  // Escaped as JSON, because the fixture's cwd sits inside a JSON string and a Windows path has
+  // backslashes in it.
+  const cwd = JSON.stringify(env.project).slice(1, -1)
+  writeFileSync(
+    join(folder, '2026-01-06T09-59-59-000Z_eeee5555-0000-0000-0000-000000000000.jsonl'),
+    readFileSync(PI_FIXTURE, 'utf8').replaceAll('/tmp/demo', cwd),
+  )
+
+  const onlyPi = collect(env, ['--source', 'pi', '--json'])
+  assert.equal(onlyPi.status, 0, onlyPi.stderr)
+  const result = JSON.parse(onlyPi.stdout) as { rounds: number; sessions: number }
+  assert.equal(result.sessions, 1)
+  assert.equal(result.rounds, 6)
+
+  const store = join(env.dataDir, 'projects', readdirSync(join(env.dataDir, 'projects'))[0]!)
+  const stored = storedRounds(store)
+  assert.ok(stored.every((round) => round.source === 'pi'))
+  const manifest = JSON.parse(readFileSync(join(store, 'manifest.json'), 'utf8')) as { sources: string[] }
+  assert.deepEqual(manifest.sources, ['pi'])
+
+  const onlyClaude = collect(env, ['--source', 'claude', '--json'])
+  assert.equal(onlyClaude.status, 1)
+})
+
+test('collect --source cline reads both of Cline\'s formats, stamped cline, and not Claude', () => {
+  const env = makeSource(0)
+  cpSync(CLINE_FIXTURE, env.clineDir, { recursive: true })
+  // The fixture's sessions ran in /tmp/demo; point them at this test's project. Escaped as JSON,
+  // because a Windows path has backslashes in it.
+  const cwd = JSON.stringify(env.project).slice(1, -1)
+  for (const file of [
+    join(env.clineDir, 'sessions', '1791373390304_fix01', '1791373390304_fix01.json'),
+    join(env.clineDir, 'state', 'taskHistory.json'),
+  ]) {
+    writeFileSync(file, readFileSync(file, 'utf8').replaceAll('/tmp/demo', cwd))
+  }
+
+  const onlyCline = collect(env, ['--source', 'cline', '--json'])
+  assert.equal(onlyCline.status, 0, onlyCline.stderr)
+  const result = JSON.parse(onlyCline.stdout) as { rounds: number; sessions: number }
+  // The SDK session, its subagent, and the legacy task; the other legacy task ran elsewhere.
+  assert.equal(result.sessions, 3)
+  assert.equal(result.rounds, 4 + 1 + 6)
+
+  const store = join(env.dataDir, 'projects', readdirSync(join(env.dataDir, 'projects'))[0]!)
+  assert.ok(storedRounds(store).every((round) => round.source === 'cline'))
+  const manifest = JSON.parse(readFileSync(join(store, 'manifest.json'), 'utf8')) as { sources: string[] }
+  assert.deepEqual(manifest.sources, ['cline'])
+
+  // Nothing changed, so nothing is read again.
+  const again = JSON.parse(collect(env, ['--source', 'cline', '--json']).stdout) as { read_sessions: number; new_rounds: number }
+  assert.equal(again.read_sessions, 0)
+  assert.equal(again.new_rounds, 0)
+
+  assert.equal(collect(env, ['--source', 'claude', '--json']).status, 1)
+})
+
+test('collect --source goose reads a Goose session file, stamped goose, and not Claude', () => {
+  const env = makeSource(0)
+  // The layout from before Goose's database: a session file opening with a line naming its
+  // working directory, then a message per line with `created` in seconds. Reading it needs no SQLite.
+  mkdirSync(env.gooseDir, { recursive: true })
+  const messages = readFileSync(GOOSE_FIXTURE, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { kind: string; id: string; created: number })
+    .filter((row) => row.kind === 'goose.message' && !row.id.startsWith('msg_copied'))
+    .map(({ kind: _kind, created, ...message }) => JSON.stringify({ ...message, created: created / 1000 }))
+  writeFileSync(
+    join(env.gooseDir, '20260106_100000.jsonl'),
+    [JSON.stringify({ working_dir: env.project, description: 'fix loop' }), ...messages].join('\n') + '\n',
+  )
+
+  const onlyGoose = collect(env, ['--source', 'goose', '--json'])
+  assert.equal(onlyGoose.status, 0, onlyGoose.stderr)
+  const result = JSON.parse(onlyGoose.stdout) as { rounds: number; sessions: number }
+  assert.equal(result.sessions, 1)
+  // The three calls; the compaction's own call is only in the database's ledger.
+  assert.equal(result.rounds, 3)
+
+  const store = join(env.dataDir, 'projects', readdirSync(join(env.dataDir, 'projects'))[0]!)
+  const stored = storedRounds(store)
+  assert.ok(stored.every((round) => round.source === 'goose'))
+  const manifest = JSON.parse(readFileSync(join(store, 'manifest.json'), 'utf8')) as { sources: string[] }
+  assert.deepEqual(manifest.sources, ['goose'])
+
+  // Nothing changed, so nothing is read again.
+  const again = collect(env, ['--source', 'goose', '--json'])
+  assert.equal(again.status, 0, again.stderr)
+  const second = JSON.parse(again.stdout) as { new_rounds: number; read_sessions: number }
+  assert.equal(second.read_sessions, 0)
+  assert.equal(second.new_rounds, 0)
+
+  const onlyClaude = collect(env, ['--source', 'claude', '--json'])
+  assert.equal(onlyClaude.status, 1)
 })
 
 test('collect merges Claude and Codex sessions for the same checkout', () => {
@@ -1159,6 +1317,14 @@ test('--source on sessions filters stored rounds and does not restrict discovery
       env.codexDir,
       '--copilot-dir',
       env.copilotDir,
+      '--pi-dir',
+      env.piDir,
+      '--opencode-dir',
+      env.opencodeDir,
+      '--goose-dir',
+      env.gooseDir,
+      '--cline-dir',
+      env.clineDir,
     ],
     env.project,
   )
@@ -1440,6 +1606,14 @@ function find(env: ReturnType<typeof makeSource>, args: string[]): Run {
     env.codexDir,
     '--copilot-dir',
     env.copilotDir,
+    '--pi-dir',
+    env.piDir,
+    '--opencode-dir',
+    env.opencodeDir,
+    '--goose-dir',
+    env.gooseDir,
+    '--cline-dir',
+    env.clineDir,
   ])
 }
 
@@ -1471,6 +1645,14 @@ test('`find` takes the query first and the project second', () => {
     env.codexDir,
     '--copilot-dir',
     env.copilotDir,
+    '--pi-dir',
+    env.piDir,
+    '--opencode-dir',
+    env.opencodeDir,
+    '--goose-dir',
+    env.gooseDir,
+    '--cline-dir',
+    env.clineDir,
   ])
   assert.equal(everywhere.status, 0)
   // One project in this store, so naming it and searching all of it find the same rounds.

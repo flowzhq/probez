@@ -38,7 +38,7 @@ cd ~/any/project-you-work-in
 probez collect
 ```
 
-It reads [Claude Code](https://claude.com/claude-code) sessions from `~/.claude/projects`, [Cursor](https://cursor.com) transcripts from `~/.cursor/projects`, [Codex](https://github.com/openai/codex) CLI rollouts from `~/.codex/sessions` (or `$CODEX_HOME/sessions`), and [GitHub Copilot](https://github.com/github/copilot-cli) CLI sessions from `~/.copilot/session-state` (or `$COPILOT_HOME/session-state`), then writes
+It reads [Claude Code](https://claude.com/claude-code) sessions from `~/.claude/projects`, [Cursor](https://cursor.com) transcripts from `~/.cursor/projects`, [Codex](https://github.com/openai/codex) CLI rollouts from `~/.codex/sessions` (or `$CODEX_HOME/sessions`), [GitHub Copilot](https://github.com/github/copilot-cli) CLI sessions from `~/.copilot/session-state` (or `$COPILOT_HOME/session-state`), [Pi](https://pi.dev) sessions from `~/.pi/agent/sessions` (or `$PI_CODING_AGENT_SESSION_DIR`), [OpenCode](https://opencode.ai) sessions from `~/.local/share/opencode` (or `$XDG_DATA_HOME/opencode`), [Goose](https://goose-docs.ai) sessions from `~/.local/share/goose/sessions` (`%APPDATA%\Block\goose\data\sessions` on Windows; reading OpenCode's and Goose's databases needs Node 22.13 or later), and [Cline](https://cline.bot) sessions from `~/.cline/data` and the tasks its VS Code extension keeps in each editor's storage, then writes
 one record per LLM round under `~/.probez`. Run it again whenever you want to catch up — it reads
 only what changed. `probez collect --all` does every project on the machine at once, and a
 project it cannot collect is reported and stepped over rather than ending the run — the others are

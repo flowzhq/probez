@@ -4,19 +4,39 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 
 import {
   defaultClaudeDir,
+  defaultClineDirs,
   defaultCodexDir,
   defaultCopilotDir,
   defaultCursorDir,
+  defaultGooseDir,
+  defaultOpencodeDir,
+  defaultPiDir,
   pathFromCursorSlug,
   wantsClaude,
+  wantsCline,
   wantsCodex,
   wantsCopilot,
   wantsCursor,
+  wantsGoose,
+  wantsOpencode,
+  wantsPi,
 } from './agents/paths.js'
 import type { SourceFilter } from './agents/paths.js'
+import { listClineSessions } from './extract-cline.js'
+import { canReadGooseDb, listGooseSessions } from './extract-goose.js'
+import { canReadOpencodeDb, listOpencodeSessions } from './extract-opencode.js'
 import type { AgentSource, Project, SessionFile } from './types.js'
 
-export { defaultClaudeDir, defaultCodexDir, defaultCopilotDir, defaultCursorDir }
+export {
+  defaultClaudeDir,
+  defaultClineDirs,
+  defaultCodexDir,
+  defaultCopilotDir,
+  defaultCursorDir,
+  defaultGooseDir,
+  defaultOpencodeDir,
+  defaultPiDir,
+}
 export type { SourceFilter }
 
 /** How much of a session file to scan for the record carrying `cwd`. */
@@ -27,6 +47,11 @@ export interface DiscoverOptions {
   cursorDir: string
   codexDir: string
   copilotDir: string
+  piDir: string
+  opencodeDir: string
+  gooseDir: string
+  /** Cline's data directories, each of which may hold SDK `sessions/` and legacy `tasks/`. */
+  clineDirs: string[]
   source?: SourceFilter
 }
 
@@ -347,6 +372,249 @@ export async function discoverCopilotProjects(copilotDir: string): Promise<Proje
 }
 
 /**
+ * The `cwd` a Pi session's header recorded: always the first line, `{"type":"session",…,"cwd":…}`.
+ *
+ * Only the header is trusted. The folder name is the cwd with every separator turned into `-`,
+ * which cannot be turned back, and a later system message's `cwd` section is prompt text.
+ */
+async function readPiCwd(file: string): Promise<string | null> {
+  let handle
+  try {
+    handle = await open(file, 'r')
+  } catch {
+    return null
+  }
+  try {
+    const buffer = Buffer.alloc(CWD_SCAN_BYTES)
+    const { bytesRead } = await handle.read(buffer, 0, CWD_SCAN_BYTES, 0)
+    const first = buffer.subarray(0, bytesRead).toString('utf8').split('\n', 1)[0] ?? ''
+    try {
+      const record: unknown = JSON.parse(first)
+      if (!record || typeof record !== 'object') return null
+      const row = record as { type?: unknown; cwd?: unknown }
+      return row.type === 'session' && typeof row.cwd === 'string' && row.cwd !== '' ? row.cwd : null
+    } catch {
+      return null
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
+async function walkPiSessions(dir: string, out: SessionFile[]): Promise<void> {
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      await walkPiSessions(path, out)
+      continue
+    }
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
+    const info = await stat(path).catch(() => null)
+    if (info === null || !info.isFile()) continue
+    // The file name alone — `<timestamp>_<session-id>` — rather than the path under the root: the
+    // folder in front of it is the whole cwd re-encoded, which says nothing the project does not.
+    out.push({
+      id: entry.name.slice(0, -'.jsonl'.length),
+      file: path,
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      source: 'pi',
+    })
+  }
+}
+
+/**
+ * Pi coding-agent sessions: one folder per working directory, one JSONL file per session, each
+ * opening with a header that names the cwd it ran in.
+ *
+ * Grouped by that recorded cwd, as Codex and Copilot sessions are, rather than by folder. A
+ * session whose header cannot be read cannot be placed and is skipped rather than guessed at.
+ */
+export async function discoverPiProjects(piDir: string): Promise<Project[]> {
+  const sessions: SessionFile[] = []
+  await walkPiSessions(piDir, sessions)
+  if (sessions.length === 0) return []
+
+  const byPath = new Map<string, SessionFile[]>()
+  for (const session of sessions) {
+    const cwd = await readPiCwd(session.file)
+    if (cwd === null) continue
+    const key = resolve(cwd)
+    const bucket = byPath.get(key)
+    if (bucket === undefined) byPath.set(key, [session])
+    else bucket.push(session)
+  }
+
+  const projects: Project[] = []
+  for (const [path, files] of byPath) {
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs)
+    projects.push({
+      key: basename(path),
+      path,
+      dir: piDir,
+      sessions: files,
+      lastActivity: files[files.length - 1]!.mtimeMs,
+      sources: ['pi'],
+    })
+  }
+  return projects
+}
+
+let warnedNoSqlite = false
+
+/**
+ * OpenCode sessions: every project's in one data directory — a SQLite database from v1.14, JSON
+ * files per message before that — grouped by the directory each session recorded.
+ *
+ * A session is not a file here, so `file` names the database (or the storage folder) and the
+ * `opencode` reference names the session in it. `size` and `mtimeMs` are the session's own row
+ * count and newest update rather than the file's, which is what lets `collect` re-read only the
+ * sessions that changed in a database every session shares. A subagent's session — one OpenCode
+ * started from another — is nested under its parent's id the way Claude's are, so it reads as one.
+ *
+ * Reading the database needs Node's built-in SQLite (22.13 and later). On an older Node the
+ * database's sessions are skipped with a notice, and the older JSON storage is still read.
+ */
+export async function discoverOpencodeProjects(opencodeDir: string): Promise<Project[]> {
+  const db = join(opencodeDir, 'opencode.db')
+  if (!warnedNoSqlite && (await stat(db).catch(() => null)) !== null && !(await canReadOpencodeDb())) {
+    warnedNoSqlite = true
+    console.error(
+      `probez: OpenCode sessions in ${db} need Node 22.13 or later to read (this is ${process.version}); skipped`,
+    )
+  }
+  const listed = await listOpencodeSessions(opencodeDir)
+  const byPath = new Map<string, SessionFile[]>()
+  for (const entry of listed) {
+    const key = resolve(entry.directory)
+    const session: SessionFile = {
+      id: entry.parent === null ? entry.id : `${entry.parent}/subagents/${entry.id}`,
+      file: entry.ref.db ?? join(entry.ref.storage ?? opencodeDir, 'session'),
+      size: entry.size,
+      mtimeMs: entry.mtimeMs,
+      source: 'opencode',
+      opencode: entry.ref,
+    }
+    const bucket = byPath.get(key)
+    if (bucket === undefined) byPath.set(key, [session])
+    else bucket.push(session)
+  }
+
+  const projects: Project[] = []
+  for (const [path, files] of byPath) {
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs)
+    projects.push({
+      key: basename(path),
+      path,
+      dir: opencodeDir,
+      sessions: files,
+      lastActivity: files[files.length - 1]!.mtimeMs,
+      sources: ['opencode'],
+    })
+  }
+  return projects
+}
+
+let warnedGooseNoSqlite = false
+
+/**
+ * Goose sessions: every project's in one sessions directory — a SQLite database in current
+ * versions, a JSONL file per session before that — grouped by the working directory each session
+ * recorded.
+ *
+ * Handled as OpenCode's are: `file` names the database (or the legacy file) and the `goose`
+ * reference names the session in it, `size` and `mtimeMs` are the session's own, and a subagent's
+ * session — one Goose started from another, which it links by `parent_session_id` — is nested under
+ * its parent's id.
+ *
+ * Reading the database needs Node's built-in SQLite (22.13 and later). On an older Node the
+ * database's sessions are skipped with a notice, and any legacy JSONL files are still read.
+ */
+export async function discoverGooseProjects(gooseDir: string): Promise<Project[]> {
+  const db = join(gooseDir, 'sessions.db')
+  if (!warnedGooseNoSqlite && (await stat(db).catch(() => null)) !== null && !(await canReadGooseDb())) {
+    warnedGooseNoSqlite = true
+    console.error(`probez: Goose sessions in ${db} need Node 22.13 or later to read (this is ${process.version}); skipped`)
+  }
+  const listed = await listGooseSessions(gooseDir)
+  const byPath = new Map<string, SessionFile[]>()
+  for (const entry of listed) {
+    const key = resolve(entry.workingDir)
+    const session: SessionFile = {
+      id: entry.parent === null ? entry.id : `${entry.parent}/subagents/${entry.id}`,
+      file: entry.ref.db ?? entry.ref.legacy ?? db,
+      size: entry.size,
+      mtimeMs: entry.mtimeMs,
+      source: 'goose',
+      goose: entry.ref,
+    }
+    const bucket = byPath.get(key)
+    if (bucket === undefined) byPath.set(key, [session])
+    else bucket.push(session)
+  }
+
+  const projects: Project[] = []
+  for (const [path, files] of byPath) {
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs)
+    projects.push({
+      key: basename(path),
+      path,
+      dir: gooseDir,
+      sessions: files,
+      lastActivity: files[files.length - 1]!.mtimeMs,
+      sources: ['goose'],
+    })
+  }
+  return projects
+}
+
+/**
+ * Cline sessions, in either of the formats Cline writes (see `extract-cline.ts`), from every data
+ * directory given, grouped by the working directory each recorded.
+ *
+ * Handled as OpenCode's and Goose's are: `file` names what holds the session and the `cline`
+ * reference says how to export it; a subagent is nested under the session that started it.
+ */
+export async function discoverClineProjects(clineDirs: string[]): Promise<Project[]> {
+  const listed = await listClineSessions(clineDirs)
+  const byPath = new Map<string, SessionFile[]>()
+  for (const entry of listed) {
+    const key = resolve(entry.cwd)
+    const session: SessionFile = {
+      id: entry.id,
+      file: entry.ref.kind === 'sdk' ? entry.ref.messages : join(entry.ref.dir, 'ui_messages.json'),
+      size: entry.size,
+      mtimeMs: entry.mtimeMs,
+      source: 'cline',
+      cline: entry.ref,
+    }
+    const bucket = byPath.get(key)
+    if (bucket === undefined) byPath.set(key, [session])
+    else bucket.push(session)
+  }
+
+  const projects: Project[] = []
+  for (const [path, files] of byPath) {
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs)
+    projects.push({
+      key: basename(path),
+      path,
+      dir: clineDirs[0] ?? '',
+      sessions: files,
+      lastActivity: files[files.length - 1]!.mtimeMs,
+      sources: ['cline'],
+    })
+  }
+  return projects
+}
+
+/**
  * Visual Studio's GitHub Copilot Chat sessions for one project: a MessagePack file per session
  * under `<project>/.vs/<solution>/copilot-chat/<hash>/sessions/`.
  *
@@ -513,6 +781,10 @@ export async function discoverProjects(options: DiscoverOptions): Promise<Projec
   if (wantsCursor(source)) found.push(...(await discoverCursorProjects(options.cursorDir)))
   if (wantsCodex(source)) found.push(...(await discoverCodexProjects(options.codexDir)))
   if (wantsCopilot(source)) found.push(...(await discoverCopilotProjects(options.copilotDir)))
+  if (wantsPi(source)) found.push(...(await discoverPiProjects(options.piDir)))
+  if (wantsOpencode(source)) found.push(...(await discoverOpencodeProjects(options.opencodeDir)))
+  if (wantsGoose(source)) found.push(...(await discoverGooseProjects(options.gooseDir)))
+  if (wantsCline(source)) found.push(...(await discoverClineProjects(options.clineDirs)))
   return mergeProjects(found)
 }
 

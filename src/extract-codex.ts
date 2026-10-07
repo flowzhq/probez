@@ -99,14 +99,16 @@ function parseArguments(raw: unknown): Json {
   }
 }
 
-function pathFromPatch(text: string): string | null {
+/** The first file an `apply_patch` payload names. Also used by `extract-cline.ts`. */
+export function pathFromPatch(text: string): string | null {
   const match = PATCH_FILE.exec(text)
   if (match === null) return null
   const path = match[1]!.trim()
   return path === '' ? null : path
 }
 
-function foldApplyPatch(text: string): Patch | null {
+/** The size of an `apply_patch` payload. Also used by `extract-cline.ts`. */
+export function foldApplyPatch(text: string): Patch | null {
   const files = new Set<string>()
   let added = 0
   let removed = 0

@@ -11,8 +11,14 @@ response within a few business days.
 probez reads real work sessions, so the data-handling rules matter as much as the code. It reads
 Claude Code session files under `~/.claude/projects`, Cursor agent transcripts under
 `~/.cursor/projects`, Codex CLI rollouts under `~/.codex/sessions` (or `$CODEX_HOME/sessions`), and
-GitHub Copilot CLI sessions under `~/.copilot/session-state` (or `$COPILOT_HOME/session-state`), and
-Visual Studio's GitHub Copilot Chat sessions under `<project>/.vs/<solution>/copilot-chat` inside
+GitHub Copilot CLI sessions under `~/.copilot/session-state` (or `$COPILOT_HOME/session-state`), Pi
+sessions under `~/.pi/agent/sessions` (or `$PI_CODING_AGENT_SESSION_DIR`), OpenCode's database and
+storage under `~/.local/share/opencode` (or `$XDG_DATA_HOME/opencode`) and Goose's session database
+and files under `~/.local/share/goose/sessions` (`%APPDATA%\Block\goose\data\sessions` on Windows), both opened
+read-only, Cline's sessions under `~/.cline/data` and the tasks its VS Code extension keeps under
+`<editor>/User/globalStorage/saoudrizwan.claude-dev` in VS Code, Cursor, Windsurf and VSCodium — of
+which only the task folders and the task history are read, never its settings or secrets — from all
+of which each session is copied into the store as JSONL, and Visual Studio's GitHub Copilot Chat sessions under `<project>/.vs/<solution>/copilot-chat` inside
 the project itself, along with Visual Studio's own Copilot log under `%TEMP%\VSGitHubCopilotLogs`,
 since that log is the only record of what those chats used. probez reads three kinds of line from
 it — which request a model call answered, that call's token counts, and the model list's prompt
@@ -22,7 +28,7 @@ Claude and Cursor write a subagent's run to a `subagents/` directory beside the 
 it; Codex names a subagent on the rollout's `session_meta`. Those are read too — a subagent's
 transcript is a session like any other here, and is copied into the store on the same terms as the
 rest. Copilot CLI's log names no equivalent convention, so subagent delegation is not modelled for
-it, and neither does Visual Studio Copilot Chat's.
+it, and neither does Visual Studio Copilot Chat's or Pi's.
 
 **Nothing leaves your machine, unless you set up a reader and press explain.** probez never opens a
 connection to anything. There is no telemetry, no account, no upload path, and no remote
@@ -175,7 +181,7 @@ worth reading twice, since it is what a darkened export still discloses:
 - **Session, message and tool-call ids**, which are opaque strings the harness generated. They carry
   no content, and they have to keep pairing with one another for `probez task` and `probez round` to
   resolve on the other side.
-- **Which agent produced each round** (`claude-code`, `cursor`, `codex`, `copilot`).
+- **Which agent produced each round** (`claude-code`, `cursor`, `codex`, `copilot`, `pi`, `opencode`, `goose`, `cline`).
 - **The counts themselves**, which describe real work. A small project's shape can be recognisable
   to someone who already knows it.
 

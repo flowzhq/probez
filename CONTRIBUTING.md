@@ -177,6 +177,31 @@ output in `dist/test/`, which is why `npm test` builds first.
 - `test/copilot-vs-log.test.ts` covers reading Visual Studio's Copilot log: each call belonging to
   the request most recently begun, the model's prompt cap from the log's model list, and the
   sidecar keeping every call once, across re-reads and after the log is deleted.
+- `test/extract-pi.test.ts` covers Pi sessions: one round per assistant message keyed by its entry
+  id, tasks from user messages, usage stored as Pi split it (including the one-hour cache write),
+  the model switching mid-session, timing from the message's start to the entry's write, an edit
+  sized from its diff, Pi's built-in tools classifying, a compaction landing on the next round, the
+  sniffer recognising the header, and discovery grouping by each header's cwd rather than by folder.
+- `test/extract-opencode.test.ts` covers OpenCode sessions: one round per step rather than per
+  message, a fork's copied history left to the original, usage per step with reasoning counted as
+  output, a tool's result prompting the next call, a running tool marked interrupted, the compaction
+  summary counted and its mark landing after it, the JSONL copy sniffed as OpenCode, and — where this
+  Node has SQLite — discovery and export from a database built in the test.
+- `test/extract-cline.test.ts` covers Cline in both formats, from a fixture laid out as Cline lays
+  out its data directory: SDK rounds closed by the message carrying metrics, typed text unwrapped,
+  usage with the cache taken out of the prompt, results encoded as strings or reported per command,
+  a subagent nested under its parent, forks and imports left to where they came from, a resumed
+  legacy task read once; and legacy rounds per `api_req_started`, usage read by the provider in use,
+  tools from the chat log with their results from the API history (and only to a tool of the same
+  name), compaction, and usage logged apart from any one call.
+- `test/extract-goose.test.ts` covers Goose sessions: one round per model call however many
+  messages the reply was split into, a fork's or import's copied history left out, usage with the
+  cache taken out of input, thinking copied onto each tool request counted once, timing from the
+  call's elapsed time, a shell call's stderr and exit status, built-in tool names kept bare or
+  prefixed and other extensions stored as MCP, the compaction counted from the usage ledger with its
+  mark and trigger landing after it, the older format without usage, and —
+  where this Node has SQLite — discovery and export from a database built in the test alongside the
+  JSONL files it left behind.
 - `test/msgpack.test.ts` covers the MessagePack decoder VS Copilot Chat sessions are read through:
   every primitive type, nested arrays and maps, the timestamp extension, and an unrecognised byte
   ending the walk without losing what decoded before it.

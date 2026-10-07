@@ -85,6 +85,14 @@ function makeStore(delegated = false): {
       join(root, 'codex'),
       '--copilot-dir',
       join(root, 'copilot'),
+      '--pi-dir',
+      join(root, 'pi'),
+      '--opencode-dir',
+      join(root, 'opencode'),
+      '--goose-dir',
+      join(root, 'goose'),
+      '--cline-dir',
+      join(root, 'cline'),
     ],
     { encoding: 'utf8' },
   )
@@ -113,7 +121,7 @@ function snapshot(dir: string): Record<string, string> {
 async function serving(
   dataDir: string,
   claudeDir = '',
-  extra: { cursorDir?: string; codexDir?: string; copilotDir?: string } = {},
+  extra: { cursorDir?: string; codexDir?: string; copilotDir?: string; piDir?: string; opencodeDir?: string; gooseDir?: string; clineDirs?: string[] } = {},
 ): Promise<Serving> {
   forgetRounds()
   return startServer({
@@ -122,6 +130,10 @@ async function serving(
     cursorDir: extra.cursorDir ?? '',
     codexDir: extra.codexDir ?? '',
     copilotDir: extra.copilotDir ?? '',
+    piDir: extra.piDir ?? '',
+    opencodeDir: extra.opencodeDir ?? '',
+    gooseDir: extra.gooseDir ?? '',
+    clineDirs: extra.clineDirs ?? [],
     port: 0,
     pinned: true,
   })

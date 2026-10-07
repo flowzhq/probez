@@ -557,6 +557,72 @@ const TOOL_VERBS: Record<string, Verb> = {
   create: 'write',
   view: 'read',
   report_intent: 'track',
+  // Pi's built-in tools (`extract-pi.ts`), named in lower case. `bash` and `powershell` are shell
+  // tools and handled above; `read`, `edit` and `write` take a `path`, the searches a pattern.
+  read: 'read',
+  edit: 'write',
+  write: 'write',
+  grep: 'search',
+  find: 'search',
+  ls: 'search',
+  // OpenCode's tools (`extract-opencode.ts`) beyond the names it shares with Pi. `read`, `edit` and
+  // `write` take a `filePath`, which `pathOf` already reads.
+  glob: 'search',
+  list: 'search',
+  multiedit: 'write',
+  patch: 'write',
+  webfetch: 'read',
+  websearch: 'read',
+  codesearch: 'search',
+  todowrite: 'track',
+  todoread: 'track',
+  task: 'track',
+  question: 'ask',
+  // Goose's built-in extensions (`extract-goose.ts`). A real Goose 1.53 session records the developer
+  // extension's tools bare — `shell`, `edit`, `write`, `tree` — so `shell`, `edit` and `write` are
+  // already above; other versions and extensions name them `<extension>__<tool>`.
+  // `developer__shell` is a shell tool and handled above, and `developer__text_editor` — the
+  // developer extension's single file tool before `write` and `edit` replaced it — reads or writes
+  // by its `command`, so it is decided in `actsOf`. Every other extension is an MCP server, which
+  // the extractor stores under `mcp__`.
+  tree: 'search',
+  read_image: 'read',
+  todo_write: 'track',
+  developer__write: 'write',
+  developer__edit: 'write',
+  developer__tree: 'search',
+  developer__read_image: 'read',
+  developer__image_processor: 'read',
+  developer__screen_capture: 'read',
+  developer__list_windows: 'search',
+  analyze__analyze: 'search',
+  todo__todo_write: 'track',
+  chatrecall__chatrecall: 'search',
+  // Cline (`extract-cline.ts`). Its SDK's tools first: `run_commands` is a shell tool and handled
+  // above, and `apply_patch` shares Codex's row. `read_files` reads several files a call, and the
+  // extractor names the first as its path.
+  read_files: 'read',
+  editor: 'write',
+  search_codebase: 'search',
+  fetch_web_content: 'read',
+  ask_question: 'ask',
+  skills: 'track',
+  submit_and_exit: 'track',
+  // Then the legacy extension's, as its chat view logged them. `execute_command` is a shell tool;
+  // `read_file` and `web_search` share rows above.
+  replace_in_file: 'write',
+  write_to_file: 'write',
+  delete_file: 'move',
+  list_files: 'search',
+  list_code_definition_names: 'search',
+  search_files: 'search',
+  web_fetch: 'read',
+  browser_action: 'read',
+  ask_followup_question: 'ask',
+  new_task: 'track',
+  summarize_task: 'track',
+  use_skill: 'track',
+  access_mcp_resource: 'mcp',
 }
 
 /** Tools whose target is the query, not a file, however path-shaped their input looks. */
@@ -565,7 +631,12 @@ const TARGETLESS = new Set(['Grep', 'Glob', 'grep_files', 'list_dir', 'AskUserQu
   'SemanticSearch', 'rg', 'AskQuestion', 'CreatePlan', 'SwitchMode', 'UpdateCurrentStep',
   'updateCurrentStep', 'TaskList', 'TaskGet', 'TaskOutput', 'TaskStop', 'SendMessage',
   'CallMcpTool', 'CallDynamicTool', 'GetMcpTools', 'GetDynamicTools', 'AwaitShell', 'Await',
-  'get_currentfile', 'get_files_in_project', 'get_projects_in_solution', 'run_build', 'report_intent'])
+  'get_currentfile', 'get_files_in_project', 'get_projects_in_solution', 'run_build', 'report_intent',
+  'grep', 'find', 'ls', 'glob', 'list', 'websearch', 'codesearch', 'todowrite', 'todoread', 'task',
+  'question', 'todo_write', 'developer__screen_capture', 'developer__list_windows', 'todo__todo_write',
+  'chatrecall__chatrecall', 'search_codebase', 'ask_question', 'skills', 'submit_and_exit',
+  'list_files', 'search_files', 'list_code_definition_names', 'ask_followup_question', 'new_task',
+  'summarize_task', 'use_skill', 'access_mcp_resource'])
 
 /**
  * A tool served by an MCP server.
@@ -592,6 +663,12 @@ export function actsOf(tool: ToolCall): Act[] {
   if (name === '') return [act('unknown', '', '(unnamed)')]
   if (isShellTool(name)) return bashActs(tool)
 
+  // Goose's old `text_editor` views a file or changes one, depending on what it was told to do.
+  if (name === 'developer__text_editor') {
+    const command = (tool.input as Record<string, unknown> | null)?.command
+    return [act(command === 'view' ? 'read' : 'write', pathOf(tool.input), name)]
+  }
+
   const verb = TOOL_VERBS[name]
   // An MCP tool is recognized by its namespace, not by a table: the name after `mcp__` is whatever
   // someone configured. The path is left unread for the same reason — the input shape is per-server,
@@ -602,7 +679,13 @@ export function actsOf(tool: ToolCall): Act[] {
   if (verb === undefined) return [act('unknown', '', name)]
 
   const path = TARGETLESS.has(name) ? '' : pathOf(tool.input)
-  const external = name === 'WebSearch' || name === 'WebFetch' || name === 'web_search'
+  const external =
+    name === 'WebSearch' ||
+    name === 'WebFetch' ||
+    name === 'web_search' ||
+    name === 'fetch_web_content' ||
+    name === 'web_fetch' ||
+    name === 'browser_action'
   // `create`/`create_file` are Copilot CLI's and VS Copilot Chat's names for the one tool each has
   // that always brings a file into existence, the same fact `Write` reports for Claude/Cursor's
   // tool of the same shape.

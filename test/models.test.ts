@@ -81,6 +81,12 @@ test('a dotted point version reports the window of the model it names', () => {
   assert.equal(contextWindow('claude-haiku-4.5'), contextWindow('claude-haiku-4-5'))
 })
 
+test('a model named by the provider serving it reports the window of the model', () => {
+  assert.equal(contextWindow('anthropic/claude-haiku-4.5'), contextWindow('claude-haiku-4-5'))
+  assert.equal(contextWindow('openai/gpt-5.3-codex'), 272_000)
+  assert.equal(contextWindow('anthropic/claude-opus-6'), null)
+})
+
 test('an id already in the table by its dotted spelling is never rewritten', () => {
   // gpt-5.6-sol is a real key with a dot in it. The exact match has to win before the dotted-version
   // fallback ever runs, or this would be misread as a dotted spelling of a model called

@@ -1,0 +1,47 @@
+{
+ "version": 1,
+ "updated_at": "2026-10-07T11:43:30.000Z",
+ "agent": "subagent",
+ "sessionId": "1791373390304_fix01__agent_sub1",
+ "messages": [
+  {
+   "id": "s1",
+   "role": "user",
+   "ts": 1791373394000,
+   "content": [
+    {
+     "type": "text",
+     "text": "find the tests"
+    }
+   ]
+  },
+  {
+   "id": "s2",
+   "role": "assistant",
+   "ts": 1791373394500,
+   "modelInfo": {
+    "id": "anthropic/claude-haiku-4.5",
+    "provider": "cline"
+   },
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "g1",
+     "name": "search_codebase",
+     "input": {
+      "queries": [
+       "sum.test"
+      ]
+     }
+    }
+   ],
+   "metrics": {
+    "inputTokens": 900,
+    "outputTokens": 12,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0,
+    "cost": 0
+   }
+  }
+ ]
+}

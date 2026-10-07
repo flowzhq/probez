@@ -87,6 +87,10 @@ test('Claude and Cursor checkouts of the same path merge into one project', asyn
     cursorDir,
     codexDir: join(root, 'codex'),
     copilotDir: join(root, 'copilot'),
+    piDir: join(root, 'pi'),
+    opencodeDir: join(root, 'opencode'),
+    gooseDir: join(root, 'goose'),
+    clineDirs: [join(root, 'cline')],
   })
   assert.equal(merged.length, 1)
   assert.equal(merged[0]!.path, project)
@@ -135,6 +139,10 @@ test('--source cursor skips Claude projects', async () => {
     cursorDir,
     codexDir: join(root, 'codex'),
     copilotDir: join(root, 'copilot'),
+    piDir: join(root, 'pi'),
+    opencodeDir: join(root, 'opencode'),
+    gooseDir: join(root, 'goose'),
+    clineDirs: [join(root, 'cline')],
     source: 'cursor',
   })
   assert.equal(found.length, 0)
@@ -225,6 +233,10 @@ test('Claude and Codex checkouts of the same path merge into one project', async
     cursorDir: join(root, 'none-cursor'),
     codexDir: join(root, 'codex'),
     copilotDir: join(root, 'none-copilot'),
+    piDir: join(root, 'none-pi'),
+    opencodeDir: join(root, 'none-opencode'),
+    gooseDir: join(root, 'none-goose'),
+    clineDirs: [join(root, 'none-cline')],
   })
   assert.equal(merged.length, 1)
   assert.equal(merged[0]!.path, project)
@@ -242,6 +254,10 @@ test('--source codex skips Claude projects', async () => {
     cursorDir: join(root, 'none'),
     codexDir: join(root, 'none-codex'),
     copilotDir: join(root, 'none-copilot'),
+    piDir: join(root, 'none-pi'),
+    opencodeDir: join(root, 'none-opencode'),
+    gooseDir: join(root, 'none-goose'),
+    clineDirs: [join(root, 'none-cline')],
     source: 'codex',
   })
   assert.equal(found.length, 0)
@@ -306,6 +322,10 @@ test('--source copilot skips Claude projects', async () => {
     cursorDir: join(root, 'none'),
     codexDir: join(root, 'none-codex'),
     copilotDir: join(root, 'none-copilot'),
+    piDir: join(root, 'none-pi'),
+    opencodeDir: join(root, 'none-opencode'),
+    gooseDir: join(root, 'none-goose'),
+    clineDirs: [join(root, 'none-cline')],
     source: 'copilot',
   })
   assert.equal(found.length, 0)

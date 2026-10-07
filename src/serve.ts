@@ -86,6 +86,14 @@ export interface ServeOptions {
   codexDir: string
   /** Where GitHub Copilot CLI sessions live. Same as `claudeDir`: only `sync` reads it. */
   copilotDir: string
+  /** Where Pi coding-agent sessions live. Same as `claudeDir`: only `sync` reads it. */
+  piDir: string
+  /** Where OpenCode's data directory is. Same as `claudeDir`: only `sync` reads it. */
+  opencodeDir: string
+  /** Where Goose's sessions directory is. Same as `claudeDir`: only `sync` reads it. */
+  gooseDir: string
+  /** Cline's data directories. Same as `claudeDir`: only `sync` reads them. */
+  clineDirs: string[]
   /** Port to listen on. 0 lets the OS choose, which is what the tests want. */
   port?: number
   /** Fail rather than move to another port. True when `--port` was typed. */
@@ -502,7 +510,18 @@ async function serveApi(
     sendJson(
       res,
       200,
-      await syncProject(dataDir, options.claudeDir, options.cursorDir, options.codexDir, options.copilotDir, slug),
+      await syncProject(
+        dataDir,
+        options.claudeDir,
+        options.cursorDir,
+        options.codexDir,
+        options.copilotDir,
+        options.piDir,
+        options.opencodeDir,
+        options.gooseDir,
+        options.clineDirs,
+        slug,
+      ),
     )
     return
   }
