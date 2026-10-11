@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 
 import { startServer } from '../src/serve.js'
 import type { Serving } from '../src/serve.js'
-import { forgetRounds } from '../src/viewdata.js'
+import { forgetRounds, parentIn } from '../src/viewdata.js'
 
 /**
  * The local server, exercised the way the browser meets it.
@@ -537,6 +537,12 @@ test('a subagent session answers, and its archived copy is found by the name it 
     assert.equal(one.session.session, session)
     assert.equal(one.session.agent, 'sub')
     assert.equal(one.session.rounds, 2)
+    // The sessions table nests a subagent under the session it names, so both payloads carry it.
+    assert.equal(one.session.parent, store.session)
+    const project = await body(withToken(server, `/api/projects/${store.slug}`))
+    const listed = new Map(project.sessions.map((row: { session: string; parent: string | null }) => [row.session, row.parent]))
+    assert.equal(listed.get(session), store.session)
+    assert.equal(listed.get(store.session), null)
 
     const task = await body(
       withToken(server, `/api/projects/${store.slug}/sessions/${encoded}/tasks/1`),
@@ -1412,4 +1418,15 @@ test('an import is the raw body, named by a header', async () => {
   } finally {
     await server.close()
   }
+})
+
+test('a subagent names the listed session it ran under, whichever way its agent files one', () => {
+  const claude = new Set(['aaaa', 'aaaa/subagents/agent-1'])
+  assert.equal(parentIn('aaaa/subagents/agent-1', claude), 'aaaa')
+  // Cursor keeps a session as `<uuid>/<uuid>.jsonl`, so the folder its subagent names is not an id.
+  const cursor = new Set(['bbbb/bbbb', 'bbbb/subagents/cccc'])
+  assert.equal(parentIn('bbbb/subagents/cccc', cursor), 'bbbb/bbbb')
+  assert.equal(parentIn('bbbb/bbbb', cursor), null)
+  // A parent the store does not hold is still named, as the id has it.
+  assert.equal(parentIn('dddd/subagents/eeee', new Set()), 'dddd')
 })

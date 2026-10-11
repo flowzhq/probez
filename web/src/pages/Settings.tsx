@@ -7,7 +7,10 @@ import { CommandKinds } from '../components/CommandKinds'
 import { DangerZone } from '../components/DangerZone'
 import { naturalFor, ordered, SortHead, useSort } from '../components/SortHead'
 import { count } from '../format'
-import { href } from '../router'
+import { forgetProjectList } from '../components/ScopeBar'
+import { href, linkProps, SETTINGS_TABS } from '../router'
+import type { SettingsTab } from '../router'
+import { useData } from '../useData'
 import type { ReactElement } from 'react'
 
 /** The five rates, in the order money moves: in, cached, back out. */
@@ -59,15 +62,12 @@ const BLANK: Rates ={ in: 0, cache_write_5m: 0, cache_write_1h: 0, cache_read: 0
  * Edits are held locally until Save, so a half-typed number never becomes the rate that prices a
  * store.
  */
-export function Settings(): ReactElement {
+function Pricing(): ReactElement {
   const [data, setData] = useState<PricingPayload | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState<Record<string, Record<string, string>>>({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState<string | null>(null)
-  // Bumped after a clear. The rate table counts the rounds each model was used for, and a clear
-  // is the one thing on this page that changes them.
-  const [read, setRead] = useState(0)
   const [sorted, sortBy] = useSort<RateSort>(rateNatural)
   /**
    * Models named here rather than found in the store.
@@ -99,9 +99,10 @@ export function Settings(): ReactElement {
     return () => {
       live = false
     }
-    // `load` closes over setters only; the counter is the real key.
+    // `load` closes over setters only. A clear, which changes the round counts, is on another tab,
+    // so arriving here after one reads them afresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [read])
+  }, [])
 
   const edit = (model: string, field: string, value: string): void => {
     setSaved(null)
@@ -149,9 +150,7 @@ export function Settings(): ReactElement {
 
   return (
     <>
-      <Chrome crumbs={[{ label: 'Projects', to: href.projects() }, { label: 'Settings' }]} search={{}} />
-      <main className="page">
-        {error !== null && data === null ? (
+      {error !== null && data === null ? (
           <Problem message={error} />
         ) : data === null ? (
           <Loading what="the rates" />
@@ -281,14 +280,181 @@ export function Settings(): ReactElement {
               </p>
             </section>
 
-            <hr />
-            <CommandKinds />
-            <Reader />
-            <DangerZone onCleared={() => setRead((was) => was + 1)} />
           </>
         )}
+    </>
+  )
+}
+
+const TAB_LABEL: Record<SettingsTab, string> = {
+  pricing: 'Pricing',
+  commands: 'Commands',
+  findings: 'Findings',
+  reader: 'Reader',
+  data: 'Data',
+}
+
+/**
+ * Settings, as five tabs rather than one long page.
+ *
+ * They are five unrelated things — what every token costs, what this machine's commands are, where
+ * a finding starts, what probez may run, and the store itself — and one scroll put the button that
+ * clears every project a long way under the rate for a model. Each tab is its own address, so a
+ * finding can send you straight to the line it was drawn at.
+ */
+export function Settings({ tab }: { tab: SettingsTab }): ReactElement {
+  return (
+    <>
+      <Chrome crumbs={[{ label: 'Settings' }, { label: TAB_LABEL[tab] }]} search={{}} scope="none" />
+      <main className="page">
+        <div className="head">
+          <h1>Settings</h1>
+        </div>
+        <div className="tabs" role="tablist" aria-label="Settings">
+          {SETTINGS_TABS.map((one) => (
+            <a
+              key={one}
+              role="tab"
+              aria-selected={one === tab}
+              className={one === tab ? 'tab on' : 'tab'}
+              {...linkProps(href.settings(one))}
+            >
+              {TAB_LABEL[one]}
+            </a>
+          ))}
+        </div>
+        <div role="tabpanel" aria-label={TAB_LABEL[tab]}>
+          {tab === 'pricing' ? (
+            <Pricing />
+          ) : tab === 'commands' ? (
+            <CommandKinds />
+          ) : tab === 'findings' ? (
+            <FindingsSettings />
+          ) : tab === 'reader' ? (
+            <Reader />
+          ) : (
+            <DangerZone onCleared={() => forgetProjectList()} />
+          )}
+        </div>
       </main>
     </>
+  )
+}
+
+/**
+ * The two lines a finding is drawn at, as percentages.
+ *
+ * Typed as whole percentages because that is how the Findings page states them, and stored as
+ * shares because that is what the comparison needs. Held locally until Save, like the rates.
+ */
+function FindingsSettings(): ReactElement {
+  const { data, error } = useData(() => api.thresholds(), [])
+  const [draft, setDraft] = useState<{ reconstruction: string; context: string } | null>(null)
+  const [said, setSaid] = useState<string | null>(null)
+  const [bad, setBad] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (data === null) return
+    setDraft({
+      reconstruction: String(Math.round(data.thresholds.reconstruction * 100)),
+      context: String(Math.round(data.thresholds.context * 100)),
+    })
+  }, [data])
+
+  if (error !== null && data === null) return <Problem message={error} />
+  if (data === null || draft === null) return <Loading what="the thresholds" />
+
+  const save = async (values: { reconstruction: string; context: string }): Promise<void> => {
+    const reconstruction = Number(values.reconstruction) / 100
+    const context = Number(values.context) / 100
+    setBad(null)
+    setSaid(null)
+    // Checked here in the units the fields are typed in. The server checks again, in shares.
+    for (const [name, share] of [
+      ['Reconstruction share', reconstruction],
+      ['Context occupancy', context],
+    ] as const) {
+      if (!Number.isFinite(share) || share <= 0 || share >= 1) {
+        setBad(`${name} must be a percentage above 0 and below 100.`)
+        return
+      }
+    }
+    setSaving(true)
+    try {
+      const saved = await api.saveThresholds({ reconstruction, context })
+      setDraft({
+        reconstruction: String(Math.round(saved.thresholds.reconstruction * 100)),
+        context: String(Math.round(saved.thresholds.context * 100)),
+      })
+      setSaid('Saved. The Findings page now draws at these lines.')
+    } catch (problem) {
+      setBad(problem instanceof Error ? problem.message : String(problem))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const field = (key: 'reconstruction' | 'context', label: string, hint: string): ReactElement => (
+    <label className="threshold">
+      <span>
+        <strong>{label}</strong>
+        <span className="muted">{hint}</span>
+      </span>
+      <span className="threshold-input">
+        <input
+          className="rate"
+          inputMode="numeric"
+          aria-label={`${label}, percent`}
+          value={draft[key]}
+          onChange={(event) => {
+            setSaid(null)
+            setDraft({ ...draft, [key]: event.target.value })
+          }}
+        />
+        %
+      </span>
+    </label>
+  )
+
+  return (
+    <section>
+      <h2>Where a finding starts</h2>
+      <p className="note">
+        Two of the findings are a matter of degree, so they need a line. Each finding names the line it was drawn
+        at, so a change here shows on the Findings page and not only on this one. Kept at{' '}
+        <span className="mono">{data.file}</span>, owner-only, beside the rates.
+      </p>
+      {field(
+        'reconstruction',
+        'Reconstruction share',
+        `A session is a finding when more than this share of its cost went on finding its way around code. Default ${Math.round(data.defaults.reconstruction * 100)}%.`,
+      )}
+      {field(
+        'context',
+        'Context occupancy',
+        `A task is a finding when a round filled more than this share of its model's input window. Default ${Math.round(data.defaults.context * 100)}%.`,
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
+        <button className="save" onClick={() => void save(draft)} disabled={saving}>
+          {saving ? 'Saving…' : 'Save thresholds'}
+        </button>
+        <button
+          className="ghost"
+          onClick={() =>
+            void save({
+              reconstruction: String(Math.round(data.defaults.reconstruction * 100)),
+              context: String(Math.round(data.defaults.context * 100)),
+            })
+          }
+          disabled={saving}
+        >
+          Reset to defaults
+        </button>
+        {said === null ? null : <span className="muted">{said}</span>}
+        {bad === null ? null : <span className="bad">{bad}</span>}
+      </div>
+    </section>
   )
 }
 

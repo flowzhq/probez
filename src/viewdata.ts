@@ -1,7 +1,7 @@
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { safeSessionFilename } from './agents/paths.js'
+import { parentSession, safeSessionFilename } from './agents/paths.js'
 import { discoverProjects, mergeCopilotVsSessions } from './discover.js'
 import { failed } from './errors.js'
 import {
@@ -111,7 +111,7 @@ import type { Round, ToolCall } from './types.js'
  * carried whoever's home directory it ran in. The store keeps the real path — this is the copy the
  * browser is handed, and nothing sends it back.
  */
-function shown<T extends { path: string | null }>(project: T): T {
+export function shown<T extends { path: string | null }>(project: T): T {
   return project.path === null ? project : { ...project, path: shorten(project.path) }
 }
 
@@ -131,6 +131,8 @@ function shownTrails(trails: Trail[]): Trail[] {
 
 /** A session as the view lists it: the stored row, plus what the tables around it need. */
 export interface ViewSession extends SessionRow {
+  /** The session that handed this one off, read from a subagent's id; null for one nobody did. */
+  parent: string | null
   model: string | null
   /** Wall clock across the session, gaps included. */
   elapsed_ms: number
@@ -153,7 +155,16 @@ export interface ViewTask extends TaskRow {
 
 export interface ProjectsPayload {
   data_dir: string
-  projects: Array<StoredProject & { work: ProjectWork | null; mix: CategoryShare[] }>
+  projects: Array<
+    StoredProject & {
+      work: ProjectWork | null
+      mix: CategoryShare[]
+      /** What every round of it cost, at the rates in Settings. */
+      cost: number
+      /** Rounds whose model has no rate, which are outside `cost`. */
+      unpriced: number
+    }
+  >
 }
 
 /**
@@ -222,6 +233,22 @@ export interface SessionPayload {
   analysis: Analysis
   tasks: ViewTask[]
   trace: Trace
+  /**
+   * What this session spent most finding out: its five costliest questions, each priced at its
+   * calls' share of their rounds. What the drawer on the sessions list shows under the work mix.
+   */
+  questions: CostlyQuestion[]
+}
+
+export interface CostlyQuestion {
+  task: number
+  at: number
+  ref: string
+  /** The words it asked about, or empty when it only opened places. */
+  terms: string[]
+  calls: number
+  repeats: number
+  cost: number
 }
 
 export interface TaskPayload {
@@ -352,7 +379,7 @@ export function forgetRounds(): void {
   cache.clear()
 }
 
-async function roundsOf(dir: string): Promise<Round[]> {
+export async function roundsOf(dir: string): Promise<Round[]> {
   const file = join(dir, 'rounds.jsonl')
   const info = await stat(file).catch(() => null)
   if (info === null) return []
@@ -518,7 +545,7 @@ function projectWork(analysis: Analysis, labels: RoundLabel[]): ProjectWork | nu
   }
 }
 
-function modelOf(rounds: Round[]): string | null {
+export function modelOf(rounds: Round[]): string | null {
   const counts = new Map<string, number>()
   for (const round of rounds) {
     if (typeof round.model !== 'string' || round.model === '') continue
@@ -535,7 +562,7 @@ function modelOf(rounds: Round[]): string | null {
   return best
 }
 
-function elapsedOf(rounds: Round[]): number {
+export function elapsedOf(rounds: Round[]): number {
   let start = Infinity
   let end = -Infinity
   for (const round of rounds) {
@@ -580,21 +607,31 @@ export async function projectsPayload(
     const analysis = categoryTally(rounds, pricing)
     const all: RoundLabel[] = []
     for (const labels of labelRounds(rounds).values()) all.push(...labels)
+    let cost = 0
+    let unpriced = 0
+    for (const round of rounds) {
+      const spent = costOf(round, pricing)
+      if (spent === null) unpriced += 1
+      else cost += spent
+    }
     projects.push({
       ...shownProject(project, rounds, source),
       work: projectWork(analysis, all),
       mix: mixOf(analysis),
+      cost,
+      unpriced,
     })
   }
   return { data_dir: shorten(dataDir), projects }
 }
 
-export async function projectPayload(
-  dataDir: string,
-  slug: string,
-  source: PageSource | null = null,
-): Promise<ProjectPayload> {
-  const { stored, rounds, pricing } = await open(dataDir, slug, source)
+/**
+ * Every session in a set of rounds, as the sessions tables list them, oldest first.
+ *
+ * One builder for the project page and the store-wide list, so a session reads the same in both:
+ * the same model, the same two clocks, the same mix, and the same parent for a subagent.
+ */
+export function viewSessions(rounds: Round[], pricing: Pricing): ViewSession[] {
   const work = workIndex(rounds)
   const bySession = new Map<string, Round[]>()
   for (const round of rounds) {
@@ -603,10 +640,11 @@ export async function projectPayload(
     else found.push(round)
   }
 
-  const sessions: ViewSession[] = sessionRows(rounds, pricing).map((row) => {
+  return sessionRows(rounds, pricing).map((row) => {
     const mine = bySession.get(row.session) ?? []
     return {
       ...row,
+      parent: parentIn(row.session, bySession),
       model: modelOf(mine),
       elapsed_ms: elapsedOf(mine),
       active_ms: mine.reduce((sum, round) => sum + (round.gen_ms ?? round.ms ?? 0), 0),
@@ -614,6 +652,15 @@ export async function projectPayload(
       mix: work.sessionMix(row.session),
     }
   })
+}
+
+export async function projectPayload(
+  dataDir: string,
+  slug: string,
+  source: PageSource | null = null,
+): Promise<ProjectPayload> {
+  const { stored, rounds, pricing } = await open(dataDir, slug, source)
+  const sessions = viewSessions(rounds, pricing)
 
   let cost = 0
   let unpriced = 0
@@ -636,6 +683,21 @@ export async function projectPayload(
       reused_vs_fresh: reusedVsFreshDaily(rounds),
     },
   }
+}
+
+/**
+ * The listed session a subagent ran under, or null for one nobody delegated.
+ *
+ * A subagent's id names the folder its parent's transcript sits in. For most agents that is the
+ * parent's own id; Cursor keeps a session as `<uuid>/<uuid>.jsonl`, so its id is `<uuid>/<uuid>`
+ * and the folder alone names nothing listed. A parent that is not in the store is still named, as
+ * the id has it.
+ */
+export function parentIn(session: string, listed: { has(session: string): boolean }): string | null {
+  const parent = parentSession(session)
+  if (parent === null || listed.has(parent)) return parent
+  const nested = `${parent}/${parent.split('/').at(-1)}`
+  return listed.has(nested) ? nested : parent
 }
 
 export async function sessionPayload(
@@ -671,6 +733,7 @@ export async function sessionPayload(
     project: shown(stored),
     session: {
       ...row,
+      parent: parentIn(row.session, new Set(rounds.map((round) => round.session))),
       model: modelOf(mine),
       elapsed_ms: elapsedOf(mine),
       active_ms: mine.reduce((sum, round) => sum + (round.gen_ms ?? round.ms ?? 0), 0),
@@ -680,7 +743,25 @@ export async function sessionPayload(
     analysis: categoryTally(mine, pricing),
     tasks,
     trace: traceOf(mine),
+    questions: costliestQuestions(mine, pricing, stored.path ?? ''),
   }
+}
+
+function costliestQuestions(rounds: Round[], pricing: Pricing, root: string): CostlyQuestion[] {
+  const costs = new Map<number, number>()
+  for (const round of rounds) costs.set(round.round, costOf(round, pricing) ?? 0)
+  return questionsOf(rounds, { root })
+    .map((question) => ({
+      task: question.task,
+      at: question.at,
+      ref: question.ref,
+      terms: question.terms,
+      calls: question.calls.length,
+      repeats: question.repeats,
+      cost: question.calls.reduce((sum, call) => sum + (costs.get(call.round) ?? 0) * call.share, 0),
+    }))
+    .sort((a, b) => b.cost - a.cost || b.calls - a.calls)
+    .slice(0, 5)
 }
 
 export async function taskPayload(

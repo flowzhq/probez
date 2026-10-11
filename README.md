@@ -63,7 +63,7 @@ treating agents as separate projects.
 **3. Look at what came back**, in the browser or in the terminal:
 
 ```bash
-probez view   # the profiler: projects, sessions, tasks, rounds
+probez view   # the profiler: what it cost, then projects, sessions, tasks, rounds
 probez        # the project as one summary — it collects first, so it stands in for step 2
 ```
 
@@ -71,8 +71,47 @@ Both are below: [the view](#the-view) first, [the CLI](#the-cli) after.
 
 ## The view
 
-`probez view` opens a local profiler in your browser: every project, then a session, then a task,
-down to a single tool call. It listens on `127.0.0.1` with a token that is new on every run.
+`probez view` opens a local profiler in your browser. It listens on `127.0.0.1` with a token that
+is new on every run.
+
+People open it for one of two reasons — *where did the money go* and *why did this one cost so much*
+— so the menu down the left is those two sections. **Insights** answers across the whole store:
+**Overview** (spend, input, cache share and cost per task, each against the period before; spend by
+day and by model; the work it went on; the top findings), **Spend** (cost over time split by project,
+model, agent or kind of work, with the same split ranked underneath), **Tokens & cache** (how much
+input was fresh, what it cost, and what the same tokens would have cost as cache reads) and
+**Context** (peak occupancy by day, the tasks that went over the line, and every compaction).
+**Investigate** is the lists: **Findings**, **Projects**, **Sessions**, **Questions**, **Trails** and
+**Explorer**, the query page below. Import and Settings sit at the foot of the menu, beside when
+the store was last synced.
+
+**One scope, everywhere.** The bar across the top holds a time range (7, 30 or 90 days, or all
+time), an agent and a project, and they live in the URL — a link you send opens on the same thirty
+days of the same agent. Every Insights chart and Investigate list under it is drawn from the same
+rounds, so a bar on one page and a row count on another agree. On a project and the pages under it
+the bar is the agent alone, since the page is already one project.
+
+**Every number opens a list.** A day on a chart, a model, a kind of work, a row of the Spend table or
+a finding lands on Sessions (or Questions, or Trails) filtered to it, with the filter shown as a chip
+you can remove. Sessions is every session in the scope across every project, costliest first, with
+its subagents folded under it; clicking a row opens a **drawer** with its facts, a thumbnail of its
+trace, its work as a share of cost and its costliest questions, without leaving the list. *Open trace*
+is the step that leaves. A project row opens the same kind of drawer — spend by day, work by cost,
+models, costliest sessions. Every list has **Open in Explorer**, which hands its scope and filters
+over as the query that asks the same thing; its title shows the query, and says so when a filter
+has no field to carry it. Tables lead with cost; the cache-write columns are one click away under
+**Token detail**, and the choice is remembered.
+
+**Findings** ranks what probez already measures by what it cost: sessions that spent over 40% of
+their cost on reconstruction, tasks whose context went over 80% of the window, questions asked again,
+trails that changed nothing, failed tool calls, and rounds on a model with no rate. Severity is a
+finding's cost as a share of the spend in scope — high from 5%, medium from 1% — and each names the
+line it was drawn at. The two lines are yours: **Settings › Findings**, stored in
+`~/.probez/findings.json` beside the rates.
+
+Below the lists, the levels are as they were: a project, then a session, then a task, down to a
+single tool call. Opening a session or a task folds the menu to its icons, so the trace gets the
+width.
 
 **Search** — one query bar, on every page. `/` or ⌘K focuses it; it completes fields from the same
 table the parser validates against, and their values from what the store actually holds, with the
@@ -88,10 +127,10 @@ matched with the size of the whole session beside them.
 Clicking a round opens its task with the query still in the URL, so the trace arrives with the
 rounds that matched lit and the rest of the task drawn around them — the point being *where in the
 task* the matches fall, which a filtered list cannot show. The bar starts scoped to whatever page
-you were on; the chip beside the query is what widens it to the whole store. The Source control
-next to the bar filters the page you are on — same project, that agent's sessions. Typing
-`source:claude` (or cursor, codex, or copilot) in the query bar is still a search. Neither changes what Sync
-collects.
+you were on; the chip beside the query is what widens it to the whole store. The Agent chip in the
+scope bar filters the page you are on — same project, that agent's sessions; on Explorer it writes
+`source:` into the query. Typing `source:claude` (or cursor, codex, or copilot) in the query bar is
+still a search. Neither changes what Sync collects.
 
 **A project** — where its work went, what each kind of work cost, and the sessions it happened in.
 The list under it is three tabs: *sessions*, each row carrying the whole spread of its work as a bar
@@ -159,7 +198,7 @@ first, and a kind to give each. It is stored in `~/.probez/commands.json` and re
 table, so it can correct a name as well as add one. Anything left unnamed stays unclassified, which
 is reported rather than guessed at.
 
-**Settings** holds the token rates every cost is computed from — one row per model, five rates
+**Settings** is five tabs: Pricing, Commands, Findings, Reader and Data. **Pricing** holds the token rates every cost is computed from — one row per model, five rates
 each, at published list prices and yours to change. Stored in `~/.probez/pricing.json`, owner-only,
 and read *over* the shipped table rather than instead of it: correcting one rate leaves the rest
 free to move when a later probez ships a new model, while a row you empty stays empty. A model id
@@ -870,7 +909,7 @@ keeps its recent work and gives up the rest, and a project you have not touched 
 
 **Nothing acts on the first press.** The plan above is printed and then asked about, and with no
 terminal to ask on — a pipe, a CI job — it refuses rather than assuming, so `--yes` is how a script
-says it means it. The same two operations sit under *Danger zone* in `probez view` → Settings,
+says it means it. The same two operations sit under *Danger zone* in `probez view` → Settings › Data,
 where the panel names the largest projects rather than only counting them.
 
 **What is gone is only as recoverable as the agent's own files.** probez has only ever read those,
@@ -906,8 +945,8 @@ $ probez import flowz-mcp.json
 
 `--bundle` writes one `.json` carrying the manifest and the analysis around the rounds; without it
 you get the store's own `.jsonl`, one round per line, on stdout unless you pass `--out`. Either
-imports. The same pair is in the view: **Export** under a project's **⋮**, **Import** on the
-projects page.
+imports. The same pair is in the view: **Export** under a project's **⋮**, **Import** at the foot
+of the menu.
 
 **`--darken` is how you send one to somebody outside the work.** Prompts and replies are written as
 `****`; paths, commands and search terms become tokens; the project's own name goes with them. What

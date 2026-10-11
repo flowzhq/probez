@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 
 import { linkProps } from '../router'
+import { ScopeBar } from './ScopeBar'
 import type { Entity, SourceChoice } from '../router'
 import { SearchBar } from './SearchBar'
 import { SourceFilter } from './SourceFilter'
@@ -13,16 +14,19 @@ export interface Crumb {
 }
 
 /**
- * The header, on every page.
+ * The bar across the top of every page: where you are, what you are looking at, and search.
  *
- * The query bar sits in it rather than on a page of its own, because a search is something you do
- * *from* wherever you are: on a project it starts scoped to that project, and the chip on the
- * results page is what widens it to the whole store.
+ * Where you are is the crumbs, since the menu on the left says which section and these say how far
+ * into it. What you are looking at is the scope — a time range, an agent and a project on the
+ * store-wide pages, just the agent on a project and below, where the page is already one project
+ * and its own dates. The query bar is here rather than on a page of its own, because a search is
+ * something you do *from* wherever you are.
  */
 export function Chrome({
   crumbs,
   right,
   search,
+  scope,
 }: {
   crumbs: Crumb[]
   right?: ReactNode
@@ -34,22 +38,22 @@ export function Chrome({
     source?: SourceChoice | null
     mode?: 'page' | 'search'
   }
+  /**
+   * Which scope chips to draw. `store` is all three, for the pages under the menu; `agent` is the
+   * agent alone, for a project and the pages under it. Search writes its agent into the query.
+   */
+  scope?: 'store' | 'agent' | 'none'
 }): ReactElement {
+  const chips = scope ?? (search === undefined ? 'none' : search.mode === 'search' ? 'search' : 'agent')
   return (
     <header className="top">
       <div className="top-in">
-        <a className="brand" {...linkProps('/')} aria-label="probez — all projects">
-          {/* Both are in the markup and CSS picks one, so the right logo is painted on the first
-              frame rather than after a script has worked out the theme. */}
-          <img className="logo logo-light" src="/logo-light.png" alt="probez" width={409} height={96} />
-          <img className="logo logo-dark" src="/logo-dark.png" alt="" aria-hidden width={409} height={96} />
-        </a>
-        <nav className="crumbs">
+        <nav className="crumbs" aria-label="Where you are">
           {crumbs.map((crumb, at) => (
             <Fragment key={at}>
-              <span className="crumb-sep">/</span>
-              {crumb.to === undefined ? (
-                <span className="crumb">{crumb.label}</span>
+              {at === 0 ? null : <span className="crumb-sep">/</span>}
+              {crumb.to === undefined || at === crumbs.length - 1 ? (
+                <span className={at === crumbs.length - 1 ? 'crumb here' : 'crumb'}>{crumb.label}</span>
               ) : (
                 <a className="crumb" {...linkProps(crumb.to)}>
                   {crumb.label}
@@ -60,40 +64,19 @@ export function Chrome({
         </nav>
         <span className="spacer" />
         {right}
+        {chips === 'store' ? <ScopeBar /> : chips === 'agent' ? <ScopeBar only="agent" /> : null}
+        {chips === 'search' && search !== undefined ? (
+          <SourceFilter
+            slug={search.slug}
+            initial={search.initial}
+            entity={search.entity}
+            source={search.source}
+            mode="search"
+          />
+        ) : null}
         {search === undefined ? null : (
-          <>
-            <SourceFilter
-              slug={search.slug}
-              initial={search.initial}
-              entity={search.entity}
-              source={search.source}
-              mode={search.mode}
-            />
-            <SearchBar slug={search.slug} initial={search.initial} source={search.source} />
-          </>
+          <SearchBar slug={search.slug} initial={search.initial} source={search.source} />
         )}
-        <a
-          className="gear"
-          {...linkProps('/settings')}
-          aria-label="Settings — token pricing"
-          title="Settings — token pricing"
-        >
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.2"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            {/* Eight square teeth on a ring, with the hole through the middle. Deliberately not the
-                rays-from-a-dot shape the light theme uses, which sits two controls away. */}
-            <path d="M6.75 2.80 L6.37 1.19 L9.63 1.19 L9.25 2.80 L10.80 3.44 L11.66 2.03 L13.97 4.34 L12.56 5.20 L13.20 6.75 L14.81 6.37 L14.81 9.63 L13.20 9.25 L12.56 10.80 L13.97 11.66 L11.66 13.97 L10.80 12.56 L9.25 13.20 L9.63 14.81 L6.37 14.81 L6.75 13.20 L5.20 12.56 L4.34 13.97 L2.03 11.66 L3.44 10.80 L2.80 9.25 L1.19 9.63 L1.19 6.37 L2.80 6.75 L3.44 5.20 L2.03 4.34 L4.34 2.03 L5.20 3.44 Z" />
-            <circle cx="8" cy="8" r="2.35" />
-          </svg>
-        </a>
         <Theme />
       </div>
     </header>

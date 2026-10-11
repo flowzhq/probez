@@ -38,6 +38,16 @@ import {
   saveReaderConfig,
   trailsPayload,
 } from './viewdata.js'
+import {
+  findingsPayload,
+  insightsPayload,
+  questionsListPayload,
+  saveThresholds,
+  scopeOf,
+  sessionsPayload,
+  thresholdsPayload,
+  trailsListPayload,
+} from './insights.js'
 
 /**
  * The local profiler's server.
@@ -277,6 +287,11 @@ function isClearPath(parts: string[]): boolean {
   return parts.length === 1 && parts[0] === 'clear'
 }
 
+/** Where a finding starts: readable with GET, writable with POST, like pricing. */
+function isThresholdsPath(parts: string[]): boolean {
+  return parts.length === 1 && parts[0] === 'thresholds'
+}
+
 /** Taking in an exported project. POST only: it writes. */
 function isImportPath(parts: string[]): boolean {
   return parts.length === 1 && parts[0] === 'import'
@@ -290,6 +305,7 @@ function isWritePath(parts: string[]): boolean {
     isReaderPath(parts) ||
     isCommandsPath(parts) ||
     isClearPath(parts) ||
+    isThresholdsPath(parts) ||
     isImportPath(parts)
   )
 }
@@ -371,6 +387,11 @@ async function serveApi(
   // /api/clear                                                POST
   // /api/search?q=&project=&in=&limit=
   // /api/facets?key=&project=
+  // /api/insights?range=&source=&project=                     store-wide, under the scope bar
+  // /api/sessions?range=&source=&project=
+  // /api/questions?range=&source=&project=, /api/trails?range=&source=&project=
+  // /api/findings?range=&source=&project=
+  // /api/thresholds                                           GET, POST
   // /api/projects?source=
   // /api/projects/<slug>?source=
   // /api/projects/<slug>/tools?source=
@@ -489,6 +510,40 @@ async function serveApi(
       return
     }
     sendJson(res, 200, await readerPayload(dataDir))
+    return
+  }
+
+  // The store-wide reads. Each takes the same scope, so every Insights chart and Investigate list
+  // drawn under one scope bar is drawn from the same rounds.
+  if (slug === undefined && (group === 'insights' || group === 'sessions' || group === 'questions' || group === 'trails' || group === 'findings')) {
+    const scope = scopeOf(url.searchParams)
+    const payload =
+      group === 'insights'
+        ? await insightsPayload(dataDir, scope)
+        : group === 'sessions'
+          ? await sessionsPayload(dataDir, scope)
+          : group === 'questions'
+            ? await questionsListPayload(dataDir, scope)
+            : group === 'trails'
+              ? await trailsListPayload(dataDir, scope)
+              : await findingsPayload(dataDir, scope)
+    sendJson(res, 200, payload)
+    return
+  }
+
+  if (group === 'thresholds' && slug === undefined) {
+    if (method === 'POST') {
+      let body: unknown
+      try {
+        body = await readJsonBody(req)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+        return
+      }
+      sendJson(res, 200, await saveThresholds(dataDir, body))
+      return
+    }
+    sendJson(res, 200, await thresholdsPayload(dataDir))
     return
   }
 

@@ -13,9 +13,39 @@ import type { MouseEvent } from 'react'
  */
 export type SourceChoice = 'claude' | 'cursor' | 'codex' | 'copilot' | 'pi' | 'opencode' | 'goose' | 'cline'
 
+/** The five tabs Settings is split into, each its own address so a finding can link to one. */
+export type SettingsTab = 'pricing' | 'commands' | 'findings' | 'reader' | 'data'
+
+export const SETTINGS_TABS: SettingsTab[] = ['pricing', 'commands', 'findings', 'reader', 'data']
+
+/** The store-wide pages under the menu. They take the scope bar and nothing in the path. */
+export type MenuPage =
+  | 'overview'
+  | 'spend'
+  | 'cache'
+  | 'context'
+  | 'findings'
+  | 'sessions'
+  | 'questions'
+  | 'trails'
+  | 'import'
+
+const MENU_PAGES: MenuPage[] = [
+  'overview',
+  'spend',
+  'cache',
+  'context',
+  'findings',
+  'sessions',
+  'questions',
+  'trails',
+  'import',
+]
+
 export type Route =
+  | { name: MenuPage }
   | { name: 'projects'; source: SourceChoice | null }
-  | { name: 'settings' }
+  | { name: 'settings'; tab: SettingsTab }
   /**
    * A query, and what it is counted as.
    *
@@ -111,11 +141,22 @@ export function withSource(path: string, source?: string | null): string {
 
 export function parse(pathname: string, search: string): Route {
   const parts = pathname.split('/').filter((part) => part !== '')
-  if (parts.length === 0) {
+  // The app opens on Overview. The projects list it used to open on is under Investigate now.
+  if (parts.length === 0) return { name: 'overview' }
+  if (parts.length === 1 && (MENU_PAGES as string[]).includes(parts[0]!)) {
+    return { name: parts[0] as MenuPage }
+  }
+  if (parts.length === 1 && parts[0] === 'projects') {
     return { name: 'projects', source: asSource(new URLSearchParams(search).get('source')) }
   }
-  if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
-  if (parts.length === 1 && parts[0] === 'search') {
+  if (parts[0] === 'settings' && parts.length <= 2) {
+    const tab = (parts[1] ?? 'pricing') as SettingsTab
+    if (SETTINGS_TABS.includes(tab)) return { name: 'settings', tab }
+    return { name: 'missing', path: pathname }
+  }
+  // Explorer is the search page under its menu name. `/search` is where every link to it used to
+  // point, so it answers too; `redirect` below moves the address over.
+  if (parts.length === 1 && (parts[0] === 'search' || parts[0] === 'explorer')) {
     const query = new URLSearchParams(search)
     return {
       name: 'search',
@@ -158,8 +199,9 @@ export function parse(pathname: string, search: string): Route {
 }
 
 export const href = {
-  projects: (source?: string | null) => withSource('/', source),
-  settings: () => '/settings',
+  overview: () => '/',
+  projects: (source?: string | null) => withSource('/projects', source),
+  settings: (tab: SettingsTab = 'pricing') => (tab === 'pricing' ? '/settings' : `/settings/${tab}`),
   search: (
     q: string,
     options: { entity?: Entity | null; slug?: string | null } = {},
@@ -167,7 +209,7 @@ export const href = {
     const query = new URLSearchParams({ q })
     if (options.entity !== undefined && options.entity !== null) query.set('in', options.entity)
     if (options.slug !== undefined && options.slug !== null) query.set('project', options.slug)
-    return `/search?${query.toString()}`
+    return `/explorer?${query.toString()}`
   },
   project: (slug: string, source?: string | null) => withSource(`/p/${slug}`, source),
   session: (slug: string, session: string, source?: string | null) =>
@@ -201,11 +243,20 @@ export function go(to: string, replace = false): void {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
+/**
+ * Addresses that moved, rewritten in place so a shared link keeps working and the bar shows where
+ * it landed. Replaced rather than pushed: nobody wants Back to take them to a redirect.
+ */
+function redirect(): void {
+  const { pathname, search } = window.location
+  if (pathname === '/search') window.history.replaceState(null, '', `/explorer${search}`)
+}
+
 export function useRoute(): Route {
-  const read = useCallback(
-    () => parse(window.location.pathname, window.location.search),
-    [],
-  )
+  const read = useCallback(() => {
+    redirect()
+    return parse(window.location.pathname, window.location.search)
+  }, [])
   const [route, setRoute] = useState<Route>(read)
   useEffect(() => {
     const update = (): void => setRoute(read())

@@ -1,16 +1,18 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { api } from '../api'
 import { Actions } from '../components/Actions'
 import { Chrome, Facts, Info, Loading, Problem } from '../components/Chrome'
-import { Import } from '../components/Import'
 import { instant, naturalFor, ordered, SortHead, useSort } from '../components/SortHead'
+import { OpenInExplorer } from '../components/OpenInExplorer'
+import { ProjectDrawer } from '../components/ProjectDrawer'
+import { forgetProjectList } from '../components/ScopeBar'
 import { SourceMarks } from '../components/SourceMarks'
 import { TokenCells, TokenHeaders } from '../components/Tokens'
 import type { TokenSplit } from '../components/Tokens'
 import { MixBar, mostlyUnpriced, UnpricedMark } from '../components/WorkBars'
-import { ago, count, percent } from '../format'
-import { go, href, linkProps } from '../router'
+import { ago, count, money, percent, tokens } from '../format'
+import { href, linkProps } from '../router'
 import type { SourceChoice } from '../router'
 import { SOURCE_LABEL } from '../source'
 import { useData } from '../useData'
@@ -20,6 +22,10 @@ import type { ReactElement } from 'react'
 /** What the projects table can be ordered by, which is every column it has. */
 type SortKey =
   | 'name'
+  | 'cost'
+  | 'share'
+  | 'input'
+  | 'cache'
   | 'work'
   | 'sessions'
   | 'tasks'
@@ -49,6 +55,13 @@ function projectValue(project: ProjectsPayload['projects'][number], key: SortKey
   switch (key) {
     case 'name':
       return project.project
+    case 'cost':
+    case 'share':
+      return project.unpriced === project.rounds ? null : project.cost
+    case 'input':
+      return project.in_tokens
+    case 'cache':
+      return project.in_tokens > 0 ? project.in_cache_read / project.in_tokens : null
     case 'work':
       return project.work?.short ?? null
     case 'sessions':
@@ -82,10 +95,31 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
   // Newest activity first, which is the order the store already hands them over in — so the first
   // paint is the same list it has always been, and sorting is something you go and ask for.
   const [sorted, orderBy] = useSort<SortKey>(projectNatural, { key: 'activity', dir: 'desc' })
+  // The same two column sets the Sessions list offers, and the same remembered choice.
+  const [preset, setPreset] = useState<'cost' | 'tokens'>(() => {
+    try {
+      return window.localStorage.getItem('probez.columns') === 'tokens' ? 'tokens' : 'cost'
+    } catch {
+      return 'cost'
+    }
+  })
+  const choose = (next: 'cost' | 'tokens'): void => {
+    setPreset(next)
+    try {
+      window.localStorage.setItem('probez.columns', next)
+    } catch {
+      // Remembering is a convenience; without storage the choice lasts the page.
+    }
+  }
+  const spent = data === null ? 0 : data.projects.reduce((sum, project) => sum + project.cost, 0)
+  // A row opens the drawer; the project's name is the link that leaves the list.
+  const [selected, setSelected] = useState<string | null>(null)
+  const close = useCallback(() => setSelected(null), [])
+  const chosen = selected === null ? null : (data?.projects.find((project) => project.slug === selected) ?? null)
 
   return (
     <>
-      <Chrome crumbs={[]} search={{ source }} />
+      <Chrome crumbs={[{ label: 'Investigate' }, { label: 'Projects' }]} search={{ source }} scope="agent" />
       <main className="page">
         {error !== null && data === null ? (
           <Problem message={error} />
@@ -95,12 +129,25 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
           <div className={loading ? 'rereading' : undefined}>
             <div className="head">
               <h1>Projects</h1>
-              <span className="muted mono">{data.data_dir}</span>
-              <span className="spacer" style={{ flex: 1 }} />
-              <Import onImported={reread} />
+              <span className="muted mono clip">{data.data_dir}</span>
+            </div>
+            <div className="fbar" style={{ justifyContent: 'space-between' }}>
+              <OpenInExplorer scope={{ range: 'all', source, project: null }} entity="projects" />
+              <div className="toggle" role="group" aria-label="Columns">
+                <span className="muted" style={{ marginRight: 6 }}>
+                  Columns
+                </span>
+                <button type="button" aria-pressed={preset === 'cost'} onClick={() => choose('cost')}>
+                  Cost
+                </button>
+                <button type="button" aria-pressed={preset === 'tokens'} onClick={() => choose('tokens')}>
+                  Token detail
+                </button>
+              </div>
             </div>
             <Facts
               items={[
+                ['spent', money(spent) === '·' ? '$0' : money(spent)],
                 ['projects', count(data.projects.length)],
                 ['sessions', count(data.projects.reduce((n, p) => n + p.sessions, 0))],
                 ['rounds', count(data.projects.reduce((n, p) => n + p.rounds, 0))],
@@ -113,7 +160,27 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
                 <table>
                   <thead>
                     <tr>
-                      <SortHead label="Project" head="name" sorted={sorted} onSort={orderBy} />
+                      <SortHead label="Project" head="name" sorted={sorted} onSort={orderBy} style={{ minWidth: 200 }} />
+                      <SortHead
+                        label="Cost"
+                        head="cost"
+                        sorted={sorted}
+                        onSort={orderBy}
+                        className="r"
+                        title="What every round of the project cost, at the rates in Settings"
+                      />
+                      {preset === 'cost' ? (
+                        <>
+                          <SortHead label="Share" head="share" sorted={sorted} onSort={orderBy} className="r" title="Share of the spend across every project listed" />
+                          <SortHead label="Sessions" head="sessions" sorted={sorted} onSort={orderBy} className="r" />
+                          <SortHead label="Rounds" head="rounds" sorted={sorted} onSort={orderBy} className="r" />
+                          <SortHead label="Input" head="input" sorted={sorted} onSort={orderBy} className="r" title="All input tokens, cached and not" />
+                          <SortHead label="Cache" head="cache" sorted={sorted} onSort={orderBy} className="r" title="Share of input served from the cache" />
+                          <SortHead label="Output" head="out_tokens" sorted={sorted} onSort={orderBy} className="r" />
+                        </>
+                      ) : (
+                        <TokenHeaders sorted={sorted} onSort={orderBy} />
+                      )}
                       <SortHead
                         label="Work"
                         head="work"
@@ -128,10 +195,6 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
                           </>
                         }
                       />
-                      <SortHead label="Sessions" head="sessions" sorted={sorted} onSort={orderBy} className="r" />
-                      <SortHead label="Tasks" head="tasks" sorted={sorted} onSort={orderBy} className="r" />
-                      <SortHead label="Rounds" head="rounds" sorted={sorted} onSort={orderBy} className="r" />
-                      <TokenHeaders sorted={sorted} onSort={orderBy} />
                       {/* Two dates, and they answer different questions. One is when the work
                           happened; the other is when probez last went and looked, which is a fact
                           about probez rather than about the work. Both are here because "which of
@@ -160,8 +223,17 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
                     {ordered(data.projects, sorted, projectValue).map((project) => (
                       <tr
                         key={project.slug}
-                        className="row"
-                        onClick={() => go(href.project(project.slug, source))}
+                        tabIndex={0}
+                        className={selected === project.slug ? 'row sel' : 'row'}
+                        aria-selected={selected === project.slug}
+                        onClick={() => setSelected(project.slug)}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setSelected(project.slug)
+                          }
+                        }}
                       >
                         <td>
                           <a {...linkProps(href.project(project.slug, source))}>
@@ -183,10 +255,41 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
                             </span>
                           )}
                           <SourceMarks sources={project.sources} />
-                          <div className="muted mono clip" style={{ fontSize: 11 }}>
+                          <div className="muted mono clip" style={{ fontSize: 11, maxWidth: 320 }}>
                             {project.path ?? project.key}
                           </div>
                         </td>
+                        <td
+                          className="r num"
+                          title={
+                            project.unpriced === 0
+                              ? undefined
+                              : `${count(project.unpriced)} of ${count(project.rounds)} rounds have no rate for their model and are outside this`
+                          }
+                        >
+                          {project.unpriced === project.rounds ? (
+                            <span className="muted">—</span>
+                          ) : (
+                            <strong>
+                              {money(project.cost)}
+                              {project.unpriced > 0 ? <span className="muted">+</span> : null}
+                            </strong>
+                          )}
+                        </td>
+                        {preset === 'cost' ? (
+                          <>
+                            <td className="r num dim">{spent > 0 && project.cost > 0 ? percent(project.cost / spent, 1) : '—'}</td>
+                            <td className="r num">{project.sessions}</td>
+                            <td className="r num">{count(project.rounds)}</td>
+                            <td className="r num dim">{tokens(project.in_tokens)}</td>
+                            <td className="r num dim">
+                              {project.in_tokens > 0 ? percent(project.in_cache_read / project.in_tokens) : '—'}
+                            </td>
+                            <td className="r num dim">{tokens(project.out_tokens)}</td>
+                          </>
+                        ) : (
+                          <TokenCells of={project} />
+                        )}
                         <td>
                           <MixBar mix={project.mix} />
                           {/* The bar is the mix by rounds and the share under it is of money, the
@@ -227,10 +330,6 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
                             )}
                           </div>
                         </td>
-                        <td className="r num">{project.sessions}</td>
-                        <td className="r num">{project.tasks}</td>
-                        <td className="r num">{count(project.rounds)}</td>
-                        <TokenCells of={project} />
                         <td className="r muted nowrap">{ago(project.last_ts)}</td>
                         <td className="r muted nowrap" title={updatedAt(project) ?? undefined}>
                           {ago(updatedAt(project))}
@@ -244,7 +343,10 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
                             compact
                             onSynced={reread}
                             onRenamed={reread}
-                            onRemoved={reread}
+                            onRemoved={() => {
+                              forgetProjectList()
+                              reread()
+                            }}
                           />
                         </td>
                       </tr>
@@ -257,7 +359,7 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
                   {source === null ? (
                     <>
                       Nothing here yet. Run <span className="mono">probez collect</span> in a project
-                      you work in, then reload — or <strong>Import</strong> a project someone sent you.
+                      you work in, then reload — or <a {...linkProps('/import')}>import</a> a project someone sent you.
                     </>
                   ) : (
                     <>
@@ -269,6 +371,9 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
                 </p>
               ) : null}
             </section>
+            {chosen === null ? null : (
+              <ProjectDrawer key={chosen.slug} project={chosen} spent={spent} source={source} onClose={close} />
+            )}
           </div>
         )}
       </main>

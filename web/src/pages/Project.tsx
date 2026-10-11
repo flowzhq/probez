@@ -91,11 +91,36 @@ export function Project({
   const [tab, setTab] = useState<'work' | 'tools' | 'trends'>('work')
   const [list, setList] = useState<'sessions' | 'trails' | 'questions'>('sessions')
   const [sorted, sortBy] = useSort<SessionSort>(sessionNatural)
-  const sessions = data === null ? [] : ordered(data.sessions, sorted, sessionValue)
+  // A subagent sits under the session that handed it off, closed until asked for, so the list
+  // reads as the sessions someone opened. One whose parent is not listed here stays at the top
+  // level, where it can still be found.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set())
+  const listed = new Set(data?.sessions.map((session) => session.session) ?? [])
+  const children = new Map<string, ViewSession[]>()
+  for (const session of data?.sessions ?? []) {
+    if (session.parent === null || !listed.has(session.parent)) continue
+    const siblings = children.get(session.parent)
+    if (siblings === undefined) children.set(session.parent, [session])
+    else siblings.push(session)
+  }
+  const sessions = ordered(
+    (data?.sessions ?? []).filter((session) => session.parent === null || !listed.has(session.parent)),
+    sorted,
+    sessionValue,
+  )
+  const toggle = (session: string): void =>
+    setOpened((was) => {
+      const next = new Set(was)
+      if (!next.delete(session)) next.add(session)
+      return next
+    })
 
   return (
     <>
-      <Chrome crumbs={[{ label: data?.project.project ?? slug }]} search={{ slug, source }} />
+      <Chrome
+        crumbs={[{ label: 'Projects', to: href.projects(source) }, { label: data?.project.project ?? slug }]}
+        search={{ slug, source }}
+      />
       <main className="page">
         {error !== null && data === null ? (
           <Problem message={error} />
@@ -280,15 +305,51 @@ export function Project({
                   </tr>
                 </thead>
                 <tbody>
-                  {sessions.map((session) => (
+                  {sessions
+                    .flatMap((session) => {
+                      const subs = children.get(session.session) ?? []
+                      const open = opened.has(session.session)
+                      return [
+                        { session, depth: 0, subs, open },
+                        ...(open ? ordered(subs, sorted, sessionValue) : []).map((sub) => ({
+                          session: sub,
+                          depth: 1,
+                          subs: [] as ViewSession[],
+                          open: false,
+                        })),
+                      ]
+                    })
+                    .map(({ session, depth, subs, open }) => (
                     <tr
                       key={session.session}
-                      className="row"
+                      className={depth > 0 ? 'row child' : 'row'}
                       onClick={() => go(href.session(slug, session.session, source))}
                     >
                       <td className="mono">
-                        <a {...linkProps(href.session(slug, session.session, source))}>
-                          {shortId(session.session)}
+                        {subs.length > 0 ? (
+                          <button
+                            type="button"
+                            className="expander"
+                            aria-expanded={open}
+                            title={`${open ? 'Hide' : 'Show'} the ${subs.length === 1 ? 'subagent' : `${subs.length} subagents`} this session handed work to`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              toggle(session.session)
+                            }}
+                          >
+                            <span className="chevron" aria-hidden="true" />
+                            {subs.length}
+                          </button>
+                        ) : (
+                          <span className="expander-gap" aria-hidden="true" />
+                        )}
+                        <a
+                          {...linkProps(href.session(slug, session.session, source))}
+                          title={depth > 0 ? session.session : undefined}
+                        >
+                          {/* Under its parent, the parent's half of the id says nothing the row
+                              above does not. */}
+                          {depth > 0 ? shortId(session.session).split('/').at(-1) : shortId(session.session)}
                         </a>
                         {/* The id already carries the session it ran under, but says so only to
                             someone who knows the shape. The tag is what makes the row readable

@@ -74,7 +74,12 @@ export function Search({
   const { data, error, loading } = useData(
     // `entity` is only sent when the URL named one. Sending a default would override an `in:` the
     // query itself carries, which is how a linked query would lose its own grouping.
-    () => api.search(q, { slug, ...(entity === null ? {} : { entity }), limit: 200 }),
+    // An empty box is the page explaining itself, which is where the menu's Explorer lands; there
+    // is nothing to ask the server for, and it would refuse an empty query anyway.
+    () =>
+      q.trim() === ''
+        ? Promise.resolve(null)
+        : api.search(q, { slug, ...(entity === null ? {} : { entity }), limit: 200 }),
     [q, entity, slug],
   )
 
@@ -102,8 +107,12 @@ export function Search({
 
   const crumbs =
     slug === null
-      ? [{ label: 'Search' }]
-      : [{ label: data?.hits[0]?.project ?? slug, to: href.project(slug) }, { label: 'Search' }]
+      ? [{ label: 'Investigate' }, { label: 'Explorer' }]
+      : [
+          { label: 'Investigate' },
+          { label: data?.hits[0]?.project ?? slug, to: href.project(slug) },
+          { label: 'Explorer' },
+        ]
 
   return (
     <>

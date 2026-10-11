@@ -10,6 +10,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ### Added
 
+- **The view has a menu, split into Insights and Investigate.** People open probez to ask what their
+  agents cost and why one session cost so much, so the left menu is those two questions. Insights has
+  four new store-wide pages — **Overview** (spend, input, cache share and cost per task against the
+  period before; spend by day and by model; where the work went; the top findings), **Spend** (cost
+  over time split by project, model, agent or kind of work, ranked underneath), **Tokens & cache**
+  (fresh input, what it cost, and what the same tokens would have cost as cache reads) and
+  **Context** (peak occupancy by day, the tasks over the line, every compaction). Investigate holds
+  **Findings**, **Projects**, and **Sessions**, **Questions** and **Trails** across the whole store
+  rather than one project at a time, plus **Explorer**, the search page. Import, Settings and when the
+  store was last synced sit at the foot. On a session or a task the menu folds to its icons.
+- **A scope bar on every page**: a time range, an agent and a project, in the URL, so a link opens on
+  what you were looking at. Every chart and list under it reads the same rounds.
+- **Every number opens a list.** A day, a model, a kind of work, a Spend row or a finding opens the
+  matching list filtered to it, with the filter as a chip you can remove.
+- **Findings**, ranked by what they cost: sessions over 40% reconstruction by cost, tasks whose
+  context went over 80% of the window, questions asked again, trails that changed nothing, failed
+  tool calls, and rounds on a model with no rate. Severity is a finding's share of the spend in
+  scope. The two thresholds are set in **Settings › Findings** and kept in `findings.json` beside the
+  rates; each finding names the line it used.
+- **A drawer on the Sessions and Projects lists**: a session row opens its facts, a thumbnail of its
+  trace, its work as a share of cost and its five costliest questions; a project row opens its
+  spend by day, its work by cost, its models and its costliest sessions. Neither leaves the list.
+- **Open in Explorer** on Sessions, Questions, Trails and Projects, and in the project drawer: the
+  list's scope and filters as the query that asks the same thing (`since:`, `source:`, `model:`,
+  `category:`, `is:error`). A filter the language has no field for — a share of a session's cost,
+  how full a context got, a re-asked question, how a trail ended — is named in the button's title
+  rather than dropped silently, and the button is marked ≈.
+- A project's path shows under its name in the projects list again; it had been clipped to nothing.
+- **A session's subagents fold under it** in every sessions table, closed until opened. Cursor's
+  `<uuid>/<uuid>` session ids are matched to their subagents too.
+- `GET /api/insights`, `/api/sessions`, `/api/questions`, `/api/trails` and `/api/findings`, each
+  taking `range`, `source` and `project`; `GET`/`POST /api/thresholds`. Projects now carry their cost,
+  and a session its costliest questions.
+
 - **Cline as an eighth source.** `probez collect` reads [Cline](https://cline.bot) in both of the
   formats it writes. Its CLI and the current VS Code extension keep **SDK sessions** under
   `~/.cline/data/sessions` (or `$CLINE_DATA_DIR`, or `$CLINE_DIR/data`): a manifest naming the
@@ -161,6 +195,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
   generation has; a Visual Studio round measures against Copilot's lower cap instead.
 
 ### Changed
+
+- The view opens on **Overview**. The projects list is at `/projects`, and `/search` moved to
+  `/explorer` (the old address redirects).
+- Tables lead with cost: Projects and Sessions open on Cost, Share, Rounds, Input, Cache and Output,
+  with the five token columns behind a **Token detail** preset.
+- The per-page Source control is the scope bar's Agent chip. On Explorer it still writes `source:`
+  into the query.
+- Settings is five tabs — Pricing, Commands, Findings, Reader, Data — each its own address; the
+  danger zone is under Data.
 
 - **A model named by the provider serving it is priced as the model.** A router spells a model
   with its provider in front — OpenRouter's `anthropic/claude-sonnet-4.5`, which Goose and OpenCode

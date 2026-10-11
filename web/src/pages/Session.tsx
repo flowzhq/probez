@@ -86,6 +86,7 @@ export function Session({
     <>
       <Chrome
         crumbs={[
+          { label: 'Sessions', to: '/sessions' },
           { label: data?.project.project ?? slug, to: href.project(slug, source) },
           { label: `Session ${shortId(session)}` },
         ]}

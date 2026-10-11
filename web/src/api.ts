@@ -298,6 +298,8 @@ export interface ViewSession extends Totals {
   session: string
   /** "sub" when a subagent ran this session, matching the field a round carries. */
   agent: 'main' | 'sub'
+  /** The session that handed this one off, or null for one nobody delegated. */
+  parent: string | null
   /** Which product produced this session. Mirrors `SessionRow.source`. */
   source: 'claude-code' | 'cursor' | 'codex' | 'copilot' | 'pi' | 'opencode' | 'goose' | 'cline' | 'unknown'
   rounds: number
@@ -462,6 +464,10 @@ export interface ProjectsPayload {
     StoredProject & {
       work: ProjectWork | null
       mix: Array<{ category: string; label: string; share: number }>
+      /** What every round of it cost, at the rates in Settings. */
+      cost: number
+      /** Rounds whose model has no rate, which are outside `cost`. */
+      unpriced: number
     }
   >
 }
@@ -522,6 +528,18 @@ export interface SessionPayload {
   analysis: Analysis
   tasks: ViewTask[]
   trace: Trace
+  /** Its five costliest questions. Mirrors `CostlyQuestion` in src/viewdata.ts. */
+  questions: CostlyQuestion[]
+}
+
+export interface CostlyQuestion {
+  task: number
+  at: number
+  ref: string
+  terms: string[]
+  calls: number
+  repeats: number
+  cost: number
 }
 
 export interface TaskPayload {
@@ -899,7 +917,198 @@ export interface FacetPayload {
   scanned: { projects: number; indexed: number }
 }
 
+/* Store-wide: the payloads under the scope bar. Mirror src/insights.ts. ---------------------- */
+
+export type Range = '7d' | '30d' | '90d' | 'all'
+
+export interface ScopeShown {
+  range: Range
+  source: string | null
+  project: string | null
+  from: string | null
+  to: string | null
+}
+
+export interface Period {
+  cost: number
+  unpriced: number
+  rounds: number
+  tasks: number
+  sessions: number
+  in_tokens: number
+  in_cache_read: number
+  fresh: number
+  out_tokens: number
+}
+
+export type SplitBy = 'project' | 'model' | 'source' | 'category'
+
+export interface SplitRow {
+  key: string
+  label: string
+  cost: number
+  rounds: number
+  sessions: number
+  in_tokens: number
+  in_cache_read: number
+  out_tokens: number
+}
+
+export interface SpendDay {
+  day: string
+  cost: number
+  rounds: number
+  by: Record<SplitBy, Record<string, number>>
+}
+
+export interface CacheSummary {
+  reused: number
+  fresh: number
+  fresh_cost: number
+  fresh_at_read: number
+  reused_cost: number
+  by_project: Array<{ slug: string; project: string; fresh: number; reused: number; fresh_cost: number }>
+  days: ReusedFreshDay[]
+}
+
+export interface ContextTask {
+  slug: string
+  project: string
+  session: string
+  task: number
+  round: number
+  first_ts: string | null
+  model: string | null
+  peak_tokens: number
+  window: number
+  share: number
+  compactions: number
+  cost: number
+}
+
+export interface CompactionRow {
+  slug: string
+  project: string
+  session: string
+  task: number
+  round: number
+  ts: string | null
+  trigger: string | null
+  pre_tokens: number | null
+  post_tokens: number | null
+}
+
+export interface InsightsPayload {
+  scope: ScopeShown
+  totals: Period
+  previous: Period | null
+  days: SpendDay[]
+  splits: Record<SplitBy, SplitRow[]>
+  cache: CacheSummary
+  context: {
+    threshold: number
+    days: PeakContextDay[]
+    over: ContextTask[]
+    measured: number
+    compactions: CompactionRow[]
+  }
+  latest: string | null
+}
+
+export interface Thresholds {
+  reconstruction: number
+  context: number
+}
+
+export interface StoreSession extends ViewSession {
+  slug: string
+  project: string
+  cache_share: number | null
+  cost_by_category: Record<string, number>
+}
+
+export interface SessionsPayload {
+  scope: ScopeShown
+  sessions: StoreSession[]
+  projects: Array<{ slug: string; project: string }>
+  thresholds: Thresholds
+}
+
+export interface StoreQuestion extends Question {
+  slug: string
+  project: string
+  cost: number
+}
+
+export interface QuestionsListPayload {
+  scope: ScopeShown
+  questions: StoreQuestion[]
+  total: number
+  reasked: number
+}
+
+export interface StoreTrail extends Trail {
+  slug: string
+  project: string
+  cost: number
+}
+
+export interface TrailsListPayload {
+  scope: ScopeShown
+  trails: StoreTrail[]
+  total: number
+  abandoned: number
+}
+
+export type FindingId = 'reconstruction' | 'context' | 'reasked' | 'abandoned' | 'errors' | 'unpriced'
+
+export interface Finding {
+  id: FindingId
+  severity: 'high' | 'med' | 'low' | 'info'
+  count: number
+  unit: string
+  sessions: number
+  cost: number | null
+  threshold: number | null
+  detail: string
+}
+
+export interface FindingsPayload {
+  scope: ScopeShown
+  findings: Finding[]
+  thresholds: Thresholds
+  total: number
+  synced_at: string | null
+}
+
+export interface ThresholdsPayload {
+  thresholds: Thresholds
+  defaults: Thresholds
+  file: string
+}
+
+/** The scope bar's three settings as a query string, without the `?`. Empty is the default scope. */
+export interface ScopeQuery {
+  range: Range
+  source: string | null
+  project: string | null
+}
+
+function scopeQuery(scope: ScopeQuery): string {
+  const query = new URLSearchParams({ range: scope.range })
+  if (scope.source !== null) query.set('source', scope.source)
+  if (scope.project !== null) query.set('project', scope.project)
+  return query.toString()
+}
+
 export const api = {
+  insights: (scope: ScopeQuery) => get<InsightsPayload>(`/insights?${scopeQuery(scope)}`),
+  sessions: (scope: ScopeQuery) => get<SessionsPayload>(`/sessions?${scopeQuery(scope)}`),
+  storeQuestions: (scope: ScopeQuery) => get<QuestionsListPayload>(`/questions?${scopeQuery(scope)}`),
+  storeTrails: (scope: ScopeQuery) => get<TrailsListPayload>(`/trails?${scopeQuery(scope)}`),
+  findings: (scope: ScopeQuery) => get<FindingsPayload>(`/findings?${scopeQuery(scope)}`),
+  thresholds: () => get<ThresholdsPayload>('/thresholds'),
+  saveThresholds: (thresholds: Thresholds) => post<ThresholdsPayload>('/thresholds', thresholds),
   sync: (slug: string) => post<SyncResult>(`/projects/${slug}/sync`),
   rename: (slug: string, name: string) =>
     post<RenameResult>(`/projects/${slug}/rename`, { name }),
