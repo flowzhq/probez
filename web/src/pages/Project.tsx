@@ -17,6 +17,7 @@ import { go, href, linkProps, withSource } from '../router'
 import type { SourceChoice } from '../router'
 import { SOURCE_LABEL } from '../source'
 import { useData } from '../useData'
+import { useDebug } from '../meta'
 import type { ReactElement } from 'react'
 
 /** Every column of the sessions table, each of which sorts. */
@@ -89,7 +90,9 @@ export function Project({
   const [read, setRead] = useState(0)
   const { data, error, loading } = useData(() => api.project(slug, source), [slug, read, source])
   const [tab, setTab] = useState<'work' | 'tools' | 'trends'>('work')
-  const [list, setList] = useState<'sessions' | 'trails' | 'questions'>('sessions')
+  const debug = useDebug()
+  const [chosen, setList] = useState<'sessions' | 'trails' | 'questions'>('sessions')
+  const list = debug ? chosen : 'sessions'
   const [sorted, sortBy] = useSort<SessionSort>(sessionNatural)
   // A subagent sits under the session that handed it off, closed until asked for, so the list
   // reads as the sessions someone opened. One whose parent is not listed here stays at the top
@@ -244,17 +247,20 @@ export function Project({
                   ) : null}
                 </h2>
                 <span className="spacer" style={{ flex: 1 }} />
-                <div className="toggle">
-                  <button aria-pressed={list === 'sessions'} onClick={() => setList('sessions')}>
-                    sessions
-                  </button>
-                  <button aria-pressed={list === 'trails'} onClick={() => setList('trails')}>
-                    trails
-                  </button>
-                  <button aria-pressed={list === 'questions'} onClick={() => setList('questions')}>
-                    questions
-                  </button>
-                </div>
+                {/* Trails and questions are read under `probez view --debug` only. */}
+                {debug ? (
+                  <div className="toggle">
+                    <button aria-pressed={list === 'sessions'} onClick={() => setList('sessions')}>
+                      sessions
+                    </button>
+                    <button aria-pressed={list === 'trails'} onClick={() => setList('trails')}>
+                      trails
+                    </button>
+                    <button aria-pressed={list === 'questions'} onClick={() => setList('questions')}>
+                      questions
+                    </button>
+                  </div>
+                ) : null}
               </div>
               {list === 'questions' ? (
                 <Questions slug={slug} read={read} source={source} />

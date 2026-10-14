@@ -18,6 +18,7 @@ import { duration, money, percent, shortCommit, shortId, tokens, when } from '..
 import { go, href, linkProps } from '../router'
 import type { SourceChoice } from '../router'
 import { useData } from '../useData'
+import { useDebug } from '../meta'
 import type { Question, Reading } from '../api'
 import type { ReactElement } from 'react'
 
@@ -55,6 +56,7 @@ export function Task({
   source?: SourceChoice | null
 }): ReactElement {
   const { data, error } = useData(() => api.task(slug, session, task), [slug, session, task])
+  const debug = useDebug()
 
   /**
    * The rounds of this task a query matched, for lighting the trace.
@@ -269,6 +271,8 @@ export function Task({
               )}
             </section>
 
+            {/* Questions are read under `probez view --debug` only. See src/debug.ts. */}
+            {debug ? (
             <section>
               <div className="head">
                 <h2>
@@ -323,6 +327,7 @@ export function Task({
                 />
               )}
             </section>
+            ) : null}
           </>
         )}
       </main>

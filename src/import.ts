@@ -187,6 +187,8 @@ export function normalizeRound(value: unknown): Round | null {
     // Only ever true. A round that does not say it is darkened is not, and an absent field is how
     // every round written before this existed says so.
     ...(r.darkened === true ? { darkened: true as const } : {}),
+    // Who recorded it, kept to one printable line: it is shown in a chip and filtered on.
+    ...(cleanCommitter(r.committer) === '' ? {} : { committer: cleanCommitter(r.committer) }),
     agent: r.agent === 'sub' ? 'sub' : 'main',
     source: importedSource(r.source),
     id,
@@ -218,6 +220,20 @@ export function normalizeRound(value: unknown): Round | null {
   }
 }
 
+/** Longest name a committer is kept to. A label, like a project's name. */
+export const MAX_COMMITTER = 80
+
+/**
+ * A committer's name as it will be stored and printed: one line, nothing a terminal would obey.
+ *
+ * The one cleaning every name goes through, whether typed in Settings, guessed from git or read out
+ * of somebody's file, so the same person is the same string wherever their name came from.
+ */
+export function cleanCommitter(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  return raw.replace(CONTROL, '').replace(/\s+/g, ' ').trim().slice(0, MAX_COMMITTER)
+}
+
 function importedSource(value: unknown): RoundSource {
   if (typeof value !== 'string' || value === '') return 'unknown'
   if (isRoundSource(value)) return value
@@ -243,6 +259,8 @@ export interface Parsed {
   name: string | null
   /** The sender's own identity for it, which is what makes re-importing an update replace. */
   source: string | null
+  /** Who exported it, when the file says: a bundle names them; a bare `.jsonl` names each round. */
+  committer: string | null
   rounds: Round[]
   /** Records that were not rounds at all. */
   skipped: number
@@ -296,6 +314,7 @@ function parseBundle(text: string): Parsed {
     // `path` and `key` name the project on the sender's machine. Read for identity only: nothing
     // here ever opens them, and the store directory is derived from a hash rather than from a path.
     source: strOrNull(manifest.slug) ?? strOrNull(manifest.path) ?? strOrNull(manifest.key),
+    committer: cleanCommitter(bundle.committer) || null,
     ...collect(raw),
   }
 }
@@ -311,7 +330,7 @@ function parseLines(text: string): Parsed {
     }
   }
   if (raw.length === 0) throw new ImportError('that file has no records in it')
-  return { name: null, source: null, ...collect(raw) }
+  return { name: null, source: null, committer: null, ...collect(raw) }
 }
 
 function collect(raw: unknown[]): { rounds: Round[]; skipped: number } {

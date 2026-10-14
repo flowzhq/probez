@@ -140,7 +140,7 @@ import {
 } from './store.js'
 import type { ClearPlan, CollectResult, StoredProject, Summary } from './store.js'
 import type { Project, Round, ToolCall } from './types.js'
-import { exportProject } from './viewdata.js'
+import { BadRequest, exportProject, mergeExport, NotFound } from './viewdata.js'
 
 const COMMANDS = new Set([
   'collect',
@@ -224,7 +224,7 @@ const GLOBAL_FLAGS = new Set([
 const COMMAND_FLAGS: Record<string, string[]> = {
   collect: ['full', 'since'],
   export: ['bundle', 'darken', 'out'],
-  import: ['as'],
+  import: ['as', 'into', 'committer'],
   hook: ['install'],
   projects: [],
   sessions: ['limit', 'agent'],
@@ -242,7 +242,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   clear: ['all', 'before', 'yes'],
   tools: ['limit', 'kinds'],
   analyze: ['limit', 'session', 'task', 'by', 'split', 'unclassified', 'deep'],
-  view: ['port', 'no-open'],
+  view: ['port', 'no-open', 'debug'],
   help: [],
 }
 
@@ -425,6 +425,8 @@ The view
   probez view                  Open the local profiler in your browser
   --port <n>                   Which port to listen on (default ${DEFAULT_PORT})
   --no-open                    Print the URL instead of opening a browser
+  --debug                      Also compute and show trails and questions, which are slow on a
+                               large store and left out otherwise
   --source claude|cursor|codex|copilot|pi|opencode|goose|cline Open the project page filtered to that agent
 
   It listens on 127.0.0.1 and nothing leaves the machine. The URL carries a token that is new
@@ -447,6 +449,10 @@ Sharing
   --out <file>                 Write there instead of to stdout
   probez import <file>         Read a project someone exported, from .json or .jsonl
   --as <name>                  Store it under this name instead of the one in the file
+  --into <project>             Merge it into a project collected here instead: the same project,
+                               worked on from another machine, read as one
+  --committer <name>           Whose work it is, for a file that does not say. An export names
+                               who made it, so this is only needed for one from before it did
 
   An export carries prompts, commands and file paths unless you darken it. Read one before you
   send it, and open one you were sent the way you would any attachment. Nothing in it is ever
@@ -727,6 +733,47 @@ async function runImport(
   }
   console.log(`  → ${shorten(result.dir)}/rounds.jsonl`)
   console.log(`  probez view ${result.slug}`)
+  console.log('')
+}
+
+/**
+ * Merge another machine's export into a project collected here. See `mergeIntoProject`.
+ */
+async function runMerge(
+  dataDir: string,
+  file: string,
+  into: string,
+  committer: string | undefined,
+  json: boolean,
+): Promise<void> {
+  let text: string
+  try {
+    text = await readFile(file, 'utf8')
+  } catch {
+    fail(`cannot read ${file}`)
+  }
+  const matched = await storedMatches(dataDir, into)
+  if (matched.length === 0) fail(`nothing collected for ${into} in ${shorten(dataDir)}. Run \`probez projects\` to see what is`)
+  if (matched.length > 1) fail(`${into} matches more than one project — name one of ${matched.map((p) => p.slug).join(', ')}`)
+
+  let result
+  try {
+    result = await mergeExport(dataDir, matched[0]!.slug!, { text, committer: committer ?? null })
+  } catch (error) {
+    if (error instanceof BadRequest || error instanceof NotFound) fail(error.message)
+    throw error
+  }
+  if (json) {
+    console.log(JSON.stringify(result, null, 2))
+    return
+  }
+  console.log('')
+  console.log(`  merged into  ${result.project}`)
+  console.log('')
+  console.log(`  ${pad('added', 11)}${pad(String(result.added), 10)}${pad('updated', 9)}${pad(String(result.updated), 9)}already here  ${result.kept}`)
+  for (const one of result.committers) console.log(`  ${pad('from', 11)}${one.name} · ${one.rounds} rounds`)
+  if (result.skipped > 0) console.log(`  ${pad('skipped', 11)}${result.skipped} records that were not rounds`)
+  console.log(`  ${pad('now', 11)}${result.rounds} rounds in ${result.sessions} sessions`)
   console.log('')
 }
 
@@ -2307,7 +2354,7 @@ async function runView(
   gooseDir: string,
   clineDirs: string[],
   target: string | undefined,
-  options: { port?: string; open: boolean; json: boolean; source?: SourceFilter },
+  options: { port?: string; open: boolean; json: boolean; debug: boolean; source?: SourceFilter },
 ): Promise<void> {
   const port = options.port === undefined ? undefined : asCount(options.port, 'port')
   if (port !== undefined && port > 65535) fail(`--port takes a number under 65536, got ${port}`)
@@ -2348,6 +2395,7 @@ async function runView(
     clineDirs,
     port,
     pinned: options.port !== undefined,
+    debug: options.debug,
   })
   // `--source` here is a display filter on the page that opens. Sync still collects every agent.
   const alias = options.source === undefined ? null : storeSourceAlias(options.source)
@@ -2363,6 +2411,7 @@ async function runView(
     console.log('')
     console.log(`  probez view  ${url}`)
     console.log(`  serving ${count} project${count === 1 ? '' : 's'} from ${shorten(dataDir)}`)
+    if (options.debug) console.log('  --debug: trails and questions are computed and shown')
     console.log('  ctrl-c to stop')
     console.log('')
   }
@@ -2439,6 +2488,9 @@ async function main(): Promise<void> {
         out: { type: 'string' },
         install: { type: 'boolean', default: false },
         'no-open': { type: 'boolean', default: false },
+        debug: { type: 'boolean', default: false },
+        into: { type: 'string' },
+        committer: { type: 'string' },
         version: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
@@ -2538,6 +2590,11 @@ async function main(): Promise<void> {
   // Import reads a file and writes the store, and never looks at the agent's directory at all.
   if (command === 'import') {
     if (target === undefined) fail('probez import needs a file: `probez import their-project.json`')
+    if (values.into !== undefined) {
+      await runMerge(dataDir, target, values.into, values.committer, values.json === true)
+      return
+    }
+    if (values.committer !== undefined) fail('--committer names whose work a merge is, so it goes with --into')
     await runImport(dataDir, target, values.as, values.json === true)
     return
   }
@@ -2584,6 +2641,7 @@ async function main(): Promise<void> {
       port: values.port,
       open: values['no-open'] !== true,
       json: values.json,
+      debug: values.debug === true,
       source,
     })
     return

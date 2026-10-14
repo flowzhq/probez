@@ -16,6 +16,8 @@
 import { roundSourceOf } from './agents/paths.js'
 import { categoryInfo, isCategory } from './classify.js'
 import { failed } from './errors.js'
+import { committerOf, readCommitter } from './identity.js'
+import { debugOn } from './debug.js'
 import { DEFAULT_THRESHOLDS, findingsFile, readThresholds, thresholdsFrom, writeThresholds } from './findings.js'
 import type { Thresholds } from './findings.js'
 import {
@@ -50,6 +52,8 @@ export interface Scope {
   source: PageSource | null
   /** One project's slug, or null for the whole store. */
   project: string | null
+  /** Whose work: a name rounds were recorded under, or null for everyone's. See `identity.ts`. */
+  committer: string | null
   /** The instant the range ends at. The present, except under test. */
   now: number
 }
@@ -70,10 +74,12 @@ export function scopeOf(params: URLSearchParams, now = Date.now()): Scope {
     throw new BadRequest(`range must be one of ${RANGES.join(', ')}, got "${range}"`)
   }
   const project = params.get('project')
+  const committer = params.get('committer')
   return {
     range: range as Range,
     source: pageSourceOf(params.get('source')),
     project: project === null || project === '' ? null : project,
+    committer: committer === null || committer.trim() === '' ? null : committer.trim(),
     now,
   }
 }
@@ -83,6 +89,7 @@ export interface ScopeShown {
   range: Range
   source: PageSource | null
   project: string | null
+  committer: string | null
   /** First day in range, `YYYY-MM-DD`, or null for all time. */
   from: string | null
   /** Last day in range. For all time, the last day anything ran. */
@@ -144,14 +151,17 @@ interface Scoped {
  */
 async function gather(dataDir: string, scope: Scope): Promise<Scoped[]> {
   const stored = await listStored(dataDir)
+  const local = scope.committer === null ? '' : await readCommitter(dataDir)
   const window = windowOf(scope)
   const before = previousOf(scope)
   const out: Scoped[] = []
   for (const project of stored) {
     if (scope.project !== null && project.slug !== scope.project) continue
     const collected = await roundsOf(project.dir)
-    const all = scope.source === null ? collected : filterRounds(collected, { source: scope.source })
-    if (scope.source !== null && all.length === 0) continue
+    const bySource = scope.source === null ? collected : filterRounds(collected, { source: scope.source })
+    const all =
+      scope.committer === null ? bySource : bySource.filter((round) => committerOf(round, local) === scope.committer)
+    if ((scope.source !== null || scope.committer !== null) && all.length === 0) continue
     out.push({ project, all, rounds: within(all, window), previous: within(all, before) })
   }
   if (scope.project !== null && out.length === 0 && !stored.some((one) => one.slug === scope.project)) {
@@ -175,6 +185,7 @@ function shownScope(scope: Scope, projects: Scoped[]): ScopeShown {
     range: scope.range,
     source: scope.source,
     project: scope.project,
+    committer: scope.committer,
     from: window === null ? (first === null ? null : first.slice(0, 10)) : dayOf(window.start),
     to: window === null ? (last === null ? null : last.slice(0, 10)) : dayOf(window.end - DAY),
   }
@@ -961,7 +972,9 @@ export async function findingsPayload(dataDir: string, scope: Scope): Promise<Fi
   let abandoned = 0
   let abandonedCost = 0
   const abandonedSessions = new Set<string>()
-  for (const one of projects) {
+  // Both read every call, and trails every result body too, which made this the slowest page in
+  // the view; so the two findings drawn from them are found under `--debug` only. See `debug.ts`.
+  for (const one of debugOn() ? projects : []) {
     if (one.rounds.length === 0) continue
     const costs = roundIndex(one.rounds, pricing)
     for (const question of questionsFor(one)) {

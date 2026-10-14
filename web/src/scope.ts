@@ -19,6 +19,8 @@ export interface Scope {
   range: Range
   source: SourceChoice | null
   project: string | null
+  /** Whose work, by the name it was recorded under; null for everyone's. Offered once a merge brings a second name. */
+  committer: string | null
 }
 
 export const RANGES: Range[] = ['7d', '30d', '90d', 'all']
@@ -53,10 +55,12 @@ function asSource(value: string | null): SourceChoice | null {
 export function readScope(search: string = window.location.search): Scope {
   const query = new URLSearchParams(search)
   const project = query.get('project')
+  const committer = query.get('committer')
   return {
     range: asRange(query.get('range')),
     source: asSource(query.get('source')),
     project: project === null || project === '' ? null : project,
+    committer: committer === null || committer === '' ? null : committer,
   }
 }
 
@@ -68,6 +72,8 @@ function writeScope(query: URLSearchParams, scope: Scope): void {
   else query.set('source', scope.source)
   if (scope.project === null) query.delete('project')
   else query.set('project', scope.project)
+  if (scope.committer === null) query.delete('committer')
+  else query.set('committer', scope.committer)
 }
 
 /**
@@ -96,7 +102,10 @@ export function useScope(): Scope {
     const update = (): void => {
       setScope((was) => {
         const now = readScope()
-        return was.range === now.range && was.source === now.source && was.project === now.project
+        return was.range === now.range &&
+          was.source === now.source &&
+          was.project === now.project &&
+          was.committer === now.committer
           ? was
           : now
       })

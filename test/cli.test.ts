@@ -1877,3 +1877,41 @@ test('`collect --since` reads only what the agent wrote inside the window', () =
   assert.equal(wide.status, 0)
   assert.equal(JSON.parse(read(env, ['sessions', '--json']).stdout).length, 2)
 })
+
+test('import --into merges another machine\'s export into a project, named for who made it', () => {
+  const store = realpathSync(mkdtempSync(join(tmpdir(), 'probez-cli-merge-')))
+  const line = (session: string, id: string, extra: Record<string, unknown> = {}): string =>
+    JSON.stringify({
+      session,
+      id,
+      round: 0,
+      task: 1,
+      source: 'claude-code',
+      ts: '2026-08-01T10:00:00.000Z',
+      model: 'claude-opus-5',
+      in_uncached: 100,
+      in_cache_write: 0,
+      in_cache_read: 900,
+      out_tokens: 40,
+      ...extra,
+    })
+  const base = join(store, 'app.jsonl')
+  writeFileSync(base, line('s1', 'm1') + '\n')
+  assert.equal(run(['import', base, '--data-dir', store]).status, 0)
+
+  const theirs = join(store, 'theirs.jsonl')
+  writeFileSync(theirs, line('s9', 'x1') + '\n' + line('s9', 'x2') + '\n')
+  // A file that does not say whose it is is refused until someone says.
+  const unnamed = run(['import', theirs, '--into', 'app', '--data-dir', store])
+  assert.notEqual(unnamed.status, 0)
+  assert.match(unnamed.stderr, /whose work/)
+
+  const merged = run(['import', theirs, '--into', 'app', '--committer', 'Dana', '--data-dir', store, '--json'])
+  assert.equal(merged.status, 0, merged.stderr)
+  const result = JSON.parse(merged.stdout) as { added: number; rounds: number; committers: Array<{ name: string }> }
+  assert.equal(result.added, 2)
+  assert.equal(result.rounds, 3)
+  assert.deepEqual(result.committers.map((one) => one.name), ['Dana'])
+
+  assert.match(run(['import', theirs, '--committer', 'Dana', '--data-dir', store]).stderr, /--into/)
+})

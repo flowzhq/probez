@@ -63,7 +63,7 @@ Four constraints are not up for negotiation in a PR, because they are the produc
    There is one place probez starts a program *that could reach a network*, and it is named here so
    it stays a decision rather than a precedent: `src/reader.ts`. (Two others start one that cannot:
    `src/open.ts` hands a loopback URL to the desktop's opener, and `src/git.ts` runs `git log` in a
-   project directory. Both are named under rule 3, and neither can carry anything off the machine.)
+   project directory and `git config --get user.name` for the name exports are signed with. Both are named under rule 3, and neither can carry anything off the machine.)
    **One** thing calls the reader, and it is named below, because the number is the point — a
    list of callers that grows without anyone noticing is how a fence becomes a suggestion. Adding a
    second means editing this paragraph and arguing for it.

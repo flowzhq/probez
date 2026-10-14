@@ -20,7 +20,7 @@ import { EmptyRange, projectNameOf, scopeLine } from './Overview'
  */
 export function TokensCache(): ReactElement {
   const scope = useScope()
-  const { data, error, loading } = useData(() => api.insights(scope), [scope.range, scope.source, scope.project])
+  const { data, error, loading } = useData(() => api.insights(scope), [scope.range, scope.source, scope.project, scope.committer])
 
   return (
     <>

@@ -35,7 +35,7 @@ export function ProjectDrawer({
   onClose: () => void
 }): ReactElement {
   // The projects list is all time, so its drawer is too.
-  const scope: Scope = { range: 'all', source, project: project.slug }
+  const scope: Scope = { range: 'all', source, project: project.slug, committer: null }
   const insights = useData(() => api.insights(scope), [project.slug, source])
   const sessions = useData(() => api.sessions(scope), [project.slug, source])
   const data = insights.data?.scope.project === project.slug ? insights.data : null

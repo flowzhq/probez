@@ -136,6 +136,9 @@ async function serving(
     clineDirs: extra.clineDirs ?? [],
     port: 0,
     pinned: true,
+    // Every route, trails and questions among them. What a run without `--debug` leaves out is
+    // tested in insights.test.ts.
+    debug: true,
   })
 }
 
@@ -834,8 +837,18 @@ test('export hands over the store\'s own bytes, and a bundle to look at', async 
     const raw = await withToken(server, `/api/projects/${slug}/export?format=jsonl`)
     assert.equal(raw.status, 200)
     assert.match(raw.headers.get('content-disposition') ?? '', /attachment; filename="/)
-    // Verbatim: the export is the contract file, not a re-serialization of it.
-    assert.equal(await raw.text(), readFileSync(join(dataDir, 'projects', slug, 'rounds.jsonl'), 'utf8'))
+    // The contract file, a round per line, with each round named for the machine that recorded it.
+    const sent = (await raw.text()).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
+    const held = readFileSync(join(dataDir, 'projects', slug, 'rounds.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    assert.equal(sent.length, held.length)
+    for (const [index, round] of sent.entries()) {
+      const { committer, ...rest } = round
+      assert.equal(typeof committer, 'string')
+      assert.deepEqual(rest, held[index])
+    }
 
     const bundle = await body(withToken(server, `/api/projects/${slug}/export?format=json`))
     assert.equal(bundle.rounds.length, 5)

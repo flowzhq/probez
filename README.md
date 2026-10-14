@@ -81,9 +81,14 @@ day and by model; the work it went on; the top findings), **Spend** (cost over t
 model, agent or kind of work, with the same split ranked underneath), **Tokens & cache** (how much
 input was fresh, what it cost, and what the same tokens would have cost as cache reads) and
 **Context** (peak occupancy by day, the tasks that went over the line, and every compaction).
-**Investigate** is the lists: **Findings**, **Projects**, **Sessions**, **Questions**, **Trails** and
-**Explorer**, the query page below. Import and Settings sit at the foot of the menu, beside when
-the store was last synced.
+**Investigate** is the lists: **Findings**, **Projects**, **Sessions** and **Explorer**, the query
+page below — and, under `probez view --debug`, **Questions** and **Trails**, which are slow to read
+on a large store and so left out otherwise. Import and Settings sit at the foot of the menu, beside
+when the store was last synced.
+
+<p align="center">
+  <img src="docs/view-overview.png" alt="probez view: the Overview, with spend against the period before, spend by day and by model, and the top findings" width="900">
+</p>
 
 <p align="center">
   <img src="docs/view-overview.png" alt="probez view: the Overview, with spend against the period before, spend by day and by model, and the top findings" width="900">
@@ -267,6 +272,13 @@ imported one does not come back at all. **Import** on the projects page reads a 
 you — which is also why the view opens on an empty store, and why a project that arrived that way is
 marked `imported` in the list, and `darkened` beside it when it came in redacted.
 
+*Merge from another computer* is for the same project worked on from two machines. Export it on one
+(either format), pick the file from the menu on the other, and its rounds join the ones collected
+there, read as one project. Every export names its rounds for whoever made it — **Settings › Data ›
+Who you are**, or git's `user.name` until you set one — so once a store holds more than one person's
+work the scope bar has a **Committer** chip, and every chart can show yours, theirs or both. Merging
+the same file again changes nothing; a newer one brings what is new.
+
 ## The CLI
 
 Everything the view shows, one table at a time. The levels nest, and every level has a name you can
@@ -298,7 +310,7 @@ project                a directory an agent was started in    its name, or its p
 | `probez collect` | Collect one project, or every project under a folder |
 | `probez hook` · `hook --install` | Record Cursor stop-hook token usage (opt-in) |
 | `probez export <project>` | Write a project out as a file to send someone, `--darken` to redact it |
-| `probez import <file>` | Read a project someone sent you |
+| `probez import <file>` | Read a project someone sent you; `--into <project>` merges it into one of yours |
 | `probez clear` | Remove a project, everything, or everything older than a window |
 
 Lists take `--limit` and always say how many rows they withheld. `rounds` filters by `--session`,

@@ -36,7 +36,7 @@ import { extractCopilotVsSession } from './extract-copilot-vs.js'
 import { extractCursorSession } from './extract-cursor.js'
 import { extractSession } from './extract.js'
 import { readHeadHistory } from './git.js'
-import { allDarkened, CONTROL } from './import.js'
+import { allDarkened, CONTROL, normalizeRound } from './import.js'
 import type { AgentSource, Project, Round, RoundSource, SessionFile } from './types.js'
 
 /**
@@ -120,6 +120,10 @@ export interface StoredProject {
   darkened_at: string | null
   /** Which agents contributed sessions. Absent on stores written before sources were recorded. */
   sources: AgentSource[]
+  /** When another machine's export was last merged in, or null when everything here was collected here. */
+  merged_at: string | null
+  /** Whose merged-in work this project holds, beside this machine's own. Empty when none. */
+  committers: string[]
 }
 
 interface Manifest {
@@ -154,6 +158,8 @@ interface Manifest {
   first_ts?: string | null
   last_ts?: string | null
   sources?: AgentSource[]
+  merged_at?: string | null
+  committers?: string[]
 }
 
 /** Longest name a project may be given. A label, not a description. */
@@ -211,6 +217,8 @@ function asStored(slug: string, dir: string, manifest: Manifest): StoredProject 
     imported_at: manifest.imported_at ?? null,
     darkened_at: manifest.darkened_at ?? null,
     sources: (manifest.sources ?? []).filter(isAgentSource),
+    merged_at: manifest.merged_at ?? null,
+    committers: (manifest.committers ?? []).filter((one) => typeof one === 'string'),
   }
 }
 
@@ -594,40 +602,11 @@ export async function mergeCursorUsageIntoProject(dir: string, dataDir: string):
 
 export async function summarize(project: Project, dataDir: string): Promise<Summary> {
   const dir = projectDir(dataDir, project)
-  const sessions = new Set<string>()
-  const tasksBySession = new Map<string, Set<number>>()
+  const tally = newTally()
   const toolCalls = new Map<string, number>()
-  let rounds = 0
-  let inTokens = 0
-  let uncached = 0
-  let cacheWrite = 0
-  let write5m = 0
-  let write1h = 0
-  let cacheRead = 0
-  let outTokens = 0
-  let first: string | null = null
-  let last: string | null = null
 
   await eachRound(join(dir, 'rounds.jsonl'), (round) => {
-    rounds += 1
-    sessions.add(round.session)
-    inTokens += round.in_tokens || 0
-    uncached += round.in_uncached || 0
-    cacheWrite += round.in_cache_write || 0
-    write5m += round.in_cache_write_5m || 0
-    write1h += round.in_cache_write_1h || 0
-    cacheRead += round.in_cache_read || 0
-    outTokens += round.out_tokens || 0
-    let tasks = tasksBySession.get(round.session)
-    if (tasks === undefined) {
-      tasks = new Set()
-      tasksBySession.set(round.session, tasks)
-    }
-    tasks.add(round.task)
-    if (typeof round.ts === 'string') {
-      if (first === null || round.ts < first) first = round.ts
-      if (last === null || round.ts > last) last = round.ts
-    }
+    countRound(tally, round)
     for (const tool of round.tools ?? []) {
       if (typeof tool.name !== 'string') continue
       toolCalls.set(tool.name, (toolCalls.get(tool.name) ?? 0) + 1)
@@ -635,26 +614,13 @@ export async function summarize(project: Project, dataDir: string): Promise<Summ
   })
 
   const manifest = await readJson<{ collected_at?: string }>(join(dir, 'manifest.json'))
-  let tasks = 0
-  for (const set of tasksBySession.values()) tasks += set.size
 
   return {
     project: project.path ? basename(project.path) : project.key,
     path: project.path,
     slug: slugFor(project),
     dir,
-    sessions: sessions.size,
-    rounds,
-    tasks,
-    in_tokens: inTokens,
-    in_uncached: uncached,
-    in_cache_write: cacheWrite,
-    in_cache_write_5m: write5m,
-    in_cache_write_1h: write1h,
-    in_cache_read: cacheRead,
-    out_tokens: outTokens,
-    first_ts: first,
-    last_ts: last,
+    ...tallied(tally),
     tools: [...toolCalls.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
@@ -914,6 +880,44 @@ export async function collectProject(
   }
 
   if (rebuild) {
+    // Rounds merged in from another machine have no session here to be re-read from, so the copy
+    // kept beside them is put back after the rest. See `mergeIntoProject`. Each goes through the
+    // same normalizing an import does, which is what brings a round of an older shape up to this
+    // one, and the copy is rewritten in that shape so the next rebuild starts from it.
+    const mergedFile = join(dir, MERGED_FILE)
+    const copyTarget = `${mergedFile}.rebuild`
+    await rm(copyTarget, { force: true })
+    let toRounds: string[] = []
+    let toCopy: string[] = []
+    let copied = 0
+    // Chained, for the reason `applyClear` gives: overlapping appends land out of order.
+    let writing: Promise<void> = Promise.resolve()
+    const flush = (): void => {
+      const rounds = toRounds.length === 0 ? null : toRounds.join('\n') + '\n'
+      const copies = toCopy.length === 0 ? null : toCopy.join('\n') + '\n'
+      toRounds = []
+      toCopy = []
+      writing = writing.then(async () => {
+        if (rounds !== null) await appendFile(target, rounds, { encoding: 'utf8', mode: FILE_MODE })
+        if (copies !== null) await appendFile(copyTarget, copies, { encoding: 'utf8', mode: FILE_MODE })
+      })
+    }
+    await eachRound(mergedFile, (stored) => {
+      const round = normalizeRound(stored)
+      if (round === null) return
+      const line = JSON.stringify(round)
+      toCopy.push(line)
+      copied += 1
+      const key = `${round.session}\u0000${round.id}`
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key)
+        toRounds.push(line)
+      }
+      if (toCopy.length >= 2000) flush()
+    })
+    flush()
+    await writing
+    if (copied > 0) await rename(copyTarget, mergedFile)
     await rename(target, roundsFile)
     // The analysis beside it was computed from rounds that no longer exist in this shape.
     await rm(join(dir, 'analysis.jsonl'), { force: true })
@@ -965,6 +969,9 @@ export async function collectProject(
         sources: (project.sources ?? [...new Set(project.sessions.map((session) => session.source))]).filter(
           isAgentSource,
         ),
+        // Collecting knows nothing of what was merged in, so it carries the record of it across.
+        merged_at: named?.merged_at ?? null,
+        committers: named?.committers ?? [],
       },
       null,
       2,
@@ -1043,34 +1050,9 @@ export async function importProject(
   // Any analysis beside it described the rounds this just replaced.
   await rm(join(dir, 'analysis.jsonl'), { force: true })
 
-  const sessions = new Set<string>()
-  const tasks = new Set<string>()
-  const agents = new Set<string>()
-  let inTokens = 0
-  let uncached = 0
-  let cacheWrite = 0
-  let write5m = 0
-  let write1h = 0
-  let cacheRead = 0
-  let outTokens = 0
-  let first: string | null = null
-  let last: string | null = null
-  for (const round of rounds) {
-    sessions.add(round.session)
-    tasks.add(`${round.session} ${round.task}`)
-    if (isAgentSource(round.source ?? '')) agents.add(round.source!)
-    inTokens += round.in_tokens || 0
-    uncached += round.in_uncached || 0
-    cacheWrite += round.in_cache_write || 0
-    write5m += round.in_cache_write_5m || 0
-    write1h += round.in_cache_write_1h || 0
-    cacheRead += round.in_cache_read || 0
-    outTokens += round.out_tokens || 0
-    if (typeof round.ts === 'string') {
-      if (first === null || round.ts < first) first = round.ts
-      if (last === null || round.ts > last) last = round.ts
-    }
-  }
+  const tally = newTally()
+  for (const round of rounds) countRound(tally, round)
+  const totals = tallied(tally)
 
   const now = new Date().toISOString()
   await writeFile(
@@ -1090,19 +1072,10 @@ export async function importProject(
         collected_at: now,
         imported_at: now,
         darkened_at: allDarkened(rounds) ? now : null,
-        sessions: sessions.size,
-        rounds: rounds.length,
-        tasks: tasks.size,
-        in_tokens: inTokens,
-        in_uncached: uncached,
-        in_cache_write: cacheWrite,
-        in_cache_write_5m: write5m,
-        in_cache_write_1h: write1h,
-        in_cache_read: cacheRead,
-        out_tokens: outTokens,
-        first_ts: first,
-        last_ts: last,
-        sources: [...agents].filter(isAgentSource),
+        ...totals,
+        sources: [...tally.sources],
+        // Who recorded it, as its rounds say, so the Committer chip can offer their names.
+        committers: [...tally.committers].sort(),
       },
       null,
       2,
@@ -1119,11 +1092,299 @@ export async function importProject(
     dir,
     project: name,
     darkened: allDarkened(rounds),
-    rounds: rounds.length,
-    sessions: sessions.size,
-    tasks: tasks.size,
+    rounds: totals.rounds,
+    sessions: totals.sessions,
+    tasks: totals.tasks,
     skipped,
     replaced,
+  }
+}
+
+/** Where the rounds merged in from other machines are kept, beside the store's own file. */
+export const MERGED_FILE = 'merged.jsonl'
+
+export interface MergeResult {
+  slug: string
+  project: string
+  /** Rounds in the file that were new here. */
+  added: number
+  /** Rounds already merged from an earlier export whose copy in this one says something different. */
+  updated: number
+  /** Rounds this machine already collected itself, which its own copy outranks. */
+  kept: number
+  /** Records in the file that were not rounds. */
+  skipped: number
+  /** Whose work the file holds, by rounds. */
+  committers: Array<{ name: string; rounds: number }>
+  /** The project's totals after the merge. */
+  rounds: number
+  sessions: number
+}
+
+/** The identity `collect` de-duplicates on. */
+function keyOf(round: Round): string {
+  return `${round.session}\u0000${round.id}`
+}
+
+/**
+ * A round as text with its keys in order, so two copies of one round compare equal however each
+ * was put together: one read back off disk, one just normalized out of somebody's file.
+ */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    inner !== null && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(
+          Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        )
+      : inner,
+  )
+}
+
+/**
+ * Rewrite a rounds file a line at a time, with each accepted round in place of the stored copy it
+ * matches and the rest of them at the end.
+ *
+ * Streamed in batches, the way a trim is, because these files run to hundreds of megabytes and a
+ * merge is not a reason to hold one whole. Written beside and moved over, so an interrupted merge
+ * leaves the file as it was. A line that is not a round — torn by an interrupted write — is kept as
+ * it is, since this is not the place to decide it is rubbish.
+ */
+async function rewriteWith(file: string, accepted: Map<string, Round>, visit: (round: Round) => void): Promise<void> {
+  const target = `${file}.merge`
+  await rm(target, { force: true })
+  await appendFile(target, '', { encoding: 'utf8', mode: FILE_MODE })
+  const placed = new Set<string>()
+  let batch: string[] = []
+  // Chained rather than awaited together, for the reason `applyClear` gives: overlapping appends
+  // land in whatever order the filesystem finishes them, and this file is read back in order.
+  let writing: Promise<void> = Promise.resolve()
+  const flush = (): void => {
+    if (batch.length === 0) return
+    const text = batch.join('\n') + '\n'
+    batch = []
+    writing = writing.then(() => appendFile(target, text, { encoding: 'utf8', mode: FILE_MODE }))
+  }
+  const put = (round: Round | null, line: string): void => {
+    if (round !== null) visit(round)
+    batch.push(line)
+    if (batch.length >= 2000) flush()
+  }
+  await eachRoundLine(file, (_at, line) => {
+    let round: Round
+    try {
+      round = asStoredRound(JSON.parse(line) as Round)
+    } catch {
+      put(null, line)
+      return
+    }
+    const arriving = accepted.get(keyOf(round))
+    if (arriving === undefined) {
+      put(round, line)
+      return
+    }
+    placed.add(keyOf(round))
+    put(arriving, JSON.stringify(arriving))
+  })
+  for (const [key, round] of accepted) if (!placed.has(key)) put(round, JSON.stringify(round))
+  flush()
+  await writing
+  await rename(target, file)
+  await tighten(file, FILE_MODE)
+}
+
+/**
+ * Add another machine's export of a project to the one collected here.
+ *
+ * The other half of `importProject`. An import is somebody else's project, kept apart; a merge is
+ * the same project worked on from two machines, read as one. Every incoming round is named for
+ * who recorded it, so the two can still be told apart and filtered.
+ *
+ * Rounds are matched on `session+id`, the identity `collect` already de-duplicates on. A round
+ * already merged is replaced only when the new copy says something different, so merging the same
+ * file twice writes nothing at all, and merging a newer export brings only what changed. A round
+ * this machine collected itself is never replaced: its own copy is the one with session files
+ * behind it.
+ *
+ * The merged rounds go into `rounds.jsonl` with the rest, so every reader sees them without knowing
+ * about merging, and a copy is kept in `merged.jsonl`, because a schema rebuild writes the rounds
+ * file afresh from the session copies and merged rounds have none.
+ *
+ * Two passes over the file rather than one: the first only decides what changes, so a merge that
+ * changes nothing never writes, and neither pass holds the store's rounds in memory.
+ */
+export async function mergeIntoProject(
+  dataDir: string,
+  slug: string,
+  incoming: Round[],
+  skipped: number,
+): Promise<MergeResult | null> {
+  const dir = ownDir(dataDir, slug)
+  if (dir === null) return null
+  const manifestFile = join(dir, 'manifest.json')
+  const manifest = await readJson<Manifest>(manifestFile)
+  if (manifest === null) return null
+
+  const roundsFile = join(dir, 'rounds.jsonl')
+  const arriving = new Map<string, Round>()
+  for (const round of incoming) arriving.set(keyOf(round), round)
+
+  const accepted = new Map<string, Round>()
+  const present = new Set<string>()
+  let kept = 0
+  let updated = 0
+  await eachRound(roundsFile, (round) => {
+    const key = keyOf(round)
+    const next = arriving.get(key)
+    if (next === undefined || present.has(key)) return
+    present.add(key)
+    if (round.committer === undefined) kept += 1
+    else if (canonical(round) !== canonical(next)) {
+      accepted.set(key, next)
+      updated += 1
+    }
+  })
+  let added = 0
+  for (const [key, round] of arriving) {
+    if (present.has(key)) continue
+    accepted.set(key, round)
+    added += 1
+  }
+
+  const by = new Map<string, number>()
+  for (const round of arriving.values()) {
+    if (round.committer !== undefined) by.set(round.committer, (by.get(round.committer) ?? 0) + 1)
+  }
+  const report = (rounds: number, sessions: number, project: string): MergeResult => ({
+    slug,
+    project,
+    added,
+    updated,
+    kept,
+    skipped,
+    committers: [...by.entries()].sort((a, b) => b[1] - a[1]).map(([name, rounds]) => ({ name, rounds })),
+    rounds,
+    sessions,
+  })
+
+  if (accepted.size === 0) {
+    const stored = asStored(slug, dir, manifest)
+    return report(manifest.rounds ?? 0, manifest.sessions ?? 0, stored?.project ?? slug)
+  }
+
+  const tally = newTally()
+  await rewriteWith(roundsFile, accepted, (round) => countRound(tally, round))
+  await rewriteWith(join(dir, MERGED_FILE), accepted, () => undefined)
+  // The analysis and the index beside it were computed from the rounds before these arrived.
+  await rm(join(dir, 'analysis.jsonl'), { force: true })
+  await rm(join(dir, 'search.jsonl'), { force: true })
+
+  const next: Manifest = {
+    ...manifest,
+    ...tallied(tally),
+    sources: [...new Set([...(manifest.sources ?? []).filter(isAgentSource), ...tally.sources])],
+    merged_at: new Date().toISOString(),
+    committers: [...tally.committers].sort(),
+  }
+  const target = `${manifestFile}.merge`
+  await writeFile(target, JSON.stringify(next, null, 2) + '\n', { encoding: 'utf8', mode: FILE_MODE })
+  await rename(target, manifestFile)
+  await tighten(manifestFile, FILE_MODE)
+
+  const stored = asStored(slug, dir, next)
+  return report(next.rounds ?? 0, next.sessions ?? 0, stored?.project ?? slug)
+}
+
+/**
+ * The counts a manifest carries, taken a round at a time.
+ *
+ * One accumulator for every writer of a manifest — collect's summary, an import, a merge, a trim —
+ * so the totals for the same rounds are the same whichever of them wrote them last.
+ */
+interface Tally {
+  sessions: Set<string>
+  tasks: Set<string>
+  rounds: number
+  in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
+  in_cache_read: number
+  out_tokens: number
+  first_ts: string | null
+  last_ts: string | null
+  /** The agents behind the rounds. */
+  sources: Set<AgentSource>
+  /** The names merged-in rounds carry. This machine's own carry none. */
+  committers: Set<string>
+}
+
+function newTally(): Tally {
+  return {
+    sessions: new Set(),
+    tasks: new Set(),
+    rounds: 0,
+    in_tokens: 0,
+    in_uncached: 0,
+    in_cache_write: 0,
+    in_cache_write_5m: 0,
+    in_cache_write_1h: 0,
+    in_cache_read: 0,
+    out_tokens: 0,
+    first_ts: null,
+    last_ts: null,
+    sources: new Set(),
+    committers: new Set(),
+  }
+}
+
+function countRound(tally: Tally, round: Round): void {
+  tally.rounds += 1
+  tally.sessions.add(round.session)
+  tally.tasks.add(`${round.session}\u0000${round.task}`)
+  tally.in_tokens += round.in_tokens || 0
+  tally.in_uncached += round.in_uncached || 0
+  tally.in_cache_write += round.in_cache_write || 0
+  tally.in_cache_write_5m += round.in_cache_write_5m || 0
+  tally.in_cache_write_1h += round.in_cache_write_1h || 0
+  tally.in_cache_read += round.in_cache_read || 0
+  tally.out_tokens += round.out_tokens || 0
+  if (typeof round.ts === 'string') {
+    if (tally.first_ts === null || round.ts < tally.first_ts) tally.first_ts = round.ts
+    if (tally.last_ts === null || round.ts > tally.last_ts) tally.last_ts = round.ts
+  }
+  if (isAgentSource(round.source ?? '')) tally.sources.add(round.source as AgentSource)
+  if (round.committer !== undefined) tally.committers.add(round.committer)
+}
+
+/** A tally as the fields of a manifest. */
+function tallied(tally: Tally): {
+  sessions: number
+  rounds: number
+  tasks: number
+  in_tokens: number
+  in_uncached: number
+  in_cache_write: number
+  in_cache_write_5m: number
+  in_cache_write_1h: number
+  in_cache_read: number
+  out_tokens: number
+  first_ts: string | null
+  last_ts: string | null
+} {
+  return {
+    sessions: tally.sessions.size,
+    rounds: tally.rounds,
+    tasks: tally.tasks.size,
+    in_tokens: tally.in_tokens,
+    in_uncached: tally.in_uncached,
+    in_cache_write: tally.in_cache_write,
+    in_cache_write_5m: tally.in_cache_write_5m,
+    in_cache_write_1h: tally.in_cache_write_1h,
+    in_cache_read: tally.in_cache_read,
+    out_tokens: tally.out_tokens,
+    first_ts: tally.first_ts,
+    last_ts: tally.last_ts,
   }
 }
 
@@ -1551,6 +1812,9 @@ export async function applyClear(dataDir: string, plan: ClearPlan): Promise<Clea
     for (const id of doomed) {
       await rm(join(dir, 'sessions', safeSessionFilename(id)), { force: true })
     }
+    // Merged rounds have a copy of their own, which a rebuild puts back; a session cleared from
+    // the rounds has to go from there too, or the next rebuild would quietly undo the clear.
+    await dropSessions(join(dir, MERGED_FILE), doomed)
 
     // The state is what tells the next collect a session is already read. A session that is no
     // longer here has not been read, and saying otherwise would mean it never came back.
@@ -1579,6 +1843,35 @@ export async function applyClear(dataDir: string, plan: ClearPlan): Promise<Clea
   return result
 }
 
+/** Take these sessions' rounds out of a rounds file, streamed, leaving it untouched if it has none. */
+async function dropSessions(file: string, doomed: ReadonlySet<string>): Promise<void> {
+  let found = false
+  await eachRound(file, (round) => {
+    if (doomed.has(round.session)) found = true
+  })
+  if (!found) return
+  const target = `${file}.trim`
+  await rm(target, { force: true })
+  await appendFile(target, '', { encoding: 'utf8', mode: FILE_MODE })
+  let kept: string[] = []
+  let writing: Promise<void> = Promise.resolve()
+  const flush = (): void => {
+    if (kept.length === 0) return
+    const batch = kept.join('\n') + '\n'
+    kept = []
+    writing = writing.then(() => appendFile(target, batch, { encoding: 'utf8', mode: FILE_MODE }))
+  }
+  await eachRound(file, (round) => {
+    if (doomed.has(round.session)) return
+    kept.push(JSON.stringify(round))
+    if (kept.length >= 2000) flush()
+  })
+  flush()
+  await writing
+  await rename(target, file)
+  await tighten(file, FILE_MODE)
+}
+
 /**
  * Recount a manifest from the rounds that are left.
  *
@@ -1590,33 +1883,16 @@ export async function applyClear(dataDir: string, plan: ClearPlan): Promise<Clea
 async function refreshManifest(dataDir: string, slug: string, dir: string): Promise<void> {
   const manifest = await readJson<Manifest>(join(dir, 'manifest.json'))
   if (manifest === null) return
-  const summary = await summarize(
-    { key: manifest.key ?? slug, path: manifest.path ?? null, dir: '', sessions: [], lastActivity: 0, slug },
-    dataDir,
-  )
-  // Which agents are still in it, read back off the rounds that survived. A trim can take the last
-  // Codex session out of a project two agents worked in, and a manifest that went on listing Codex
-  // would offer the view a source filter with nothing behind it.
-  const agents = new Set<AgentSource>()
-  await eachRound(join(dir, 'rounds.jsonl'), (round) => {
-    const one = round.source ?? ''
-    if (isAgentSource(one)) agents.add(one)
-  })
+  // Which agents and whose work are still in it, read back off the rounds that survived. A trim can
+  // take the last Codex session out of a project two agents worked in, and a manifest that went on
+  // listing Codex would offer the view a source filter with nothing behind it.
+  const tally = newTally()
+  await eachRound(join(dir, 'rounds.jsonl'), (round) => countRound(tally, round))
   const next: Manifest = {
     ...manifest,
-    sources: [...agents],
-    sessions: summary.sessions,
-    rounds: summary.rounds,
-    tasks: summary.tasks,
-    in_tokens: summary.in_tokens,
-    in_uncached: summary.in_uncached,
-    in_cache_write: summary.in_cache_write,
-    in_cache_write_5m: summary.in_cache_write_5m,
-    in_cache_write_1h: summary.in_cache_write_1h,
-    in_cache_read: summary.in_cache_read,
-    out_tokens: summary.out_tokens,
-    first_ts: summary.first_ts,
-    last_ts: summary.last_ts,
+    ...tallied(tally),
+    sources: [...tally.sources],
+    committers: [...tally.committers].sort(),
   }
   await writeFile(join(dir, 'manifest.json'), JSON.stringify(next, null, 2) + '\n', {
     encoding: 'utf8',

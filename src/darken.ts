@@ -347,7 +347,15 @@ export function darkenRound(tokens: Tokens, round: Round): Round {
     user_text: round.user_text === '' ? '' : DARK,
     text: round.text === '' ? '' : DARK,
     tools: round.tools.map((tool) => darkenTool(tokens, tool)),
+    // A person's name. Tokened like the rest, so the people in one export can still be told apart
+    // and filtered, and none of them can be named.
+    ...(round.committer === undefined ? {} : { committer: darkenCommitter(tokens, round.committer) }),
   }
+}
+
+/** Who recorded a round, as a darkened export names them. */
+export function darkenCommitter(tokens: Tokens, name: string): string {
+  return token(tokens, 'committer', name)
 }
 
 /** A hash the same length as the one it replaces, so it still reads as a commit. */
@@ -372,6 +380,9 @@ export function darkenManifest(tokens: Tokens, manifest: Record<string, unknown>
   for (const key of ['project', 'name', 'path', 'key', 'dir', 'source_dir', 'slug']) {
     const value = manifest[key]
     if (typeof value === 'string' && value !== '') out[key] = token(tokens, 'project', value)
+  }
+  if (Array.isArray(manifest.committers)) {
+    out.committers = manifest.committers.map((name) => (typeof name === 'string' ? darkenCommitter(tokens, name) : name))
   }
   out.darkened_at = new Date().toISOString()
   return out

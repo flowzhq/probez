@@ -9,6 +9,7 @@ import { scoped, useScope } from '../scope'
 import type { Scope } from '../scope'
 import { useBusy } from '../pending'
 import { useData } from '../useData'
+import { useDebug } from '../meta'
 
 /**
  * The frame every page sits in: a menu down the left, the page to its right.
@@ -79,9 +80,10 @@ function Rail({
   onToggle: () => void
 }): ReactElement {
   const scope = useScope()
+  const debug = useDebug()
   const { data: findings } = useData(
     () => api.findings(scope),
-    [scope.range, scope.source, scope.project],
+    [scope.range, scope.source, scope.project, scope.committer],
   )
 
   const insights: Item[] = [
@@ -115,8 +117,13 @@ function Rail({
       to: (s) => scoped('/sessions', s),
       on: (r) => r.name === 'sessions' || r.name === 'session' || r.name === 'task',
     },
-    { label: 'Questions', icon: ICONS.questions, to: (s) => scoped('/questions', s), on: (r) => r.name === 'questions' },
-    { label: 'Trails', icon: ICONS.trails, to: (s) => scoped('/trails', s), on: (r) => r.name === 'trails' },
+    // Under `probez view --debug` only: both are slow to read on a large store. See src/debug.ts.
+    ...(debug
+      ? [
+          { label: 'Questions', icon: ICONS.questions, to: (s: Scope) => scoped('/questions', s), on: (r: Route) => r.name === 'questions' },
+          { label: 'Trails', icon: ICONS.trails, to: (s: Scope) => scoped('/trails', s), on: (r: Route) => r.name === 'trails' },
+        ]
+      : []),
     {
       label: 'Explorer',
       icon: ICONS.explorer,

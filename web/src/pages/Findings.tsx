@@ -18,7 +18,7 @@ import { scopeLine } from './Overview'
  */
 export function Findings(): ReactElement {
   const scope = useScope()
-  const { data, error, loading } = useData(() => api.findings(scope), [scope.range, scope.source, scope.project])
+  const { data, error, loading } = useData(() => api.findings(scope), [scope.range, scope.source, scope.project, scope.committer])
 
   return (
     <>

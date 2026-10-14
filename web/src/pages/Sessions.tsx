@@ -16,6 +16,7 @@ import { go, href, linkProps } from '../router'
 import { changeFilters, changeScope, scoped, useFilter, useScope } from '../scope'
 import type { Scope } from '../scope'
 import { useData } from '../useData'
+import { useDebug } from '../meta'
 import { scopeLine } from './Overview'
 
 type Preset = 'cost' | 'tokens'
@@ -129,7 +130,7 @@ export function Sessions(): ReactElement {
     errors: useFilter('errors'),
     day: useFilter('day'),
   }
-  const { data, error, loading } = useData(() => api.sessions(scope), [scope.range, scope.source, scope.project])
+  const { data, error, loading } = useData(() => api.sessions(scope), [scope.range, scope.source, scope.project, scope.committer])
   const [sorted, sortBy] = useSort<SessionSort>(sessionNatural, { key: 'cost', dir: 'desc' })
   const [preset, setPreset] = useState<Preset>(() => {
     try {
@@ -467,6 +468,8 @@ function SessionDrawer({
     [slug, id],
   )
 
+  const debug = useDebug()
+
   if (session === null) return null
 
   const trace = data?.session.session === session.session ? data.trace : null
@@ -540,6 +543,8 @@ function SessionDrawer({
         )}
       </div>
 
+      {/* Questions are read under `probez view --debug` only. See src/debug.ts. */}
+      {!debug ? null : (
       <div className="drawer-sec">
         <h4>Costliest questions</h4>
         {questions === null ? (
@@ -562,6 +567,7 @@ function SessionDrawer({
           ))
         )}
       </div>
+      )}
 
       <button type="button" className="primary" onClick={() => go(href.session(session.slug, session.session))}>
         Open trace →

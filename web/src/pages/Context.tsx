@@ -46,7 +46,7 @@ function taskValue(task: ContextTask, key: TaskSort): number | string | null {
  */
 export function Context(): ReactElement {
   const scope = useScope()
-  const { data, error, loading } = useData(() => api.insights(scope), [scope.range, scope.source, scope.project])
+  const { data, error, loading } = useData(() => api.insights(scope), [scope.range, scope.source, scope.project, scope.committer])
   const [sorted, sortBy] = useSort<TaskSort>(taskNatural, { key: 'share', dir: 'desc' })
 
   return (

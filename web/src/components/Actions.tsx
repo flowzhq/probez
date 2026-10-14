@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 
 import { api, exportProject } from '../api'
-import type { ExportFormat, SyncResult } from '../api'
+import type { ExportFormat, MergeResult, SyncResult } from '../api'
 import { count, tokens } from '../format'
+import { forgetIdentity } from '../meta'
 
 /** One glyph, drawn the same way as the theme icons so the header reads as one set. */
 function Icon({
@@ -140,7 +141,19 @@ export function SyncButton({
 }
 
 /** Which panel the `⋮` is showing: the list of verbs, or the one thing a verb needs before it runs. */
-type Panel = 'menu' | 'rename' | 'remove'
+type Panel = 'menu' | 'rename' | 'merge' | 'remove'
+
+/** What a merge did, in words, the way `syncSaid` says what a sync did. */
+export function mergeSaid(result: MergeResult): string {
+  const from = result.committers.map((one) => one.name).join(', ')
+  if (result.added + result.updated === 0) {
+    return `nothing new${from === '' ? '' : ` from ${from}`} · every round in that file is already here`
+  }
+  const parts = [`+${count(result.added)} round${result.added === 1 ? '' : 's'}`]
+  if (result.updated > 0) parts.push(`${count(result.updated)} updated`)
+  if (result.kept > 0) parts.push(`${count(result.kept)} already here`)
+  return `merged${from === '' ? '' : ` from ${from}`} · ${parts.join(', ')} · ${count(result.rounds)} total`
+}
 
 /**
  * The things you can do to a project rather than read about it.
@@ -176,6 +189,10 @@ type Panel = 'menu' | 'rename' | 'remove'
  * control nobody can trust. Both export rows say `darkened` while it is on for the same reason:
  * a toggle whose effect only appears in a file you have not written yet needs to show *something*.
  *
+ * **Merge** adds another machine's export of this project to it — the same project, worked on from
+ * two computers, read as one. Every round it brings is named for whoever exported it, so the
+ * Insights pages can be filtered to one person's work. Merging the same file twice changes nothing.
+ *
  * **Delete** is the only thing here that destroys anything, and it destroys the whole of what probez
  * recorded for one project. It asks first, in a panel that says what goes and what does not: the
  * agent's own session files are untouched, so a collected project comes back with `probez collect`
@@ -207,7 +224,9 @@ export function Actions({
   onRemoved?: () => void
   compact?: boolean
 }): ReactElement {
-  const [busy, setBusy] = useState<'sync' | 'rename' | 'remove' | ExportFormat | null>(null)
+  const [busy, setBusy] = useState<'sync' | 'rename' | 'merge' | 'remove' | ExportFormat | null>(null)
+  const [file, setFile] = useState<File | null>(null)
+  const [committer, setCommitter] = useState('')
   // Off every time the menu is built. Darkening is a decision about one file being sent to one
   // person, and a remembered one would eventually surprise somebody in the other direction.
   const [darken, setDarken] = useState(false)
@@ -307,6 +326,25 @@ export function Actions({
     }
   }
 
+  const merge = async (): Promise<void> => {
+    if (file === null) return
+    setPanel(null)
+    setBusy('merge')
+    setSaid(null)
+    try {
+      const result = await api.merge(slug, file, committer)
+      report(mergeSaid(result))
+      forgetIdentity()
+      onSynced?.()
+    } catch (problem) {
+      report((problem as Error).message, true)
+    } finally {
+      setBusy(null)
+      setFile(null)
+      setCommitter('')
+    }
+  }
+
   const remove = async (): Promise<void> => {
     setPanel(null)
     setBusy('remove')
@@ -392,6 +430,11 @@ export function Actions({
               <span className="menu-note">manifest, analysis and rounds in one document</span>
             </button>
             <div className="menu-rule" role="separator" />
+            <button role="menuitem" onClick={() => setPanel('merge')}>
+              <strong>Merge from another computer…</strong>
+              <span className="menu-note">add an export of this project made elsewhere</span>
+            </button>
+            <div className="menu-rule" role="separator" />
             <button className="grave" role="menuitem" onClick={() => setPanel('remove')}>
               <strong>Delete…</strong>
               <span className="menu-note">remove this project from the store</span>
@@ -431,6 +474,59 @@ export function Actions({
               </button>
               <button type="submit" className="save" disabled={name.trim() === project}>
                 Rename
+              </button>
+            </div>
+          </form>
+        ) : null}
+
+        {panel === 'merge' ? (
+          <form
+            className="menu menu-form"
+            aria-label={`Merge into ${project}`}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void merge()
+            }}
+          >
+            <strong>Merge into {project}</strong>
+            <p className="menu-note">
+              An export of this project from another computer — <span className="mono">Export rounds</span> or{' '}
+              <span className="mono">Export bundle</span> on that machine. Its rounds join the ones collected here,
+              each named for whoever exported it, so the charts can show one person's work or everyone's.
+            </p>
+            <label className="menu-label" htmlFor={`merge-file-${slug}`}>
+              The file
+            </label>
+            <input
+              id={`merge-file-${slug}`}
+              className="menu-field"
+              type="file"
+              accept=".json,.jsonl,application/json,application/x-ndjson"
+              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+            />
+            <label className="menu-label" htmlFor={`merge-who-${slug}`}>
+              Whose work it is
+            </label>
+            <input
+              id={`merge-who-${slug}`}
+              className="menu-field"
+              value={committer}
+              maxLength={80}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="the name in the file"
+              onChange={(event) => setCommitter(event.target.value)}
+            />
+            <p className="menu-note">
+              Only needed for a file from before probez named who made it. Merging the same file again changes
+              nothing; a newer one brings what is new.
+            </p>
+            <div className="menu-row">
+              <button type="button" className="ghost" onClick={() => setPanel(null)}>
+                Cancel
+              </button>
+              <button type="submit" className="save" disabled={file === null}>
+                Merge
               </button>
             </div>
           </form>

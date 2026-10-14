@@ -10,6 +10,7 @@ import { ago, clip, count, duration, money, percent, shortId, when } from '../fo
 import { go, href, linkProps } from '../router'
 import type { Entity } from '../router'
 import { useData } from '../useData'
+import { useDebug } from '../meta'
 import { useEffect } from 'react'
 import type { KeyboardEvent, ReactElement, ReactNode } from 'react'
 
@@ -272,7 +273,9 @@ function Tabs({
   slug: string | null
   data: SearchPayload
 }): ReactElement {
-  const shown: Entity[] = ['rounds', 'tasks', 'sessions', 'questions', 'trails']
+  // Questions and trails are counted under `probez view --debug` only. See src/debug.ts.
+  const debug = useDebug()
+  const shown: Entity[] = debug ? ['rounds', 'tasks', 'sessions', 'questions', 'trails'] : ['rounds', 'tasks', 'sessions']
   const all = data.totals.projects > 1 || entity === 'projects' ? [...shown, 'projects' as Entity] : shown
   // Arrow keys move between tabs, as they do in any tablist; only the selected tab is in the Tab
   // order, so getting past the row takes one keystroke rather than six.

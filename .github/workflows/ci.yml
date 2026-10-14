@@ -97,7 +97,8 @@ jobs:
           # src/open.ts opens a browser: one spawn of one platform command with the URL as an argv
           # element. src/reader.ts runs the command a person wrote into reader.json, which is how
           # `probez explain` hands one question to a model they already have -- see CONTRIBUTING
-          # rule 2. src/git.ts runs `git log` in a project directory, read-only, for the commit a
+          # rule 2. src/git.ts runs `git config --get user.name` for the name exports carry, and
+          # `git log` in a project directory, read-only, for the commit a
           # task started from, and only where the reflog cannot answer on its own.
           # Anywhere else, or through a shell, is a way to run something nobody asked for.
           if grep -rln "child_process" src/ | grep -vE "^src/(open|reader|git)\.ts$"; then

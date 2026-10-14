@@ -52,6 +52,7 @@ export function handover(
   const start = rangeStart(scope)
   if (start !== null) parts.push(`since:${start}`)
   if (scope.source !== null) parts.push(`source:${scope.source}`)
+  if (scope.committer !== null) inexact.push(`whose work it is (${scope.committer}), which no field holds`)
   if (filters.day !== undefined && filters.day !== null) {
     parts.push(`since:${filters.day}`, `before:${nextDay(filters.day)}`)
   }

@@ -38,6 +38,7 @@ import {
   importProject,
   listStored,
   MAX_NAME,
+  mergeIntoProject,
   readResultsIn,
   readRoundsIn,
   removeProject,
@@ -45,10 +46,13 @@ import {
   slugFor,
   writeAnalysis,
 } from './store.js'
-import type { CollectResult, ImportResult, RemoveResult, StoredProject } from './store.js'
+import type { CollectResult, ImportResult, MergeResult, RemoveResult, StoredProject } from './store.js'
 import { CONTROL, ImportError, parseExport } from './import.js'
+import { DEBUG_ONLY, debugOn } from './debug.js'
+import { cleanCommitter, readChosenCommitter, readCommitter, writeCommitter } from './identity.js'
 import {
   darkenManifest,
+  darkenCommitter,
   darkenRound,
   darkenUnclassified,
   newTokens,
@@ -743,7 +747,8 @@ export async function sessionPayload(
     analysis: categoryTally(mine, pricing),
     tasks,
     trace: traceOf(mine),
-    questions: costliestQuestions(mine, pricing, stored.path ?? ''),
+    // Under `--debug` only: see `debug.ts`.
+    questions: debugOn() ? costliestQuestions(mine, pricing, stored.path ?? '') : [],
   }
 }
 
@@ -780,8 +785,9 @@ export async function taskPayload(
 
   const work = workIndex(rounds)
   const row = taskRows(mine, pricing)[0]!
-  const questions = questionsOf(mine, { root: stored.path ?? '' })
-  const readings = await readReadings(stored.dir)
+  // Under `--debug` only: see `debug.ts`. Trails are the slow half, a read of every result body.
+  const questions = debugOn() ? questionsOf(mine, { root: stored.path ?? '' }) : []
+  const readings = debugOn() ? await readReadings(stored.dir) : {}
   return {
     project: shown(stored),
     session: mine[0]!.session,
@@ -794,7 +800,7 @@ export async function taskPayload(
     },
     analysis: categoryTally(mine, pricing),
     trace: traceOf(mine),
-    trails: await taskTrails(stored, mine),
+    trails: debugOn() ? await taskTrails(stored, mine) : [],
     questions,
     readings,
     stale: staleKeys(readings, questions),
@@ -1213,6 +1219,8 @@ export async function searchPayload(
   // into the title of every result.
   const query = parse(text)
   if (options.entity !== undefined) query.entity = options.entity
+  // Asked of the query as parsed, so `in:trails` typed into the box is refused like `?in=trails`.
+  if (!debugOn() && (query.entity === 'questions' || query.entity === 'trails')) throw new NotFound(DEBUG_ONLY)
   const stored = await listStored(dataDir)
   const wanted = options.slug === undefined ? stored : stored.filter((row) => row.slug === options.slug)
   if (options.slug !== undefined && wanted.length === 0) {
@@ -1459,6 +1467,29 @@ export interface SyncResult {
 const running = new Map<string, Promise<SyncResult>>()
 
 /**
+ * One write to a project's rounds at a time, whatever the write is.
+ *
+ * A sync appends to `rounds.jsonl` and a merge rewrites it, so a merge that read the file before a
+ * sync's append and moved its copy over the file after would lose those rounds for good — the
+ * sync has already marked their sessions read. Each write waits for the one before it.
+ */
+const writing = new Map<string, Promise<unknown>>()
+
+function exclusive<T>(slug: string, work: () => Promise<T>): Promise<T> {
+  const before = writing.get(slug) ?? Promise.resolve()
+  const next = before.then(work, work)
+  const settled = next.then(
+    () => undefined,
+    () => undefined,
+  )
+  writing.set(slug, settled)
+  void settled.then(() => {
+    if (writing.get(slug) === settled) writing.delete(slug)
+  })
+  return next
+}
+
+/**
  * Collect this project's new sessions, then recompute its analysis cache.
  *
  * This is the one path in the view that writes, and it writes exactly what the two commands it
@@ -1485,7 +1516,7 @@ export async function syncProject(
   const held = running.get(slug)
   if (held !== undefined) return held
 
-  const work = (async (): Promise<SyncResult> => {
+  const work = exclusive(slug, async (): Promise<SyncResult> => {
     const stored = await findStored(dataDir, slug)
     if (stored === null) throw new NotFound(`no project ${slug} in this store`)
 
@@ -1528,7 +1559,7 @@ export async function syncProject(
       tasks: after.tasks,
       collected_at: after.collected_at,
     }
-  })()
+  })
 
   running.set(slug, work)
   try {
@@ -1607,6 +1638,12 @@ export async function exportProject(
   // One set of tokens for the whole export, so the same path darkens the same way in every round
   // of it, and a different way in the next one. See `darken.ts`.
   const tokens = darken ? newTokens(stored.path ?? '') : null
+  // Every round leaves named for who recorded it, so whoever merges the file can tell it from their
+  // own. A round already carrying a name came from somebody else's store and keeps theirs.
+  // Named before darkening, so a darkened export tokens this machine's name like everyone else's.
+  const committer = await readCommitter(dataDir)
+  const signed = (round: Round): Round => (round.committer === undefined ? { ...round, committer } : round)
+  const shownCommitter = tokens === null ? committer : darkenCommitter(tokens, committer)
 
   if (format === 'jsonl') {
     const body = await readFile(join(stored.dir, 'rounds.jsonl'), 'utf8').catch(() => '')
@@ -1615,13 +1652,17 @@ export async function exportProject(
       type: 'application/x-ndjson; charset=utf-8',
       // Line at a time rather than parsing the file into one array and serialising it back: these
       // run to hundreds of megabytes, and the whole point of the store's own format is that it
-      // never has to be held at once.
-      body: tokens === null ? body : darkenLines(tokens, body),
+      // never has to be held at once. Undarkened, a line is only parsed when it might already name
+      // someone; every other line gets the name written onto its front and is otherwise as stored.
+      body:
+        tokens === null
+          ? signLines(body, committer)
+          : eachLine(body, (round) => darkenRound(tokens, signed(round))),
     }
   }
 
   const stored_rounds = await roundsOf(stored.dir)
-  const rounds = tokens === null ? stored_rounds : stored_rounds.map((one) => darkenRound(tokens, one))
+  const rounds = stored_rounds.map((one) => (tokens === null ? signed(one) : darkenRound(tokens, signed(one))))
   const analysis = categoryTally(rounds, await readPricing(dataDir))
   return {
     filename: `${stored.slug}.json`,
@@ -1629,6 +1670,7 @@ export async function exportProject(
     body: JSON.stringify(
       {
         exported_at: new Date().toISOString(),
+        committer: shownCommitter,
         manifest:
           tokens === null ? stored : darkenManifest(tokens, stored as unknown as Record<string, unknown>),
         analysis: {
@@ -1646,8 +1688,40 @@ export async function exportProject(
   }
 }
 
-/** The store's own file, darkened a line at a time. A line that will not parse is dropped. */
-function darkenLines(tokens: Tokens, body: string): string {
+/**
+ * The store's own file with each round named for who recorded it, and nothing else changed.
+ *
+ * A line with no `"committer":` in it anywhere cannot carry one, so the name is written onto its
+ * front as text, and the line is never parsed. Only a line that might already name someone is
+ * read, to see whether it does. A line that is not a round at all — torn by an interrupted write —
+ * goes through as it was, as it always did when this export was the file byte for byte.
+ */
+function signLines(body: string, committer: string): string {
+  const field = `{"committer":${JSON.stringify(committer)},`
+  const out: string[] = []
+  for (const line of body.split('\n')) {
+    if (line.trim() === '') continue
+    if (!line.startsWith('{') || line.startsWith('{}')) {
+      out.push(line)
+      continue
+    }
+    // A whole object, closed. A line cut off part way is not one, and is left to the parse below.
+    if (line.trimEnd().endsWith('}') && !line.includes('"committer":')) {
+      out.push(field + line.slice(1))
+      continue
+    }
+    try {
+      const round = JSON.parse(line) as Round
+      out.push(round.committer === undefined ? JSON.stringify({ committer, ...round }) : line)
+    } catch {
+      out.push(line)
+    }
+  }
+  return out.length === 0 ? '' : `${out.join('\n')}\n`
+}
+
+/** The store's own file, changed a line at a time. A line that will not parse is dropped. */
+function eachLine(body: string, change: (round: Round) => Round): string {
   const out: string[] = []
   for (const line of body.split('\n')) {
     if (line.trim() === '') continue
@@ -1657,7 +1731,7 @@ function darkenLines(tokens: Tokens, body: string): string {
     } catch {
       continue
     }
-    out.push(JSON.stringify(darkenRound(tokens, round)))
+    out.push(JSON.stringify(change(round)))
   }
   return out.length === 0 ? '' : `${out.join('\n')}\n`
 }
@@ -1704,6 +1778,80 @@ export async function importExport(
   // The rounds cache is keyed on the file's size and mtime, both of which just changed.
   cache.delete(result.dir)
   return { ...result, name }
+}
+
+/**
+ * Merge another machine's export into a project collected here, from the browser.
+ *
+ * Unlike `importExport`, which keeps someone's project apart under a name of its own, this adds
+ * their rounds to one of yours: the same project, worked on from two machines. Each round is
+ * named for who recorded it — the name it carries, or the one the file was exported under, or the
+ * one typed in the page when the file says neither — so the Insights pages can be filtered to one
+ * person's work. See `mergeIntoProject`.
+ */
+export async function mergeExport(
+  dataDir: string,
+  slug: string,
+  body: { text: string; committer?: string | null },
+): Promise<MergeResult> {
+  if (body.text === '') throw new BadRequest('no file contents were sent')
+  if ((await findStored(dataDir, slug)) === null) throw new NotFound(`no project ${slug} in this store`)
+
+  let parsed
+  try {
+    parsed = parseExport(body.text)
+  } catch (error) {
+    if (error instanceof ImportError) throw new BadRequest(error.message)
+    throw error
+  }
+
+  const named = cleanCommitter(body.committer ?? '') || parsed.committer
+  if (named === null && parsed.rounds.some((round) => round.committer === undefined)) {
+    throw new BadRequest('that file does not say whose work it is — name them and merge it again')
+  }
+  const rounds = parsed.rounds.map((round) =>
+    round.committer === undefined ? { ...round, committer: named! } : round,
+  )
+  return exclusive(slug, async () => {
+    const result = await mergeIntoProject(dataDir, slug, rounds, parsed.skipped)
+    if (result === null) throw new NotFound(`no project ${slug} in this store`)
+    const stored = await findStored(dataDir, slug)
+    if (stored !== null && result.added + result.updated > 0) {
+      // The rounds cache and the search index are both keyed on a file that just changed.
+      cache.delete(stored.dir)
+      await buildIndex(stored.dir).catch(() => null)
+    }
+    return result
+  })
+}
+
+/** Who this machine's rounds belong to, and everyone else whose work the store holds. */
+export interface IdentityPayload {
+  /** The name this machine's own rounds are recorded under. */
+  committer: string
+  /** Whether that name was typed in Settings rather than guessed from git or the account. */
+  chosen: boolean
+  /** Every name in the store, this machine's first. */
+  committers: string[]
+}
+
+export async function identityPayload(dataDir: string): Promise<IdentityPayload> {
+  const committer = await readCommitter(dataDir)
+  const others = new Set<string>()
+  for (const project of await listStored(dataDir)) for (const name of project.committers) others.add(name)
+  others.delete(committer)
+  return {
+    committer,
+    chosen: (await readChosenCommitter(dataDir)) !== null,
+    committers: [committer, ...[...others].sort()],
+  }
+}
+
+export async function saveIdentity(dataDir: string, body: unknown): Promise<IdentityPayload> {
+  const name = (body as { name?: unknown } | null)?.name
+  if (typeof name !== 'string') throw new BadRequest('expected { name: "<who you are>" }')
+  await writeCommitter(dataDir, name)
+  return identityPayload(dataDir)
 }
 
 /** A model the store has rounds for, and what it is charged. */

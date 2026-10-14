@@ -7,6 +7,7 @@ import { extname, join, resolve, sep } from 'node:path'
 
 import { useCommandKinds } from './bash.js'
 import { readCommandKinds } from './commands.js'
+import { DEBUG_ONLY, debugOn, useDebug } from './debug.js'
 import {
   BadRequest,
   clearStore,
@@ -14,7 +15,9 @@ import {
   explainOne,
   exportProject,
   facetsPayload,
+  identityPayload,
   importExport,
+  mergeExport,
   NotFound,
   pageSourceOf,
   pricingPayload,
@@ -26,6 +29,7 @@ import {
   resultPayload,
   roundPayload,
   saveCommandKinds,
+  saveIdentity,
   savePricing,
   searchPayload,
   sessionPayload,
@@ -108,6 +112,8 @@ export interface ServeOptions {
   port?: number
   /** Fail rather than move to another port. True when `--port` was typed. */
   pinned?: boolean
+  /** Compute and serve trails and questions, which every other run leaves out. See `debug.ts`. */
+  debug?: boolean
 }
 
 export interface Serving {
@@ -255,7 +261,7 @@ async function serveAsset(res: ServerResponse, pathname: string): Promise<void> 
  * collects, renames or deletes when it is merely visited is a URL that can be put in an `<img>` tag
  * on any page you happen to open.
  */
-const PROJECT_WRITES = new Set(['sync', 'rename', 'delete', 'explain'])
+const PROJECT_WRITES = new Set(['sync', 'rename', 'delete', 'explain', 'merge'])
 
 function isProjectWritePath(parts: string[]): boolean {
   return parts.length === 3 && parts[0] === 'projects' && PROJECT_WRITES.has(parts[2]!)
@@ -287,6 +293,11 @@ function isClearPath(parts: string[]): boolean {
   return parts.length === 1 && parts[0] === 'clear'
 }
 
+/** Who this machine's rounds are recorded as: readable with GET, writable with POST, like pricing. */
+function isIdentityPath(parts: string[]): boolean {
+  return parts.length === 1 && parts[0] === 'identity'
+}
+
 /** Where a finding starts: readable with GET, writable with POST, like pricing. */
 function isThresholdsPath(parts: string[]): boolean {
   return parts.length === 1 && parts[0] === 'thresholds'
@@ -306,6 +317,7 @@ function isWritePath(parts: string[]): boolean {
     isCommandsPath(parts) ||
     isClearPath(parts) ||
     isThresholdsPath(parts) ||
+    isIdentityPath(parts) ||
     isImportPath(parts)
   )
 }
@@ -363,6 +375,17 @@ function sentFilename(req: IncomingMessage): string {
   }
 }
 
+/** Who the person merging says the file's work is by, out of the header that carries it. */
+function sentCommitter(req: IncomingMessage): string | null {
+  const header = req.headers['x-probez-committer']
+  if (typeof header !== 'string') return null
+  try {
+    return decodeURIComponent(header)
+  } catch {
+    return null
+  }
+}
+
 /**
  * A whole number out of a query string, or nothing.
  *
@@ -392,6 +415,8 @@ async function serveApi(
   // /api/questions?range=&source=&project=, /api/trails?range=&source=&project=
   // /api/findings?range=&source=&project=
   // /api/thresholds                                           GET, POST
+  // /api/identity                                             GET, POST
+  // /api/meta                                                 how this run was started
   // /api/projects?source=
   // /api/projects/<slug>?source=
   // /api/projects/<slug>/tools?source=
@@ -403,6 +428,7 @@ async function serveApi(
   // /api/projects/<slug>/sync                                   POST
   // /api/projects/<slug>/rename                                 POST
   // /api/projects/<slug>/delete                                 POST
+  // /api/projects/<slug>/merge                                  POST, the body is the export
   // /api/projects/<slug>/sessions/<session>
   // /api/projects/<slug>/sessions/<session>/tasks/<task>
   // /api/projects/<slug>/sessions/<session>/rounds/<round>
@@ -421,6 +447,39 @@ async function serveApi(
       return
     }
     sendJson(res, 200, await importExport(dataDir, { text, from: sentFilename(req) }))
+    return
+  }
+
+  if (group === 'meta' && slug === undefined) {
+    sendJson(res, 200, { debug: debugOn() })
+    return
+  }
+
+  if (group === 'identity' && slug === undefined) {
+    if (method === 'POST') {
+      let body: unknown
+      try {
+        body = await readJsonBody(req)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+        return
+      }
+      sendJson(res, 200, await saveIdentity(dataDir, body))
+      return
+    }
+    sendJson(res, 200, await identityPayload(dataDir))
+    return
+  }
+
+  // Trails and questions, wherever they are asked for, exist only under `--debug`.
+  const entity = url.searchParams.get('in')
+  if (
+    !debugOn() &&
+    (((group === 'questions' || group === 'trails') && slug === undefined) ||
+      (group === 'projects' && id === undefined && ['questions', 'trails', 'readings', 'prompt', 'explain'].includes(kind ?? '')) ||
+      (group === 'search' && (entity === 'questions' || entity === 'trails')))
+  ) {
+    sendJson(res, 404, { error: DEBUG_ONLY })
     return
   }
 
@@ -591,6 +650,18 @@ async function serveApi(
     sendJson(res, 200, await renameStored(dataDir, slug, body))
     return
   }
+  if (kind === 'merge' && id === undefined) {
+    // Reachable only as POST. The body is the export itself, as it is for an import.
+    let text: string
+    try {
+      text = (await readBody(req, MAX_IMPORT_BODY)).toString('utf8')
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : 'unreadable body' })
+      return
+    }
+    sendJson(res, 200, await mergeExport(dataDir, slug, { text, committer: sentCommitter(req) }))
+    return
+  }
   if (kind === 'delete' && id === undefined) {
     sendJson(res, 200, await removeStored(dataDir, slug))
     return
@@ -715,6 +786,7 @@ export async function startServer(options: ServeOptions): Promise<Serving> {
   // The same local command table the CLI reads, so a name classified one way on the command line is
   // classified that way in the browser. Read once per run, like the rest of the store's settings.
   useCommandKinds(await readCommandKinds(options.dataDir))
+  useDebug(options.debug === true)
   const token = randomUUID()
   const wanted = options.port ?? DEFAULT_PORT
   let port = wanted

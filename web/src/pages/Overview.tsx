@@ -62,8 +62,8 @@ export function EmptyRange({ scope, latest }: { scope: Scope; latest: string | n
  */
 export function Overview(): ReactElement {
   const scope = useScope()
-  const { data, error, loading } = useData(() => api.insights(scope), [scope.range, scope.source, scope.project])
-  const findings = useData(() => api.findings(scope), [scope.range, scope.source, scope.project])
+  const { data, error, loading } = useData(() => api.insights(scope), [scope.range, scope.source, scope.project, scope.committer])
+  const findings = useData(() => api.findings(scope), [scope.range, scope.source, scope.project, scope.committer])
 
   return (
     <>

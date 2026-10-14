@@ -51,7 +51,7 @@ function trailValue(trail: StoreTrail, key: TrailSort): number | string | null {
 export function Trails(): ReactElement {
   const scope = useScope()
   const outcome = useFilter('outcome')
-  const { data, error, loading } = useData(() => api.storeTrails(scope), [scope.range, scope.source, scope.project])
+  const { data, error, loading } = useData(() => api.storeTrails(scope), [scope.range, scope.source, scope.project, scope.committer])
   const [sorted, sortBy] = useSort<TrailSort>(trailNatural, { key: 'cost', dir: 'desc' })
 
   const shown = (data?.trails ?? []).filter((trail) => outcome === null || trail.outcome === outcome)

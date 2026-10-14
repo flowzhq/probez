@@ -76,7 +76,7 @@ function splitValue(row: SplitRow, key: SplitSort): number | string | null {
 export function Spend(): ReactElement {
   const scope = useScope()
   const by = asSplit(useFilter('by'))
-  const { data, error, loading } = useData(() => api.insights(scope), [scope.range, scope.source, scope.project])
+  const { data, error, loading } = useData(() => api.insights(scope), [scope.range, scope.source, scope.project, scope.committer])
   const [sorted, sortBy] = useSort<SplitSort>(splitNatural, { key: 'cost', dir: 'desc' })
 
   const split = SPLITS.find((one) => one.by === by)!

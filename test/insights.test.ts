@@ -145,7 +145,8 @@ const scope = (query: string) => scopeOf(new URLSearchParams(query), NOW)
 const pricing = defaultPricing()
 
 test('the scope opens on the last 30 days of everything, and refuses a range it does not offer', () => {
-  assert.deepEqual(scope(''), { range: '30d', source: null, project: null, now: NOW })
+  assert.deepEqual(scope(''), { range: '30d', source: null, project: null, committer: null, now: NOW })
+  assert.equal(scope('committer=Dana').committer, 'Dana')
   assert.equal(scope('range=7d&source=cursor&project=api-1').source, 'cursor')
   assert.throws(() => scope('range=1y'), BadRequest)
   assert.throws(() => scope('source=emacs'), BadRequest)
@@ -351,9 +352,10 @@ function snapshot(dir: string): Record<string, string> {
 const json = (response: Response): Promise<any> => response.json()
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-async function serving(dataDir: string): Promise<Serving> {
+async function serving(dataDir: string, debug = false): Promise<Serving> {
   forgetRounds()
   return startServer({
+    debug,
     dataDir,
     claudeDir: '',
     cursorDir: '',
@@ -371,7 +373,7 @@ async function serving(dataDir: string): Promise<Serving> {
 test('the store-wide routes answer with the token, refuse without it, and only read', async () => {
   const { dataDir } = makeStore()
   const before = snapshot(dataDir)
-  const server = await serving(dataDir)
+  const server = await serving(dataDir, true)
   const url = (path: string, token = true): string =>
     `http://127.0.0.1:${server.port}${path}${token ? `${path.includes('?') ? '&' : '?'}t=${server.token}` : ''}`
   try {
@@ -418,4 +420,62 @@ test('thresholds are read with GET, saved with POST, and refused when they are n
   } finally {
     await server.close()
   }
+})
+
+test('trails and questions answer only under --debug, and the findings drawn from them with them', async () => {
+  const { dataDir } = makeStore()
+  const plain = await serving(dataDir)
+  const url = (server: Serving, path: string): string =>
+    `http://127.0.0.1:${server.port}${path}${path.includes('?') ? '&' : '?'}t=${server.token}`
+  try {
+    assert.equal((await json(await fetch(url(plain, '/api/meta')))).debug, false)
+    for (const path of [
+      '/api/questions?range=all',
+      '/api/trails?range=all',
+      '/api/projects/shop-1/trails',
+      '/api/projects/shop-1/questions',
+      '/api/search?q=tool:Grep&in=trails',
+    ]) {
+      const refused = await fetch(url(plain, path))
+      assert.equal(refused.status, 404, path)
+      assert.match((await json(refused)).error, /--debug/, path)
+    }
+    // Searching rounds is not a trail and is not refused.
+    assert.equal((await fetch(url(plain, '/api/search?q=tool:Grep'))).status, 200)
+    const findings = await json(await fetch(url(plain, '/api/findings?range=all')))
+    assert.ok(!findings.findings.some((one: { id: string }) => one.id === 'reasked' || one.id === 'abandoned'))
+  } finally {
+    await plain.close()
+  }
+  const debug = await serving(dataDir, true)
+  try {
+    assert.equal((await json(await fetch(url(debug, '/api/meta')))).debug, true)
+    assert.equal((await fetch(url(debug, '/api/projects/shop-1/trails'))).status, 200)
+    const findings = await json(await fetch(url(debug, '/api/findings?range=all')))
+    assert.ok(findings.findings.some((one: { id: string }) => one.id === 'reasked'))
+  } finally {
+    await debug.close()
+    // The flag is the process's, so put it back for the tests after this one.
+    await (await serving(dataDir)).close()
+  }
+})
+
+test("the committer scope keeps one person's rounds, counting this machine's own as its name", async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'probez-insights-'))
+  writeFileSync(join(dataDir, 'identity.json'), JSON.stringify({ name: 'Itay' }))
+  project(dataDir, 'mixed-1', 'mixed', '/w/mixed', [
+    round({ session: 'cccc0001', round: 0, ts: at(1) }),
+    round({ session: 'cccc0001', round: 1, ts: at(1) }),
+    round({ session: 'dddd0001', round: 0, ts: at(2), committer: 'Dana' }),
+  ])
+  forgetRounds()
+  const everyone = await insightsPayload(dataDir, scope('range=all'))
+  const mine = await insightsPayload(dataDir, scope('range=all&committer=Itay'))
+  const hers = await insightsPayload(dataDir, scope('range=all&committer=Dana'))
+  assert.equal(everyone.totals.rounds, 3)
+  assert.equal(mine.totals.rounds, 2)
+  assert.equal(hers.totals.rounds, 1)
+  assert.equal(hers.scope.committer, 'Dana')
+  const sessions = await sessionsPayload(dataDir, scope('range=all&committer=Dana'))
+  assert.deepEqual(sessions.sessions.map((one) => one.session), ['dddd0001'])
 })

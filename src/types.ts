@@ -135,6 +135,14 @@ export interface Round {
    * be lost for half the formats, and for any subset somebody cut out by hand. See `darken.ts`.
    */
   darkened?: true
+  /**
+   * Who recorded this round, when it was merged in from another machine's export. Absent means it
+   * was collected here, and is this machine's own: see `identity.ts`, which names that person.
+   *
+   * Written on the way out by `export` for every round that has none, so a round carries the name
+   * of the machine it was first collected on however many stores it passes through.
+   */
+  committer?: string
   /** "sub" for subagent work, "main" otherwise. Not which product produced the session. */
   agent: 'main' | 'sub'
   /**

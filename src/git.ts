@@ -226,6 +226,25 @@ export async function readCommitLog(root: string): Promise<CommitTimeline | null
 }
 
 /**
+ * The name this machine's git signs commits with, or null when it has none.
+ *
+ * The second and last thing probez asks git, and a read like the first: `config --get`, which
+ * prints one value and writes nothing. It is the default for who this machine's rounds belong to —
+ * see `identity.ts` — because it is the name most people already answer to in a commit. Every
+ * failure is null for the reason `readCommitLog` gives: no git is an ordinary machine.
+ */
+export async function readGitUserName(): Promise<string | null> {
+  const out = await run('git', ['--no-pager', 'config', '--get', 'user.name'], {
+    timeout: GIT_MS,
+    encoding: 'utf8',
+    windowsHide: true,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+  }).catch(() => null)
+  const name = out?.stdout.trim() ?? ''
+  return name === '' ? null : name
+}
+
+/**
  * The git directory governing a path, walking up the way git itself does.
  *
  * `.git` is a directory in a normal checkout and a file holding `gitdir: <path>` in a worktree or a

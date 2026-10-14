@@ -132,7 +132,7 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
               <span className="muted mono clip">{data.data_dir}</span>
             </div>
             <div className="fbar" style={{ justifyContent: 'space-between' }}>
-              <OpenInExplorer scope={{ range: 'all', source, project: null }} entity="projects" />
+              <OpenInExplorer scope={{ range: 'all', source, project: null, committer: null }} entity="projects" />
               <div className="toggle" role="group" aria-label="Columns">
                 <span className="muted" style={{ marginRight: 6 }}>
                   Columns
@@ -252,6 +252,16 @@ export function Projects({ source = null }: { source?: SourceChoice | null }): R
                               title="It was darkened on the way out of the store it came from: these figures are real, the words behind them were replaced"
                             >
                               darkened
+                            </span>
+                          )}
+                          {/* Work merged in from another machine sits in these numbers beside this
+                              machine's own, so the row names whose it is. */}
+                          {(project.committers ?? []).length === 0 ? null : (
+                            <span
+                              className="mark"
+                              title={`Holds work merged in from another computer: ${(project.committers ?? []).join(', ')}. Filter to one person's with the Committer chip.`}
+                            >
+                              + {(project.committers ?? []).join(', ')}
                             </span>
                           )}
                           <SourceMarks sources={project.sources} />

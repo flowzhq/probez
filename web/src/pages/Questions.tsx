@@ -52,7 +52,7 @@ function questionValue(question: StoreQuestion, key: QuestionSort): number | str
 export function Questions(): ReactElement {
   const scope = useScope()
   const reasked = useFilter('reasked')
-  const { data, error, loading } = useData(() => api.storeQuestions(scope), [scope.range, scope.source, scope.project])
+  const { data, error, loading } = useData(() => api.storeQuestions(scope), [scope.range, scope.source, scope.project, scope.committer])
   const [sorted, sortBy] = useSort<QuestionSort>(questionNatural, { key: 'cost', dir: 'desc' })
 
   const shown = (data?.questions ?? []).filter((question) => reasked === null || question.repeats > 0)

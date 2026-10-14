@@ -47,6 +47,10 @@ is executed by probez, every failure is simply no answer, and probez works the s
 installed. It runs only when it can add something: a reflog that still holds the repository's first
 commit covers it whole, and for one of those no command is run at all.
 
+One more read of git, not of any repository: `git config --get user.name`, once a run, as the
+default name this machine's rounds are exported under when none is set in Settings. It goes through
+the same argv-only path in `src/git.ts`, and a machine without git falls back to the account name.
+
 What is kept from either is a commit hash per round and nothing else; branch names, commit messages,
 and the identity of whoever made the commits are all in that reflog and that history, and none of
 them are stored. A directory that is not a checkout, or one where neither source can answer, is

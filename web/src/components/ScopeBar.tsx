@@ -6,6 +6,7 @@ import { changeScope, RANGE_LABEL, RANGES, useScope } from '../scope'
 import { SOURCE_CHOICES, SOURCE_LABEL } from '../source'
 import type { SourceChoice } from '../source'
 import { useData } from '../useData'
+import { useIdentity } from '../meta'
 
 /**
  * The project names the Project chip offers, read once a page load.
@@ -30,7 +31,7 @@ export function forgetProjectList(): void {
 }
 
 /**
- * Time, agent and project, as three chips that are each a real `<select>`.
+ * Time, agent and project — and whose work, once there is more than one person's — as chips that are each a real `<select>`.
  *
  * A native select, styled to sit in the bar, rather than a menu of our own: it is keyboard and
  * screen-reader complete for free, and on a phone it opens the platform's own picker.
@@ -38,6 +39,7 @@ export function forgetProjectList(): void {
 export function ScopeBar({ only }: { only?: 'agent' }): ReactElement {
   const scope = useScope()
   const { data } = useData(() => (only === 'agent' ? Promise.resolve(null) : projects()), [only])
+  const identity = useIdentity()
 
   return (
     <div className="scope-bar" role="group" aria-label="Scope">
@@ -91,6 +93,28 @@ export function ScopeBar({ only }: { only?: 'agent' }): ReactElement {
             {(data?.projects ?? []).map((project) => (
               <option key={project.slug} value={project.slug}>
                 {project.project}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {/* Only once the store holds more than one person's work: a merge from another machine is
+          what brings a second name, and before that the chip would offer a choice of one. */}
+      {only === 'agent' || identity === null || (identity.committers.length < 2 && scope.committer === null) ? null : (
+        <label className="chip scope-chip">
+          <span>Committer</span>
+          <select
+            aria-label="Committer"
+            value={scope.committer ?? ''}
+            onChange={(event) => changeScope({ committer: event.target.value === '' ? null : event.target.value })}
+          >
+            <option value="">Everyone</option>
+            {scope.committer !== null && !identity.committers.includes(scope.committer) ? (
+              <option value={scope.committer}>{scope.committer}</option>
+            ) : null}
+            {identity.committers.map((name) => (
+              <option key={name} value={name}>
+                {name === identity.committer ? `${name} (you)` : name}
               </option>
             ))}
           </select>

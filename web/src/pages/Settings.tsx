@@ -11,6 +11,7 @@ import { forgetProjectList } from '../components/ScopeBar'
 import { href, linkProps, SETTINGS_TABS } from '../router'
 import type { SettingsTab } from '../router'
 import { useData } from '../useData'
+import { forgetIdentity, useDebug } from '../meta'
 import type { ReactElement } from 'react'
 
 /** The five rates, in the order money moves: in, cached, back out. */
@@ -303,6 +304,7 @@ const TAB_LABEL: Record<SettingsTab, string> = {
  * finding can send you straight to the line it was drawn at.
  */
 export function Settings({ tab }: { tab: SettingsTab }): ReactElement {
+  const debug = useDebug()
   return (
     <>
       <Chrome crumbs={[{ label: 'Settings' }, { label: TAB_LABEL[tab] }]} search={{}} scope="none" />
@@ -311,7 +313,8 @@ export function Settings({ tab }: { tab: SettingsTab }): ReactElement {
           <h1>Settings</h1>
         </div>
         <div className="tabs" role="tablist" aria-label="Settings">
-          {SETTINGS_TABS.map((one) => (
+          {/* The reader explains questions, which exist under `probez view --debug` only. */}
+          {SETTINGS_TABS.filter((one) => debug || one !== 'reader' || tab === 'reader').map((one) => (
             <a
               key={one}
               role="tab"
@@ -333,11 +336,92 @@ export function Settings({ tab }: { tab: SettingsTab }): ReactElement {
           ) : tab === 'reader' ? (
             <Reader />
           ) : (
-            <DangerZone onCleared={() => forgetProjectList()} />
+            <>
+              <Identity />
+              <DangerZone onCleared={() => forgetProjectList()} />
+            </>
           )}
         </div>
       </main>
     </>
+  )
+}
+
+/**
+ * Who this machine's rounds belong to.
+ *
+ * Every export names its rounds for this, so whoever merges the file can tell your work from
+ * theirs and filter to either. Left blank, it is git's `user.name`, or the account name.
+ */
+function Identity(): ReactElement {
+  const { data, error } = useData(() => api.identity(), [])
+  const [name, setName] = useState<string | null>(null)
+  const [said, setSaid] = useState<string | null>(null)
+  const [bad, setBad] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (data !== null) setName(data.chosen ? data.committer : '')
+  }, [data])
+
+  if (error !== null && data === null) return <Problem message={error} />
+  if (data === null || name === null) return <Loading what="who you are" />
+
+  const save = async (wanted: string): Promise<void> => {
+    setSaving(true)
+    setSaid(null)
+    setBad(null)
+    try {
+      const saved = await api.saveIdentity(wanted)
+      setName(saved.chosen ? saved.committer : '')
+      setSaid(`Saved. Your exports name their rounds ${saved.committer}.`)
+      forgetIdentity()
+    } catch (problem) {
+      setBad(problem instanceof Error ? problem.message : String(problem))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section>
+      <h2>Who you are</h2>
+      <p className="note">
+        The name this machine's rounds go out under. Every export carries it, so when someone merges your
+        export into their copy of a project — <span className="mono">⋮ › Merge from another computer</span> —
+        your work and theirs can be told apart, and the charts filtered to either. Rounds merged in from
+        elsewhere keep the name they arrived with.
+      </p>
+      <label className="threshold">
+        <span>
+          <strong>Your name</strong>
+          <span className="muted">
+            {data.chosen ? 'Clear it to go back to the one git gives.' : `Blank is ${data.committer}, from git or this account.`}
+          </span>
+        </span>
+        <span className="threshold-input">
+          <input
+            className="rate"
+            style={{ width: 220, textAlign: 'left' }}
+            aria-label="Your name"
+            value={name}
+            maxLength={80}
+            placeholder={data.chosen ? '' : data.committer}
+            onChange={(event) => {
+              setSaid(null)
+              setName(event.target.value)
+            }}
+          />
+        </span>
+      </label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
+        <button className="save" onClick={() => void save(name)} disabled={saving}>
+          {saving ? 'Saving…' : 'Save name'}
+        </button>
+        {said === null ? null : <span className="muted">{said}</span>}
+        {bad === null ? null : <span className="bad">{bad}</span>}
+      </div>
+    </section>
   )
 }
 

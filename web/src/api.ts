@@ -140,6 +140,35 @@ export interface StoredProject {
   /** When this arrived darkened, or null when what it holds is as it was recorded. */
   darkened_at: string | null
   sources: Array<'claude-code' | 'cursor' | 'codex' | 'copilot' | 'pi' | 'opencode' | 'goose' | 'cline'>
+  /** When another machine's export was last merged in, or null when all of it was collected here. */
+  merged_at: string | null
+  /** Whose merged-in work it holds, beside this machine's own. */
+  committers: string[]
+}
+
+/** What a merge did. Mirrors `MergeResult` in src/store.ts. */
+export interface MergeResult {
+  slug: string
+  project: string
+  added: number
+  updated: number
+  kept: number
+  skipped: number
+  committers: Array<{ name: string; rounds: number }>
+  rounds: number
+  sessions: number
+}
+
+/** Who this machine's rounds belong to, and everyone else's the store holds. */
+export interface IdentityPayload {
+  committer: string
+  chosen: boolean
+  committers: string[]
+}
+
+/** How `probez view` was started. */
+export interface MetaPayload {
+  debug: boolean
 }
 
 export interface TraceRound {
@@ -689,13 +718,16 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
  * that has far less room than the server it is talking to. A `File` handed straight to `fetch` is
  * streamed off disk instead, so the tab holds none of it.
  */
-async function postFile<T>(path: string, file: File): Promise<T> {
+async function postFile<T>(path: string, file: File, committer?: string): Promise<T> {
   return send<T>(
     path,
     {
       'content-type': 'application/x-ndjson',
       // Percent-encoded because a header is ASCII and a filename is whatever the sender typed.
       'x-probez-filename': encodeURIComponent(file.name),
+      ...(committer === undefined || committer.trim() === ''
+        ? {}
+        : { 'x-probez-committer': encodeURIComponent(committer.trim()) }),
     },
     file,
   )
@@ -925,6 +957,7 @@ export interface ScopeShown {
   range: Range
   source: string | null
   project: string | null
+  committer: string | null
   from: string | null
   to: string | null
 }
@@ -1092,12 +1125,14 @@ export interface ScopeQuery {
   range: Range
   source: string | null
   project: string | null
+  committer: string | null
 }
 
 function scopeQuery(scope: ScopeQuery): string {
   const query = new URLSearchParams({ range: scope.range })
   if (scope.source !== null) query.set('source', scope.source)
   if (scope.project !== null) query.set('project', scope.project)
+  if (scope.committer !== null) query.set('committer', scope.committer)
   return query.toString()
 }
 
@@ -1158,6 +1193,13 @@ export const api = {
     post<ReaderPayload>('/reader', { command, timeout_ms: timeoutMs }),
   savePricing: (models: Record<string, Rates | null>) => post<PricingPayload>('/pricing', { models }),
   import: (file: File) => postFile<ImportResult>('/import', file),
+  // Another machine's export of this project, added to it rather than kept apart. `committer` is
+  // only needed for a file that does not say whose work it is.
+  merge: (slug: string, file: File, committer?: string) =>
+    postFile<MergeResult>(`/projects/${slug}/merge`, file, committer),
+  meta: () => get<MetaPayload>('/meta'),
+  identity: () => get<IdentityPayload>('/identity'),
+  saveIdentity: (name: string) => post<IdentityPayload>('/identity', { name }),
   // A read, so a GET: answering a query writes nothing, not even the index it is answered from.
   search: (q: string, options: { slug?: string | null; entity?: Entity; limit?: number } = {}) => {
     const query = new URLSearchParams({ q })

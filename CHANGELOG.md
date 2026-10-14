@@ -8,6 +8,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 
 ## [Unreleased]
 
+### Added
+
+- **Merge from another computer.** A project's `⋮` menu has **Merge from another computer…**: pick
+  an export of the same project made on another machine (`Export rounds` or `Export bundle` there)
+  and its rounds join the ones collected here, read as one project. Rounds are matched on
+  `session+id`, so merging the same file twice changes nothing and a newer export brings only what
+  is new; a round this machine collected itself is never replaced. A copy of what was merged is kept
+  in `merged.jsonl` beside the rounds, so a schema rebuild puts it back. The CLI does the same with
+  `probez import <file> --into <project>`.
+- **Who recorded each round.** Every export now names its rounds for the machine that made it, and a
+  merge keeps that name, so the scope bar grows a **Committer** chip once the store holds more than
+  one person's work: every Insights chart and list can show yours, theirs, or everyone's. Your name
+  is set under **Settings › Data › Who you are**, kept in `identity.json`; left blank it is git's
+  `user.name`, or the account name. Rounds collected here carry no name on disk and take yours when
+  read or exported, so nothing already in the store needs rewriting. A file from before this, which
+  names nobody, asks whose work it is before it merges (`--committer <name>` on the CLI). The
+  projects list marks a project holding merged work with whose it is. `GET`/`POST /api/identity`,
+  `GET /api/meta`, `POST /api/projects/<slug>/merge`, and `committer` on every scoped route.
+
+### Changed
+
+- **Trails and questions are behind `probez view --debug`.** They are probez reading its own
+  reading — useful for working on the classifier, and not what anyone opens the view to learn — and
+  even with 0.8.1's faster result reader they are a pass over every call and a read of the archived
+  result bodies. Without `--debug` the view neither computes nor shows them: Questions and Trails
+  leave the menu, the project page lists sessions only, a task has no *What it needed to know*, the
+  session drawer no costliest questions, Explorer no questions or trails tabs (typed `in:trails`
+  included), the Reader settings tab is hidden, and Findings drops *asked again* and *trails that
+  changed nothing*. Their routes answer 404 saying so. The `probez trails`, `questions` and
+  `explain` commands are unchanged.
+- The `.jsonl` export is the store's file with each round named for who recorded it, rather than
+  the file byte for byte. A darkened export tokens the names too.
+- `git.ts` asks git one more thing, `git config --get user.name`, as the default name exports are
+  signed with. See SECURITY.md.
+
 ## [0.8.1] - 2026-10-13
 
 ### Fixed
