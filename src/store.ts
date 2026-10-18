@@ -403,9 +403,16 @@ export async function eachRound(file: string, visit: (round: Round) => void): Pr
         // a torn line from an interrupted write; skip it
       }
     }
-  } catch {
-    // file does not exist yet
+  } catch (error) {
+    // A file that does not exist yet has no rounds. Any other failure is not the same thing: a
+    // caller that rewrites the file from what it read would otherwise replace it with nothing.
+    if (!isMissing(error)) throw error
   }
+}
+
+/** The file is not there, as opposed to there and unreadable. */
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
 }
 
 /**
@@ -442,8 +449,9 @@ export async function eachRoundLine(
       }
       offset += bytes + 1
     }
-  } catch {
-    // file does not exist yet
+  } catch (error) {
+    // See `eachRound`: only a missing file reads as an empty one.
+    if (!isMissing(error)) throw error
   }
 }
 
@@ -721,6 +729,129 @@ async function withArchived(
   return out
 }
 
+/* One writer per project, across processes. ---------------------------------------------------- */
+
+/** Beside the rounds it guards, so a project removed takes its lock with it. */
+const LOCK_FILE = 'write.lock'
+const LOCK_POLL_MS = 50
+/** A lock file with no pid in it yet is one being written; this long after, it never will be. */
+const LOCK_UNWRITTEN_MS = 10_000
+/**
+ * How long a writer waits before saying who it is waiting for. Long enough for a full rebuild of a
+ * big project; short enough that a lock held by a pid some other program has since been given is
+ * reported rather than waited on forever.
+ */
+const LOCK_WAIT_MS = 5 * 60_000
+
+/**
+ * Run `work` as the only writer to this project's files.
+ *
+ * Collect appends to `rounds.jsonl`, and a merge or a trim rewrites it beside and moves the copy
+ * over. A rewrite that read the file before an append and moved its copy over after loses those
+ * rounds for good, because collect has already marked their sessions read. The view's own queue
+ * (`exclusive` in viewdata.ts) only covers its process, and `probez collect`, `probez import
+ * --into` and a second `probez view` are each a process of their own. So the lock is a file:
+ * created exclusively, holding the pid that made it, and taken over once that pid is gone, so a
+ * crash or a Ctrl-C cannot leave a project locked for good. A pid that is not gone but was handed to
+ * another program cannot be told apart from a writer, so waiting has a deadline, and the error says
+ * which pid and which file.
+ *
+ * Not re-entrant: a writer called from inside another's `work` would wait for itself. Each public
+ * writer takes it once, at the top, and never calls another while holding it.
+ *
+ * `create` is for collect, the one writer that makes a project. Every other writer finding no
+ * directory runs unlocked, finds nothing to write to, and says so.
+ */
+export async function withProjectLock<T>(dir: string, work: () => Promise<T>, create = false): Promise<T> {
+  const file = join(dir, LOCK_FILE)
+  const deadline = Date.now() + LOCK_WAIT_MS
+  let held = false
+  for (;;) {
+    try {
+      const handle = await open(file, 'wx', FILE_MODE)
+      try {
+        await handle.writeFile(String(process.pid), 'utf8')
+      } finally {
+        await handle.close()
+      }
+      held = true
+      break
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT') {
+        if (!create) break
+        await mkdir(dir, { recursive: true, mode: DIR_MODE })
+        continue
+      }
+      if (code !== 'EEXIST') throw error
+      if (await takeOver(file)) continue
+      if (Date.now() > deadline) {
+        const holder = (await readFile(file, 'utf8').catch(() => '')).trim() || 'unknown'
+        throw new Error(
+          `${dir} is still being written by process ${holder} after ${LOCK_WAIT_MS / 60_000} minutes. ` +
+            `If no probez is running, delete ${file} and try again.`,
+        )
+      }
+      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS))
+    }
+  }
+  try {
+    return await work()
+  } finally {
+    if (held) await rm(file, { force: true })
+  }
+}
+
+/**
+ * Remove the lock if whoever holds it is gone, and say whether it did.
+ *
+ * Checking and removing are two steps, and two waiters that both found the same dead pid could
+ * otherwise both remove: the first its stale lock, the second the fresh one the first had made by
+ * then, and both would write. So a takeover is itself exclusive, through a second file that lives
+ * only for the moment it takes. Holding it, nothing can replace the lock under the check: the
+ * lock is only ever removed by its live owner, who is not dead, or by whoever holds this.
+ */
+async function takeOver(file: string): Promise<boolean> {
+  const guard = `${file}.takeover`
+  try {
+    await (await open(guard, 'wx', FILE_MODE)).close()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    // Another waiter is checking. One that died doing it left this behind; it takes milliseconds.
+    const info = await stat(guard).catch(() => null)
+    if (info !== null && Date.now() - info.mtimeMs > LOCK_UNWRITTEN_MS) await rm(guard, { force: true })
+    return false
+  }
+  try {
+    if ((await abandonedBy(file)) === null) return false
+    await rm(file, { force: true })
+    return true
+  } finally {
+    await rm(guard, { force: true })
+  }
+}
+
+/** The lock file's contents when whoever wrote it is gone, or null while it is still held. */
+async function abandonedBy(file: string): Promise<string | null> {
+  const [text, info] = await Promise.all([
+    readFile(file, 'utf8').catch(() => null),
+    stat(file).catch(() => null),
+  ])
+  // Released between the failed create and here: free, and the next attempt takes it.
+  if (text === null || info === null) return null
+  const pid = Number(text)
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return Date.now() - info.mtimeMs > LOCK_UNWRITTEN_MS ? text : null
+  }
+  try {
+    process.kill(pid, 0)
+    return null
+  } catch (error) {
+    // EPERM is a process that exists and is not ours to signal: alive, and still holding it.
+    return (error as NodeJS.ErrnoException).code === 'EPERM' ? null : text
+  }
+}
+
 /**
  * Normalize a project's sessions into its store.
  *
@@ -735,6 +866,14 @@ export async function collectProject(
   project: Project,
   dataDir: string,
   options: { full?: boolean; since?: number; copilotVsLogDir?: string } = {},
+): Promise<CollectResult> {
+  return withProjectLock(projectDir(dataDir, project), () => collectUnlocked(project, dataDir, options), true)
+}
+
+async function collectUnlocked(
+  project: Project,
+  dataDir: string,
+  options: { full?: boolean; since?: number; copilotVsLogDir?: string },
 ): Promise<CollectResult> {
   const dir = projectDir(dataDir, project)
   const roundsFile = join(dir, 'rounds.jsonl')
@@ -1220,6 +1359,15 @@ export async function mergeIntoProject(
 ): Promise<MergeResult | null> {
   const dir = ownDir(dataDir, slug)
   if (dir === null) return null
+  return withProjectLock(dir, () => mergeUnlocked(dir, slug, incoming, skipped))
+}
+
+async function mergeUnlocked(
+  dir: string,
+  slug: string,
+  incoming: Round[],
+  skipped: number,
+): Promise<MergeResult | null> {
   const manifestFile = join(dir, 'manifest.json')
   const manifest = await readJson<Manifest>(manifestFile)
   if (manifest === null) return null
@@ -1272,8 +1420,11 @@ export async function mergeIntoProject(
   }
 
   const tally = newTally()
-  await rewriteWith(roundsFile, accepted, (round) => countRound(tally, round))
+  // The copy first. A merge cut short after it leaves rounds a rebuild still puts back, and that
+  // merging again repairs; cut short after the rounds instead, they would look merged, a second
+  // merge would find nothing to do, and the next rebuild would drop them.
   await rewriteWith(join(dir, MERGED_FILE), accepted, () => undefined)
+  await rewriteWith(roundsFile, accepted, (round) => countRound(tally, round))
   // The analysis and the index beside it were computed from the rounds before these arrived.
   await rm(join(dir, 'analysis.jsonl'), { force: true })
   await rm(join(dir, 'search.jsonl'), { force: true })
@@ -1423,6 +1574,10 @@ export async function renameProject(
 ): Promise<StoredProject | null> {
   const dir = ownDir(dataDir, slug)
   if (dir === null) return null
+  return withProjectLock(dir, () => renameUnlocked(dir, slug, name))
+}
+
+async function renameUnlocked(dir: string, slug: string, name: string): Promise<StoredProject | null> {
   const file = join(dir, 'manifest.json')
   const manifest = await readJson<Manifest>(file)
   if (manifest === null) return null
@@ -1465,6 +1620,12 @@ export async function removeProject(
 ): Promise<RemoveResult | null> {
   const dir = ownDir(dataDir, slug)
   if (dir === null) return null
+  // Locked like any other write, so a collect or a merge underway finishes before the directory
+  // goes, rather than recreating part of it afterwards.
+  return withProjectLock(dir, () => removeUnlocked(dataDir, slug, dir))
+}
+
+async function removeUnlocked(dataDir: string, slug: string, dir: string): Promise<RemoveResult | null> {
   const stored = await findStored(dataDir, slug)
   if (stored === null) return null
   await rm(dir, { recursive: true, force: true })
@@ -1722,125 +1883,148 @@ export interface ClearResult {
  * What is never touched, here as everywhere: the agent's own session files. A session cleared by
  * mistake comes back with `probez collect`, minus whatever the agent has pruned since.
  */
-export async function applyClear(dataDir: string, plan: ClearPlan): Promise<ClearResult> {
+export async function applyClear(
+  dataDir: string,
+  plan: ClearPlan,
+  guard: <T>(slug: string, work: () => Promise<T>) => Promise<T> = (_slug, work) => work(),
+): Promise<ClearResult> {
   const result: ClearResult = { projects: 0, whole: 0, sessions: 0, rounds: 0, bytes: 0, removed: [] }
+  // Each project in turn, and each through `guard`: the view passes its own per-project queue, so
+  // a clear waits for a sync or a merge it started on the same project rather than racing it.
+  for (const one of plan.projects) await guard(one.slug, () => clearOne(dataDir, plan.before, one, result))
+  return result
+}
 
-  for (const one of plan.projects) {
-    const dir = ownDir(dataDir, one.slug)
-    if (dir === null) continue
+/** Take one project's share of a clear, adding what went to `result`. */
+async function clearOne(
+  dataDir: string,
+  before: number | null,
+  one: ClearPlanProject,
+  result: ClearResult,
+): Promise<void> {
+  const dir = ownDir(dataDir, one.slug)
+  if (dir === null) return
 
-    // `removeProject` reads the manifest to report what went, and these have none it can read.
-    // The plan's figures are all there is, and the fence above is the same one it applies.
-    if (one.whole && one.unreadable === true) {
-      if (!(await stat(dir).then(() => true, () => false))) continue
-      await rm(dir, { recursive: true, force: true })
-      result.projects += 1
-      result.whole += 1
-      result.sessions += one.sessions
-      result.rounds += one.rounds
-      result.bytes += one.bytes
-      result.removed.push(one.project)
-      continue
-    }
-
-    if (one.whole) {
-      const gone = await removeProject(dataDir, one.slug)
-      if (gone === null) continue
-      result.projects += 1
-      result.whole += 1
-      result.sessions += one.sessions
-      result.rounds += gone.rounds
-      result.bytes += one.bytes
-      result.removed.push(gone.project)
-      continue
-    }
-
-    const doomed = new Set(one.ids)
-    const roundsFile = join(dir, 'rounds.jsonl')
-    const target = `${roundsFile}.trim`
-    await rm(target, { force: true })
-
-    let kept: string[] = []
-    let dropped = 0
-    // Written out in batches rather than held whole: a project's rounds are the one thing here
-    // that can be tens of megabytes, and the point of this command is a store that got too big.
-    //
-    // Two things about this are load-bearing. The buffer is taken and reset in the same tick, so a
-    // round arriving while a write is in flight cannot be swallowed by the reset. And the writes
-    // are chained rather than awaited together, because appends that overlap land in whatever order
-    // the filesystem finishes them and `rounds.jsonl` is read back in file order.
-    let writing: Promise<void> = Promise.resolve()
-    const flush = (): void => {
-      if (kept.length === 0) return
-      const batch = kept.join('\n') + '\n'
-      kept = []
-      writing = writing.then(() =>
-        appendFile(target, batch, { encoding: 'utf8', mode: FILE_MODE }),
-      )
-    }
-    await eachRound(roundsFile, (round) => {
-      if (doomed.has(round.session)) {
-        dropped += 1
-        return
-      }
-      kept.push(JSON.stringify(round))
-      if (kept.length >= 2000) flush()
-    })
-    flush()
-    await writing
-
-    // A project whose rounds all turned out to be doomed after all — the store moved since the
-    // plan was made — is removed rather than left with an empty file.
-    const survived = await fileSize(target)
-    if (survived === 0) {
-      await rm(target, { force: true })
-      const gone = await removeProject(dataDir, one.slug)
-      if (gone !== null) {
-        result.projects += 1
-        result.whole += 1
-        result.sessions += one.sessions
-        result.rounds += gone.rounds
-        result.bytes += one.bytes
-        result.removed.push(gone.project)
-      }
-      continue
-    }
-
-    await rename(target, roundsFile)
-    await tighten(roundsFile, FILE_MODE)
-
-    for (const id of doomed) {
-      await rm(join(dir, 'sessions', safeSessionFilename(id)), { force: true })
-    }
-    // Merged rounds have a copy of their own, which a rebuild puts back; a session cleared from
-    // the rounds has to go from there too, or the next rebuild would quietly undo the clear.
-    await dropSessions(join(dir, MERGED_FILE), doomed)
-
-    // The state is what tells the next collect a session is already read. A session that is no
-    // longer here has not been read, and saying otherwise would mean it never came back.
-    const state = await readJson<State>(join(dir, 'state.json'))
-    if (state !== null) {
-      for (const id of doomed) delete state.sessions[id]
-      await writeFile(join(dir, 'state.json'), JSON.stringify(state, null, 2) + '\n', {
-        encoding: 'utf8',
-        mode: FILE_MODE,
-      })
-      // `mode` above applies only when the file is created, and this one already existed. A store
-      // that was once left world-readable would otherwise stay that way through a trim.
-      await tighten(join(dir, 'state.json'), FILE_MODE)
-    }
-
-    await rm(join(dir, 'analysis.jsonl'), { force: true })
-    await rm(join(dir, 'search.jsonl'), { force: true })
-    await refreshManifest(dataDir, one.slug, dir)
-
+  const removed = (rounds: number, project: string): void => {
     result.projects += 1
-    result.sessions += doomed.size
-    result.rounds += dropped
+    result.whole += 1
+    result.sessions += one.sessions
+    result.rounds += rounds
     result.bytes += one.bytes
+    result.removed.push(project)
   }
 
-  return result
+  // `removeProject` reads the manifest to report what went, and these have none it can read.
+  // The plan's figures are all there is, and the fence above is the same one it applies.
+  if (one.whole && one.unreadable === true) {
+    if (!(await stat(dir).then(() => true, () => false))) return
+    await withProjectLock(dir, () => rm(dir, { recursive: true, force: true }))
+    removed(one.rounds, one.project)
+    return
+  }
+
+  // Everything means everything, whatever arrived since the plan was shown.
+  if (before === null) {
+    const gone = await removeProject(dataDir, one.slug)
+    if (gone !== null) removed(gone.rounds, gone.project)
+    return
+  }
+
+  // A window is decided again here, under the lock, from what is on disk now. The plan was made
+  // before waiting for any sync or merge running on this project, and what those added is newer
+  // than the window: a session that gained a recent round is no longer old, and a project that
+  // gained one is no longer one to remove whole.
+  const outcome = await withProjectLock(
+    dir,
+    async (): Promise<{ whole: RemoveResult } | { dropped: number; sessions: number } | null> => {
+      const ages = await sessionAges(dir)
+      const doomed = new Set([...ages.entries()].filter(([, at]) => at < before).map(([id]) => id))
+      if (doomed.size === 0) return null
+      if (doomed.size === ages.size) {
+        const gone = await removeUnlocked(dataDir, one.slug, dir)
+        return gone === null ? null : { whole: gone }
+      }
+
+      const roundsFile = join(dir, 'rounds.jsonl')
+      const target = `${roundsFile}.trim`
+      await rm(target, { force: true })
+
+      let kept: string[] = []
+      let dropped = 0
+      // Written out in batches rather than held whole: a project's rounds are the one thing here
+      // that can be tens of megabytes, and the point of this command is a store that got too big.
+      //
+      // Two things about this are load-bearing. The buffer is taken and reset in the same tick, so a
+      // round arriving while a write is in flight cannot be swallowed by the reset. And the writes
+      // are chained rather than awaited together, because appends that overlap land in whatever order
+      // the filesystem finishes them and `rounds.jsonl` is read back in file order.
+      let writing: Promise<void> = Promise.resolve()
+      const flush = (): void => {
+        if (kept.length === 0) return
+        const batch = kept.join('\n') + '\n'
+        kept = []
+        writing = writing.then(() =>
+          appendFile(target, batch, { encoding: 'utf8', mode: FILE_MODE }),
+        )
+      }
+      await eachRound(roundsFile, (round) => {
+        if (doomed.has(round.session)) {
+          dropped += 1
+          return
+        }
+        kept.push(JSON.stringify(round))
+        if (kept.length >= 2000) flush()
+      })
+      flush()
+      await writing
+
+      // Nothing left after all: removed rather than left with an empty file.
+      const survived = await fileSize(target)
+      if (survived === 0) {
+        await rm(target, { force: true })
+        const gone = await removeUnlocked(dataDir, one.slug, dir)
+        return gone === null ? null : { whole: gone }
+      }
+
+      await rename(target, roundsFile)
+      await tighten(roundsFile, FILE_MODE)
+
+      for (const id of doomed) {
+        await rm(join(dir, 'sessions', safeSessionFilename(id)), { force: true })
+      }
+      // Merged rounds have a copy of their own, which a rebuild puts back; a session cleared from
+      // the rounds has to go from there too, or the next rebuild would quietly undo the clear.
+      await dropSessions(join(dir, MERGED_FILE), doomed)
+
+      // The state is what tells the next collect a session is already read. A session that is no
+      // longer here has not been read, and saying otherwise would mean it never came back.
+      const state = await readJson<State>(join(dir, 'state.json'))
+      if (state !== null) {
+        for (const id of doomed) delete state.sessions[id]
+        await writeFile(join(dir, 'state.json'), JSON.stringify(state, null, 2) + '\n', {
+          encoding: 'utf8',
+          mode: FILE_MODE,
+        })
+        // `mode` above applies only when the file is created, and this one already existed. A store
+        // that was once left world-readable would otherwise stay that way through a trim.
+        await tighten(join(dir, 'state.json'), FILE_MODE)
+      }
+
+      await rm(join(dir, 'analysis.jsonl'), { force: true })
+      await rm(join(dir, 'search.jsonl'), { force: true })
+      await refreshManifest(dataDir, one.slug, dir)
+      return { dropped, sessions: doomed.size }
+    },
+  )
+  if (outcome === null) return
+  if ('whole' in outcome) {
+    removed(outcome.whole.rounds, outcome.whole.project)
+    return
+  }
+  result.projects += 1
+  result.sessions += outcome.sessions
+  result.rounds += outcome.dropped
+  result.bytes += one.bytes
 }
 
 /** Take these sessions' rounds out of a rounds file, streamed, leaving it untouched if it has none. */

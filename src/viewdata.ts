@@ -87,10 +87,10 @@ import { isEntity, parse, print } from './query.js'
 import { FIELDS } from './query.js'
 import { fromStore, search } from './search.js'
 import type { SearchResult, Source } from './search.js'
-import { COMMAND_KINDS, subCommands, useCommandKinds } from './bash.js'
+import { COMMAND_KINDS, commandKindsVersion, subCommands, useCommandKinds } from './bash.js'
 import type { CommandKind } from './bash.js'
 import { commandsFile, readCommandKinds, writeCommandKinds } from './commands.js'
-import { buildIndex, isFacet, SearchIndex } from './searchindex.js'
+import { buildIndex, indexFile, isFacet, SearchIndex } from './searchindex.js'
 import { applyClear, planClear } from './store.js'
 import type { ClearPlan, ClearResult } from './store.js'
 import { contextShare, resolveModel } from './models.js'
@@ -381,6 +381,7 @@ const cache = new Map<string, Cached>()
 /** Drop everything held in memory. Only the tests need this; a run of `view` is one store. */
 export function forgetRounds(): void {
   cache.clear()
+  heldFacets.clear()
 }
 
 export async function roundsOf(dir: string): Promise<Round[]> {
@@ -594,8 +595,9 @@ function callsIn(rounds: Round[]): { tool_calls: number; errors: number } {
 /**
  * Every project in the store, with the shape of its work.
  *
- * The mix costs a full labelling pass per project, which is why the rounds cache exists: the first
- * request pays for the whole machine, and every later one is a map lookup.
+ * The mix costs a full labelling pass per project, which is why the rounds cache and the labels
+ * remembered beside it (`labelRounds`) exist: the first request pays for the whole machine, and
+ * every later one, until a project's rounds change, is a map lookup.
  */
 export async function projectsPayload(
   dataDir: string,
@@ -713,7 +715,8 @@ export async function sessionPayload(
   const mine = rounds.filter((round) => round.session === session)
   if (mine.length === 0) throw new NotFound(`no session ${session} in ${slug}`)
 
-  const work = workIndex(rounds)
+  // Only this session's rounds: every label asked of it below belongs to them.
+  const work = workIndex(mine)
   const byTask = new Map<number, Round[]>()
   for (const round of mine) {
     const found = byTask.get(round.task)
@@ -783,7 +786,8 @@ export async function taskPayload(
     throw new NotFound(`no task ${task} in session ${session}`)
   }
 
-  const work = workIndex(rounds)
+  // Only this task's rounds: every label asked of it below belongs to them.
+  const work = workIndex(mine)
   const row = taskRows(mine, pricing)[0]!
   // Under `--debug` only: see `debug.ts`. Trails are the slow half, a read of every result body.
   const questions = debugOn() ? questionsOf(mine, { root: stored.path ?? '' }) : []
@@ -832,15 +836,14 @@ export async function roundPayload(
   round: number,
 ): Promise<RoundPayload> {
   const { stored, rounds, pricing } = await open(dataDir, slug)
-  const labelled = labelRounds(rounds)
-  const found = rounds.find(
-    (candidate) => candidate.session.startsWith(session) && candidate.round === round,
-  )
+  // The whole id: a subagent's starts with its parent's, and numbers its rounds from 0 as well.
+  const found = rounds.find((candidate) => candidate.session === session && candidate.round === round)
   if (found === undefined) throw new NotFound(`no round ${round} in session ${session}`)
   return {
     project: shown(stored),
     round: found,
-    labels: labelled.get(found) ?? [],
+    // Each round is labelled on its own, so this one needs nothing from the rest of the project.
+    labels: labelRounds([found]).get(found) ?? [],
     context_share: contextShare(found),
   }
 }
@@ -927,10 +930,11 @@ export async function trailsPayload(
   const { stored, rounds } = await open(dataDir, slug, source)
   const results = await readResultsIn(stored.dir, idsToRead(rounds))
   const root = stored.path ?? ''
-  const share = trailShare(rounds, { results, root })
+  const trails = trailsOf(rounds, { results, root })
+  const share = trailShare(rounds, { results, root }, trails)
   return {
     project: shown(stored),
-    trails: shownTrails(trailsOf(rounds, { results, root })),
+    trails: shownTrails(trails),
     steps: share.steps,
     finding: share.finding,
   }
@@ -949,8 +953,9 @@ export async function questionsPayload(
   source: PageSource | null = null,
 ): Promise<QuestionsPayload> {
   const { stored, rounds } = await open(dataDir, slug, source)
-  const share = questionShare(rounds, { root: stored.path ?? '' })
-  const questions = questionsOf(rounds, { root: stored.path ?? '' }).sort(
+  const found = questionsOf(rounds, { root: stored.path ?? '' })
+  const share = questionShare(rounds, { root: stored.path ?? '' }, found)
+  const questions = [...found].sort(
     (a, b) => b.calls.length - a.calls.length || a.session.localeCompare(b.session) || a.task - b.task,
   )
   const readings = await readReadings(stored.dir)
@@ -1268,6 +1273,56 @@ export interface FacetPayload {
 }
 
 /**
+ * What one project's index offers for each key asked of it so far.
+ *
+ * Reading an index means reading and parsing the whole of `search.jsonl`, and the typeahead asks
+ * every project each time the word before a colon changes. The values only change when the index
+ * or the rounds under it do, so they are kept against both files' size and mtime, the same test
+ * the index itself makes. Only the values are kept, never the index, which is mostly postings.
+ */
+interface HeldFacets {
+  stamp: string
+  /** No usable index: stale, or never built. */
+  usable: boolean
+  values: Map<string, Array<{ value: string; rounds: number }>>
+}
+
+const heldFacets = new Map<string, HeldFacets>()
+
+/** This project's values for `key`, or null when it has no usable index. */
+async function facetsOf(
+  dir: string,
+  key: string,
+): Promise<Array<{ value: string; rounds: number }> | null> {
+  const [index, rounds] = await Promise.all([
+    stat(indexFile(dir)).catch(() => null),
+    stat(join(dir, 'rounds.jsonl')).catch(() => null),
+  ])
+  const stamp =
+    index === null || rounds === null
+      ? ''
+      : `${index.size}:${index.mtimeMs}:${rounds.size}:${rounds.mtimeMs}`
+  let held = heldFacets.get(dir)
+  if (held !== undefined && held.stamp === stamp) {
+    if (!held.usable) return null
+    const known = held.values.get(key)
+    if (known !== undefined) return known
+  }
+  const read = stamp === '' ? null : await SearchIndex.read(dir)
+  if (held === undefined || held.stamp !== stamp) {
+    held = { stamp, usable: read !== null, values: new Map() }
+    heldFacets.set(dir, held)
+  }
+  if (read === null) {
+    held.usable = false
+    return null
+  }
+  const values = isFacet(key) ? read.facets(key) : []
+  held.values.set(key, values)
+  return values
+}
+
+/**
  * What a query can name, and what the store actually holds for it.
  *
  * The field list is the same table the help prints and the parser validates against, so a key that
@@ -1294,18 +1349,21 @@ export async function facetsPayload(
 
   const stored = await listStored(dataDir)
   const wanted = options.slug === undefined ? stored : stored.filter((row) => row.slug === options.slug)
+  // A key with no values to offer reads nothing: every keystroke of a field name lands here.
+  if (key !== 'project' && !isFacet(key)) {
+    return { fields, key, values: [], scanned: { projects: wanted.length, indexed: 0 } }
+  }
   const counts = new Map<string, number>()
   let indexed = 0
   for (const row of wanted) {
-    const index = await SearchIndex.read(row.dir)
-    if (index === null) continue
+    const values = await facetsOf(row.dir, key)
+    if (values === null) continue
     indexed += 1
     if (key === 'project') {
       counts.set(row.project, (counts.get(row.project) ?? 0) + row.rounds)
       continue
     }
-    if (!isFacet(key)) continue
-    for (const one of index.facets(key)) {
+    for (const one of values) {
       counts.set(one.value, (counts.get(one.value) ?? 0) + one.rounds)
     }
   }
@@ -1365,7 +1423,7 @@ export async function clearStore(dataDir: string, body: unknown): Promise<ClearP
 
   const plan = await planClear(dataDir, { before })
   if (given.apply !== true) return { plan, done: null }
-  return { plan, done: await applyClear(dataDir, plan) }
+  return { plan, done: await applyClear(dataDir, plan, exclusive) }
 }
 
 /* Command names this machine knows and the shipped table does not. ---------------------------- */
@@ -1385,17 +1443,37 @@ export interface CommandsPayload {
   unnamed: Array<{ name: string; calls: number }>
 }
 
+/**
+ * Each project's unclassified commands, counted once per version of its rounds.
+ *
+ * Keyed on the array the rounds cache hands out, which stays the same until the file changes, and
+ * on the command table, which is what decides a command is unclassified. Counting means parsing
+ * every shell line a project ever ran, and the screen is opened, and saved, far more often than that.
+ */
+const unnamedCounts = new WeakMap<Round[], { version: number; calls: Map<string, number> }>()
+
+function unnamedIn(rounds: Round[]): Map<string, number> {
+  const held = unnamedCounts.get(rounds)
+  if (held !== undefined && held.version === commandKindsVersion()) return held.calls
+  const calls = new Map<string, number>()
+  for (const round of rounds) {
+    for (const tool of round.tools ?? []) {
+      for (const command of subCommands(tool)) {
+        if (command.kind !== 'other') continue
+        calls.set(command.name, (calls.get(command.name) ?? 0) + 1)
+      }
+    }
+  }
+  unnamedCounts.set(rounds, { version: commandKindsVersion(), calls })
+  return calls
+}
+
 export async function commandsPayload(dataDir: string): Promise<CommandsPayload> {
   const named = await readCommandKinds(dataDir)
   const calls = new Map<string, number>()
   for (const project of await listStored(dataDir)) {
-    for (const round of await roundsOf(project.dir)) {
-      for (const tool of round.tools ?? []) {
-        for (const command of subCommands(tool)) {
-          if (command.kind !== 'other') continue
-          calls.set(command.name, (calls.get(command.name) ?? 0) + 1)
-        }
-      }
+    for (const [name, count] of unnamedIn(await roundsOf(project.dir))) {
+      calls.set(name, (calls.get(name) ?? 0) + count)
     }
   }
   return {
@@ -1585,7 +1663,8 @@ export async function renameStored(
   const wanted = (body as { name?: unknown } | null)?.name
   if (typeof wanted !== 'string') throw new BadRequest('expected { name: "<what to call it>" }')
   if (wanted.length > MAX_NAME * 4) throw new BadRequest(`a name has to fit in ${MAX_NAME} characters`)
-  const renamed = await renameProject(dataDir, slug, wanted)
+  // Through the same queue as a sync and a merge, which rewrite the manifest this rewrites.
+  const renamed = await exclusive(slug, () => renameProject(dataDir, slug, wanted))
   if (renamed === null) throw new NotFound(`no project ${slug} in this store`)
   return { project: shown(renamed) }
 }
@@ -1600,7 +1679,9 @@ export async function renameStored(
  * asks first, and why this reports what went rather than answering with a tick.
  */
 export async function removeStored(dataDir: string, slug: string): Promise<RemoveResult> {
-  const removed = await removeProject(dataDir, slug)
+  // Behind any sync or merge already running on it: a sync writes its analysis and index after
+  // collect, and would otherwise put back part of a directory that was just removed.
+  const removed = await exclusive(slug, () => removeProject(dataDir, slug))
   if (removed === null) throw new NotFound(`no project ${slug} in this store`)
   // The rounds cache is keyed on a file that no longer exists.
   cache.delete(removed.dir)
@@ -1646,7 +1727,12 @@ export async function exportProject(
   const shownCommitter = tokens === null ? committer : darkenCommitter(tokens, committer)
 
   if (format === 'jsonl') {
-    const body = await readFile(join(stored.dir, 'rounds.jsonl'), 'utf8').catch(() => '')
+    // A project with no rounds file exports as empty. Any other failure to read it fails the export,
+    // rather than handing over an empty file reported as a successful one.
+    const body = await readFile(join(stored.dir, 'rounds.jsonl'), 'utf8').catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return ''
+      throw error
+    })
     return {
       filename: `${stored.slug}-rounds.jsonl`,
       type: 'application/x-ndjson; charset=utf-8',

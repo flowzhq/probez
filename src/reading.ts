@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { ASK_MEANING, ASKS, isAsk } from './question.js'
 import { readerName, readerShortName, runReader } from './reader.js'
+import { withProjectLock } from './store.js'
 import type { Ask, Question } from './question.js'
 import type { ReaderConfig } from './reader.js'
 
@@ -280,17 +281,30 @@ export async function readReadings(dir: string): Promise<Record<string, Reading>
  * Add one reading to a project's file.
  *
  * Read-modify-write of the whole file: it holds one short record per question a person has asked
- * about by hand, so it stays small, and one writer at a time is what "a person clicked explain"
- * means.
+ * about by hand, so it stays small. But two explains can overlap — another tab, another task, or
+ * `probez explain` beside the view — and `readReadings` takes a file it cannot parse for an empty
+ * one, so a save that read a half-written file would write back its own reading alone and drop
+ * every other. So the save holds the project's lock across the read and the write, and writes
+ * beside the file and moves the copy over, so no reader ever sees it half-written and a save cut
+ * off leaves the old file whole.
+ *
+ * A project deleted while its reader ran is not made again to hold the answer: the folder is gone,
+ * the write finds nothing to write to, and the reading goes with the project.
  */
 export async function saveReading(dir: string, key: string, reading: Reading): Promise<void> {
-  const readings = await readReadings(dir)
-  readings[key] = reading
-  const body: Readings = { schema_version: READING_VERSION, readings }
-  await mkdir(dir, { recursive: true, mode: 0o700 })
-  await writeFile(readingsFile(dir), JSON.stringify(body, null, 2) + '\n', {
-    encoding: 'utf8',
-    mode: 0o600,
+  await withProjectLock(dir, async () => {
+    const readings = await readReadings(dir)
+    readings[key] = reading
+    const body: Readings = { schema_version: READING_VERSION, readings }
+    const file = readingsFile(dir)
+    const target = `${file}.write`
+    try {
+      await writeFile(target, JSON.stringify(body, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+    await rename(target, file)
   })
 }
 

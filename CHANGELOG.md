@@ -43,6 +43,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is pub
 - `git.ts` asks git one more thing, `git config --get user.name`, as the default name exports are
   signed with. See SECURITY.md.
 
+### Fixed
+
+- **Writes to one project no longer race.** Collect, merge, rename, delete and a clear's trim take a
+  lock file (`write.lock`) in the project's directory, so a `probez collect` or `import --into` in
+  another terminal, or a second `probez view`, waits instead of losing rounds the other just wrote.
+  A lock left by a process that has exited is taken over. In the view, rename, delete and clear also
+  wait behind a sync or merge already running on the project, so a project deleted mid-sync no
+  longer comes back half-built.
+- A merge writes `merged.jsonl` before `rounds.jsonl`, so one cut short is repaired by merging the
+  file again rather than looking merged and vanishing on the next rebuild.
+- A rounds file that exists but cannot be read is an error, not an empty file. A merge can no longer
+  replace a project's rounds with only the incoming ones, and an export no longer saves an empty file
+  reported as a success.
+- Opening a round finds it by its whole session id, so a parent's round no longer opens a subagent's.
+- Pages that label every round (Projects, Overview, a single round, Settings › Commands) remember the
+  labels until the rounds or the command table change, search suggestions remember each project's
+  values until its index changes, and the browser no longer sends the same request twice at once.
+
 ## [0.8.1] - 2026-10-13
 
 ### Fixed

@@ -472,8 +472,12 @@ export interface QuestionShare {
  * how many calls each one took. One call per question is an agent that knows where it is. Eleven is
  * a repository it cannot ask.
  */
-export function questionShare(rounds: Round[], options: QuestionOptions = {}): QuestionShare {
-  const questions = questionsOf(rounds, options)
+export function questionShare(
+  rounds: Round[],
+  options: QuestionOptions = {},
+  // Already worked out by a caller that lists them too: reading every call twice is the cost.
+  questions: Question[] = questionsOf(rounds, options),
+): QuestionShare {
   let worst: Question | null = null
   for (const question of questions) {
     if (worst === null || question.calls.length > worst.calls.length) worst = question

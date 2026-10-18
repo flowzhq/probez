@@ -1,5 +1,5 @@
 import { isSubagent, roundSourceOf, sessionSegments } from './agents/paths.js'
-import { subCommands } from './bash.js'
+import { commandKindsVersion, subCommands } from './bash.js'
 import { CATEGORIES, categoryInfo, classifyCall } from './classify.js'
 import type { Category, Label } from './classify.js'
 import { benign, failed } from './errors.js'
@@ -714,14 +714,35 @@ export interface RoundLabel extends Label {
 }
 
 /**
+ * Labels already worked out, per round.
+ *
+ * Keyed on the round itself, which the view's rounds cache hands out unchanged until the file
+ * changes, so a page that labels a project once per request labels it once per change instead.
+ * Weak, so a round dropped from that cache takes its labels with it. A new command table can move
+ * a shell call to another kind, so it starts a fresh cache.
+ */
+let remembered = new WeakMap<Round, RoundLabel[]>()
+let rememberedFor = commandKindsVersion()
+
+/**
  * Every round, labelled.
  *
  * Each round is labelled on its own. No rule reaches outside the call it is looking at, so there is
- * no task context to build up, and the order rounds arrive in no longer changes what they get.
+ * no task context to build up, and the order rounds arrive in no longer changes what they get. It is
+ * also what makes the labels safe to remember per round. They are never changed once made.
  */
 export function labelRounds(rounds: Round[]): Map<Round, RoundLabel[]> {
+  if (rememberedFor !== commandKindsVersion()) {
+    remembered = new WeakMap()
+    rememberedFor = commandKindsVersion()
+  }
   const out = new Map<Round, RoundLabel[]>()
   for (const round of rounds) {
+    const known = remembered.get(round)
+    if (known !== undefined) {
+      out.set(round, known)
+      continue
+    }
     const tools = round.tools ?? []
     const labels: RoundLabel[] = []
     if (tools.length > 0) {
@@ -737,6 +758,7 @@ export function labelRounds(rounds: Round[]): Map<Round, RoundLabel[]> {
         }
       })
     }
+    remembered.set(round, labels)
     out.set(round, labels)
   }
   return out
@@ -1554,8 +1576,12 @@ export interface TrailShare {
  * that led somewhere — against how much was calls that stand alone. A low share is not a fault; it
  * is what an agent working in a repository it already knows looks like.
  */
-export function trailShare(rounds: Round[], options: TrailOptions = {}): TrailShare {
-  const trails = trailsOf(rounds, options)
+export function trailShare(
+  rounds: Round[],
+  options: TrailOptions = {},
+  // Already worked out by a caller that lists them too: walking every call twice is the cost.
+  trails: Trail[] = trailsOf(rounds, options),
+): TrailShare {
   const inTrail = new Set<string>()
   for (const trail of trails) {
     for (const step of trail.steps) inTrail.add(`${step.session}\0${step.at}`)

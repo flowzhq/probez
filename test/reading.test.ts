@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -18,6 +18,7 @@ import {
   readingsFile,
   readReadings,
   ReadingError,
+  saveReading,
 } from '../src/reading.js'
 import type { Round, ToolCall } from '../src/types.js'
 import { ROUND_DEFAULTS, TOOL_DEFAULTS } from './support.js'
@@ -296,6 +297,26 @@ test('a reading is kept, reused without running anything, and re-asked only when
     const moved = oneQuestion(asked(['grep -rn "store" src/', 'grep -rn "store" test/']))
     assert.equal(isStale(held[readingKey('s', 1, 0)]!, question), false)
     assert.equal(isStale(held[readingKey('s', 1, 0)]!, moved), true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('readings saved at once all survive, and none sees another half-written', async () => {
+  const dir = scratch()
+  try {
+    const question = oneQuestion(asked(['grep -rn "store" src/']))
+    const reading = parseReading(JSON.stringify({ asked: 'what', kind: 'refs', why: 'because' }), 'r', digestOf(question))
+    const keys = Array.from({ length: 20 }, (_, n) => readingKey('s', n, 0))
+    await Promise.all(keys.map((key) => saveReading(dir, key, reading)))
+
+    assert.deepEqual(Object.keys(await readReadings(dir)).sort(), [...keys].sort())
+    assert.deepEqual(readdirSync(dir).sort(), ['readings.json'], 'no copy or lock is left behind')
+
+    // A project deleted while its reader ran is not made again by the answer arriving.
+    const gone = join(dir, 'deleted')
+    await saveReading(gone, keys[0]!, reading)
+    assert.equal(existsSync(gone), false)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

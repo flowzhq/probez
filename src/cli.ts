@@ -2896,16 +2896,25 @@ async function main(): Promise<void> {
               task: asCount(values.task, 'task'),
             })
 
+        // One pass, in the order each group first appears: filtering the whole scope once per
+        // group is sessions × rounds, which on a long-lived project is minutes of waiting.
+        const grouped = (key: (r: Round) => string): Array<[string, Round[]]> => {
+          const out = new Map<string, Round[]>()
+          for (const r of scope) {
+            const id = key(r)
+            const held = out.get(id)
+            if (held === undefined) out.set(id, [r])
+            else held.push(r)
+          }
+          return [...out]
+        }
         const groups: { name: string; rounds: Round[] }[] =
           values.by === 'session'
-            ? [...new Set(scope.map((r) => r.session))].map((id) => ({
-                name: shortSession(id),
-                rounds: scope.filter((r) => r.session === id),
-              }))
+            ? grouped((r) => r.session).map(([id, rounds]) => ({ name: shortSession(id), rounds }))
             : values.by === 'task'
-              ? [...new Set(scope.map((r) => `${r.session}#${r.task}`))].map((id) => ({
+              ? grouped((r) => `${r.session}#${r.task}`).map(([id, rounds]) => ({
                   name: `${shortSession(id.slice(0, id.lastIndexOf('#')))}#${id.slice(id.lastIndexOf('#') + 1)}`,
-                  rounds: scope.filter((r) => `${r.session}#${r.task}` === id),
+                  rounds,
                 }))
               : [{ name: projectName(project), rounds: scope }]
 

@@ -354,10 +354,18 @@ function editsInPlace(argv: string[]): boolean {
  * signatures to serve one. It is set once, from the data directory, before anything is classified.
  */
 let local: Record<string, CommandKind> = {}
+/** Bumped with every new table, so anything remembering what a command was classified as can tell. */
+let tableVersion = 0
 
 /** Hand `bash.ts` the local table. Called at startup by the CLI and by the server, and by tests. */
 export function useCommandKinds(kinds: Record<string, CommandKind>): void {
   local = kinds
+  tableVersion += 1
+}
+
+/** Which table is in use. A classification remembered under another one is out of date. */
+export function commandKindsVersion(): number {
+  return tableVersion
 }
 
 /**
