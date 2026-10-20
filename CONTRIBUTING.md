@@ -7,8 +7,8 @@ Thanks for taking the time. Issues, bug reports, and pull requests are all welco
 Requires Node 20 or newer. There is nothing else to install beyond the dev dependencies.
 
 ```bash
-git clone https://github.com/flowzhq/probez.git
-cd probez
+git clone https://github.com/flowzhq/flowz-probez.git
+cd flowz-probez
 npm install
 npm run build         # tsc, then a web typecheck and vite build
 npm test              # build, then node --test
