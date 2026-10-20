@@ -553,7 +553,7 @@ Every other flag above belongs to the command it is listed under, and giving one
 that does not take it is an error rather than a silent no-op. A list withholds rows past its
 limit and says so; a detail view shows the whole thing unless you ask for a limit.
 
-What any of it means, and why: https://github.com/flowzhq/probez#readme
+What any of it means, and why: https://github.com/flowzhq/flowz-probez#readme
 `
 
 /** How much of the input was served from cache, which is the part billed at a fraction of the rate. */
