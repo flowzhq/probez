@@ -197,7 +197,7 @@ test('a trimmed manifest counts what is left, not what there was', async () => {
   assert.equal(row?.path, '/work/demo')
 })
 
-test('the store is owner-only after a trim, as it was before', async () => {
+test('the store is owner-only after a trim, as it was before', { skip: process.platform === 'win32' }, async () => {
   const now = Date.now()
   const dataDir = store([round('old', now - 60 * DAY), round('new', now - 1 * DAY)])
   await applyClear(dataDir, await planClear(dataDir, { before: now - 30 * DAY }))

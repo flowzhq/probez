@@ -47,7 +47,7 @@ import { priceOf } from './pricing.js'
 import type { Pricing } from './pricing.js'
 import { isWord, matches } from './query.js'
 import type { Node, Query, Subject } from './query.js'
-import { DIR_MODE, eachRoundLine, FILE_MODE, tighten } from './store.js'
+import { DIR_MODE, eachRoundLine, FILE_MODE, tighten, withProjectLock } from './store.js'
 import type { Round } from './types.js'
 
 /**
@@ -125,17 +125,12 @@ type DictName = keyof Dicts
 /** The fields a round can hold several of at once, which are counted a column at a time. */
 const MULTI = ['tool', 'command', 'kind', 'category', 'target', 'error'] as const
 
-/** Whether a field is one the index counts values for, which is what a typeahead can offer. */
+/** Every field the index counts values for, which is what a typeahead can offer. */
+export const FACETS: readonly DictName[] = [...MULTI, 'session', 'model', 'skill', 'mcp', 'commit', 'source']
+
+/** Whether a field is one the index counts values for. */
 export function isFacet(key: string): key is DictName {
-  return (
-    MULTI.includes(key as (typeof MULTI)[number]) ||
-    key === 'session' ||
-    key === 'model' ||
-    key === 'skill' ||
-    key === 'mcp' ||
-    key === 'commit' ||
-    key === 'source'
-  )
+  return FACETS.includes(key as DictName)
 }
 
 /** One slot per round. Nulls are kept: a round with no usage recorded is not a round that used none. */
@@ -495,20 +490,38 @@ export async function writeIndex(
  * which is the harmless direction. Stamping it afterwards would record a size that matches a file
  * the columns are short of, and that is the one failure mode an index must not have.
  */
-export async function buildIndex(dir: string): Promise<{ rounds: number } | null> {
+export async function buildIndex(
+  dir: string,
+  options: { known?: Round[]; waitMs?: number } = {},
+): Promise<{ rounds: number } | null> {
+  // Under the project's lock, so a delete or a clear that lands after the collect or merge before
+  // this cannot be undone by it: the rounds are looked for once the lock is held, and a project
+  // that has gone is left gone rather than brought back holding only an index.
+  return withProjectLock(dir, () => buildIndexUnlocked(dir, options.known ?? []), false, options.waitMs)
+}
+
+/** What makes a round the one it is: the store never holds two with all three the same. */
+const roundKey = (round: Round): string => `${round.session}\n${round.round}\n${round.id}`
+
+async function buildIndexUnlocked(dir: string, known: Round[]): Promise<{ rounds: number } | null> {
   const file = join(dir, 'rounds.jsonl')
   const info = await stat(file).catch(() => null)
   if (info === null) return null
 
-  const entries: Indexable[] = []
+  // Rounds a caller already holds, labelled already. A line that parses to one of them takes its
+  // labels from that object, which `labelRounds` remembers, rather than from a fresh copy it has
+  // never seen. What is indexed is still the line itself, so the index is the same whoever built it.
+  const held = new Map(known.map((round) => [roundKey(round), round]))
+  const entries: Array<Indexable & { labelledAs: Round | null }> = []
   const rounds: Round[] = []
   await eachRoundLine(file, (at, line, offset, bytes) => {
     try {
       const round = JSON.parse(line) as Round
-      rounds.push(round)
-      entries.push({ at, offset, bytes, round, labels: [] })
+      const labelledAs = held.get(roundKey(round)) ?? round
+      rounds.push(labelledAs)
+      entries.push({ at, offset, bytes, round, labels: [], labelledAs })
     } catch {
-      entries.push({ at, offset, bytes, round: null, labels: [] })
+      entries.push({ at, offset, bytes, round: null, labels: [], labelledAs: null })
     }
   })
 
@@ -516,7 +529,7 @@ export async function buildIndex(dir: string): Promise<{ rounds: number } | null
   // a round was.
   const labelled = labelRounds(rounds)
   for (const entry of entries) {
-    if (entry.round !== null) entry.labels = labelled.get(entry.round) ?? []
+    if (entry.labelledAs !== null) entry.labels = labelled.get(entry.labelledAs) ?? []
   }
 
   await writeIndex(dir, entries, { size: info.size, mtime_ms: info.mtimeMs })

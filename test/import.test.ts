@@ -62,6 +62,19 @@ test('a bundle and the same rounds as jsonl read to the same thing', () => {
   assert.equal(fromLines.name, null)
 })
 
+test('rounds whose lines do not open with the session are still rounds, not a broken bundle', () => {
+  // What the page's rounds export sends: who made each round, first on every line.
+  const rounds = [round(), round({ round: 1, id: 'msg_2' })]
+  const signed = rounds.map((r) => JSON.stringify({ committer: 'Dana', ...r })).join('\n') + '\n'
+  const parsed = parseExport(signed)
+  assert.equal(parsed.rounds.length, 2)
+  assert.equal(parsed.rounds[0]?.committer, 'Dana')
+
+  // A bundle on one line, and one pretty-printed, are still bundles.
+  assert.equal(parseExport(bundle(rounds)).name, 'sent')
+  assert.equal(parseExport(JSON.stringify(JSON.parse(bundle(rounds)), null, 2)).name, 'sent')
+})
+
 test('a round survives the trip with every field intact', () => {
   const original = round({
     gen_ms: 4200,

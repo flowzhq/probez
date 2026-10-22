@@ -1,0 +1,12 @@
+{
+  "name": "probez-web-tests",
+  "private": true,
+  "description": "The page's own tests: the app in jsdom against a real probez view. A workspace of its own so the repo's test runner stays node:test.",
+  "devDependencies": {
+    "vitest": "^4.1.12",
+    "jsdom": "^27.4.0",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/user-event": "^14.6.8"
+  }
+}

@@ -1,6 +1,41 @@
+import { mkdtempSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { defaultPricing } from '../src/pricing.js'
 import type { Pricing } from '../src/pricing.js'
 import type { Round, ToolCall } from '../src/types.js'
+
+/**
+ * A path as it reads inside a JSON string.
+ *
+ * The fixtures ran in `/tmp/demo`, and a test points them at a directory of its own by replacing
+ * that text. The text sits inside JSON, where a Windows path's backslashes would be read back as
+ * escapes and the session would name a directory that is not there.
+ */
+export function inJson(path: string): string {
+  return JSON.stringify(path).slice(1, -1)
+}
+
+/**
+ * The folder Cursor files a checkout's transcripts under: every separator a dash. On Windows the
+ * drive letter leads with its colon dropped, `C:\Users\me\repo` as `C-Users-me-repo`, which is the
+ * shape `pathFromCursorSlug` reads back.
+ */
+export function cursorSlugOf(path: string): string {
+  return path.replace(/^([A-Za-z]):/, '$1').replaceAll(/[\\/]/g, '-').replace(/^-/, '')
+}
+
+/**
+ * A fresh directory for a Cursor checkout, with no dashes on the way to it.
+ *
+ * Cursor's folder name makes every separator a dash, so a dash already in the path reads back as
+ * one more folder. `/tmp` on POSIX because macOS's temp directory is not dash-free; Windows has no
+ * `/tmp`, and its temp directory under the user's profile has no dashes of its own.
+ */
+export function dashFreeDir(): string {
+  return realpathSync(mkdtempSync(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'probezwork')))
+}
 
 /**
  * Rates for the tests.

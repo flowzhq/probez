@@ -100,10 +100,10 @@ function App(): ReactElement {
 }
 
 const root = document.getElementById('root')
-if (root !== null) {
-  createRoot(root).render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  )
-}
+/** The mounted page, so whatever mounted it can take it down again: the tests do, before jsdom goes. */
+export const page = root === null ? null : createRoot(root)
+page?.render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)

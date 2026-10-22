@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import fsp from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 
 import { useCommandKinds } from '../src/bash.js'
 import { labelRounds } from '../src/inspect.js'
-import { applyClear, eachRound, importProject, listStored, MERGED_FILE, mergeIntoProject, planClear } from '../src/store.js'
+import { applyClear, eachRound, eachRoundLine, importProject, listStored, MERGED_FILE, mergeIntoProject, planClear, removeProject, withProjectLock, writeAnalysis } from '../src/store.js'
 import { exportProject, facetsPayload, forgetRounds, roundPayload } from '../src/viewdata.js'
 import { buildIndex } from '../src/searchindex.js'
 import { ROUND_DEFAULTS, TOOL_DEFAULTS } from './support.js'
@@ -138,7 +140,9 @@ test('a rounds file that cannot be read is not read as an empty one', async () =
   const dataDir = store()
   const { slug, dir } = await project(dataDir)
   const seen: Round[] = []
-  await eachRound(join(dir, 'missing.jsonl'), (one) => seen.push(one))
+  await eachRound(join(dir, 'missing.jsonl'), (one) => {
+    seen.push(one)
+  })
   assert.equal(seen.length, 0)
 
   // A directory where the file should be: there, and unreadable.
@@ -239,4 +243,288 @@ test('a session planned for a trim is kept once it gains a recent round', async 
   const done = await applyClear(dataDir, plan)
   assert.equal(done.rounds, 0)
   assert.equal(lineCount(join(dir, 'rounds.jsonl')), 4)
+})
+
+test('a cache waits for whoever holds the project, and does not bring back a project they deleted', async () => {
+  const dataDir = store()
+  const { dir } = await project(dataDir)
+  const other = sleeper()
+  try {
+    writeFileSync(join(dir, 'write.lock'), String(other.pid))
+    let done = false
+    const writing = Promise.all([
+      writeAnalysis(join(dir, 'analysis.jsonl'), { rounds: 2, toolless: 0 }, []),
+      buildIndex(dir),
+    ]).then((result) => {
+      done = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    assert.equal(done, false, 'the caches were written under another writer')
+
+    // The other writer was a delete. What a sync or a collect computed before it is now about a
+    // project that is not there, and writing it would bring the folder back holding only caches.
+    rmSync(dir, { recursive: true, force: true })
+    const [, index] = await writing
+    assert.equal(index, null)
+    assert.equal(existsSync(dir), false, 'the deleted project came back')
+  } finally {
+    other.stop()
+  }
+})
+
+test('a project being removed is gone to anyone waiting on it, and leaves nothing behind', async () => {
+  const dataDir = store()
+  const { slug, dir } = await project(dataDir)
+  // A merge queued behind the delete finds no project, rather than a lock inside a folder that is
+  // still being deleted. Whichever goes first, the project ends up gone and nothing is half there.
+  const [removed] = await Promise.all([removeProject(dataDir, slug), mergeIntoProject(dataDir, slug, theirs(), 0)])
+  assert.equal(removed?.slug, slug)
+  assert.equal(existsSync(dir), false)
+  assert.deepEqual(readdirSync(join(dataDir, 'projects')), [], 'the folder moved aside was deleted too')
+
+  // One a crash left mid-delete is never taken for a project, readable or not.
+  mkdirSync(join(dataDir, 'projects', `.removing-${slug}-left`), { recursive: true })
+  assert.deepEqual(await listStored(dataDir), [])
+  assert.deepEqual((await planClear(dataDir)).projects, [])
+})
+
+test('a writer lets go of its own lock only, not one taken after its project was moved away', async () => {
+  const dataDir = store()
+  const { dir } = await project(dataDir)
+  const other = sleeper()
+  try {
+    // What a delete does under the lock, with a collect waiting on the project: the folder goes
+    // aside with this lock in it, and the collect makes the folder again and takes a lock there.
+    await withProjectLock(dir, async () => {
+      renameSync(dir, `${dir}-aside`)
+      mkdirSync(dir)
+      writeFileSync(join(dir, 'write.lock'), String(other.pid))
+    })
+    assert.equal(readFileSync(join(dir, 'write.lock'), 'utf8'), String(other.pid), 'the collect lost its lock')
+    // And the lock that went aside was the one this writer made, which it leaves where it went.
+    assert.equal(readFileSync(join(`${dir}-aside`, 'write.lock'), 'utf8'), String(process.pid))
+  } finally {
+    other.stop()
+  }
+
+  // Its own lock it does let go of, so the next writer is not kept waiting.
+  const { dir: next } = await project(store())
+  await withProjectLock(next, async () => assert.equal(existsSync(join(next, 'write.lock')), true))
+  assert.equal(existsSync(join(next, 'write.lock')), false)
+})
+
+test('what a removal cut short left behind is taken by the next removal, or the next clear', async () => {
+  const dataDir = store()
+  const projects = join(dataDir, 'projects')
+  const leftover = (name: string): string => {
+    const at = join(projects, `.removing-${name}`)
+    mkdirSync(join(at, 'sessions'), { recursive: true })
+    writeFileSync(join(at, 'rounds.jsonl'), 'x'.repeat(4096))
+    return at
+  }
+  const { slug } = await project(dataDir)
+  const first = leftover('one')
+  await removeProject(dataDir, slug)
+  assert.equal(existsSync(first), false, 'a delete left the last one in place')
+
+  const second = leftover('two')
+  const { slug: kept } = await project(dataDir, [round({ ts: new Date().toISOString() })])
+  await applyClear(dataDir, await planClear(dataDir, { before: Date.now() - 86_400_000 }))
+  assert.equal(existsSync(second), false, 'a clear left it in place')
+  // A clear that removes nothing still sweeps, and the project it spared is still there.
+  assert.deepEqual((await listStored(dataDir)).map((one) => one.slug), [kept])
+})
+
+test('a trim that cannot write fails that project, and leaves it and nothing else behind', async () => {
+  const dataDir = store()
+  const before = Date.now() - 30 * 86_400_000
+  const now = new Date().toISOString()
+  // More kept rounds than one batch, so the write that fails is one made while still reading.
+  const recent = Array.from({ length: 2_500 }, (_, at) => round({ session: 's2', round: at, id: `k${at}`, ts: now }))
+  const { dir } = await project(dataDir, [round(), ...recent])
+  const original = readFileSync(join(dir, 'rounds.jsonl'), 'utf8')
+  const plan = await planClear(dataDir, { before })
+  assert.deepEqual(plan.projects[0]?.ids, ['s1'])
+
+  const undo = diskFullFor('.trim')
+  try {
+    // A rejection nobody was waiting on would end the process here rather than fail this. Caught,
+    // it is the project's failure, reported by name, and not the whole clear's.
+    const done = await applyClear(dataDir, plan)
+    assert.deepEqual(done.failed, [{ project: 'app', error: 'no space left on device' }])
+    assert.equal(done.projects, 0)
+  } finally {
+    undo()
+  }
+  assert.equal(readFileSync(join(dir, 'rounds.jsonl'), 'utf8'), original)
+  assert.equal(existsSync(join(dir, 'rounds.jsonl.trim')), false, 'the half-written copy was left behind')
+  assert.equal(existsSync(join(dir, 'write.lock')), false, 'the lock was not let go')
+})
+
+test('a project someone else is still writing is passed over, and the clear goes on and says so', async () => {
+  const dataDir = store()
+  const first = await project(dataDir)
+  const { slug: second } = await importProject(dataDir, 'api', 'api', [round({ session: 's5', id: 'm5' })], 0)
+  const plan = await planClear(dataDir, { before: null })
+  assert.equal(plan.projects.length, 2)
+
+  const other = sleeper()
+  try {
+    writeFileSync(join(first.dir, 'write.lock'), String(other.pid))
+    // Gives up at once on the held project, the way the real wait does once it runs out.
+    const done = await applyClear(dataDir, plan, (slug, work) =>
+      slug === first.slug ? withProjectLock(first.dir, work, false, 0) : work(),
+    )
+    assert.deepEqual(done.locked, ['app'])
+    assert.deepEqual(done.removed, ['api'])
+    assert.deepEqual((await listStored(dataDir)).map((one) => one.slug), [first.slug])
+    assert.equal((await listStored(dataDir)).some((one) => one.slug === second), false)
+  } finally {
+    other.stop()
+  }
+})
+
+/** `appendFile` failing as a full disk does, for files whose name ends with `suffix`, until undone. */
+function diskFullFor(suffix: string): () => void {
+  const real = fsp.appendFile
+  const full = mock.method(fsp, 'appendFile', (async (file: Parameters<typeof real>[0], ...rest: unknown[]) => {
+    if (String(file).endsWith(suffix)) throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' })
+    return (real as (...args: unknown[]) => Promise<void>)(file, ...rest)
+  }) as typeof real)
+  syncBuiltinESMExports()
+  return () => {
+    full.mock.restore()
+    syncBuiltinESMExports()
+  }
+}
+
+test('a line visitor that fails stops the read and is thrown as it is, not taken for a missing file', async () => {
+  const dataDir = store()
+  const { dir } = await project(dataDir)
+  const seen: number[] = []
+  const missing = Object.assign(new Error('gone'), { code: 'ENOENT' })
+  await assert.rejects(
+    eachRoundLine(join(dir, 'rounds.jsonl'), async (at) => {
+      seen.push(at)
+      throw missing
+    }),
+    (error) => error === missing,
+  )
+  assert.deepEqual(seen, [0], 'the read went on past the failure')
+})
+
+test('a merge that cannot write leaves the project as it was, and no copy beside it', async () => {
+  const dataDir = store()
+  const before = Date.now()
+  const recent = Array.from({ length: 2_500 }, (_, at) => round({ round: at, id: `k${at}`, ts: new Date(before).toISOString() }))
+  const { slug, dir } = await project(dataDir, recent)
+  const original = readFileSync(join(dir, 'rounds.jsonl'), 'utf8')
+
+  const undo = diskFullFor('.merge')
+  try {
+    await assert.rejects(mergeIntoProject(dataDir, slug, theirs(), 0), { code: 'ENOSPC' })
+  } finally {
+    undo()
+  }
+  assert.equal(readFileSync(join(dir, 'rounds.jsonl'), 'utf8'), original)
+  assert.equal(existsSync(join(dir, 'rounds.jsonl.merge')), false, 'the half-written copy was left behind')
+  assert.equal(existsSync(join(dir, 'write.lock')), false, 'the lock was not let go')
+  // And the same merge goes through once there is room again.
+  const merged = await mergeIntoProject(dataDir, slug, theirs(), 0)
+  assert.equal(merged?.added, 2)
+})
+
+test('a re-import waits while another process is writing to the project, and then replaces it whole', async () => {
+  const dataDir = store()
+  const { slug, dir } = await project(dataDir)
+  const other = sleeper()
+  try {
+    writeFileSync(join(dir, 'write.lock'), String(other.pid))
+    let done = false
+    const importing = importProject(dataDir, 'app', 'app', [round({ session: 's7', id: 'n1' })], 0).then((result) => {
+      done = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    assert.equal(done, false, 'the import did not wait for the other writer')
+    assert.equal(lineCount(join(dir, 'rounds.jsonl')), 2)
+
+    rmSync(join(dir, 'write.lock'))
+    const result = await importing
+    assert.equal(result.slug, slug)
+    assert.equal(result.replaced, true)
+    assert.equal(lineCount(join(dir, 'rounds.jsonl')), 1)
+    assert.equal((JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { rounds: number }).rounds, 1)
+    assert.deepEqual(
+      readdirSync(dir).filter((name) => name.endsWith('.import') || name === 'write.lock'),
+      [],
+      'a copy or the lock was left behind',
+    )
+  } finally {
+    other.stop()
+  }
+})
+
+/** `writeFile` failing as a full disk does, for files whose name ends with `suffix`, until undone. */
+function writesFailFor(suffix: string): () => void {
+  const real = fsp.writeFile
+  const full = mock.method(fsp, 'writeFile', (async (file: Parameters<typeof real>[0], ...rest: unknown[]) => {
+    if (String(file).endsWith(suffix)) throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' })
+    return (real as (...args: unknown[]) => Promise<void>)(file, ...rest)
+  }) as typeof real)
+  syncBuiltinESMExports()
+  return () => {
+    full.mock.restore()
+    syncBuiltinESMExports()
+  }
+}
+
+test('an import cut short while writing leaves the project it was replacing exactly as it was', async () => {
+  const dataDir = store()
+  const { dir } = await project(dataDir)
+  const rounds = readFileSync(join(dir, 'rounds.jsonl'), 'utf8')
+  const manifest = readFileSync(join(dir, 'manifest.json'), 'utf8')
+
+  // The manifest is the second file written: the rounds beside it are already complete, and
+  // still must not be moved over the old ones until it is too.
+  const undo = writesFailFor('manifest.json.import')
+  try {
+    await assert.rejects(importProject(dataDir, 'app', 'app', [round({ session: 's7', id: 'n1' })], 0), {
+      code: 'ENOSPC',
+    })
+  } finally {
+    undo()
+  }
+  assert.equal(readFileSync(join(dir, 'rounds.jsonl'), 'utf8'), rounds)
+  assert.equal(readFileSync(join(dir, 'manifest.json'), 'utf8'), manifest)
+  assert.equal(existsSync(join(dir, 'write.lock')), false, 'the lock was not let go')
+  assert.equal((await listStored(dataDir)).length, 1)
+
+  // And the same import goes through once there is room, with nothing of the failed one in the way.
+  const result = await importProject(dataDir, 'app', 'app', [round({ session: 's7', id: 'n1' })], 0)
+  assert.equal(result.rounds, 1)
+  assert.deepEqual(readdirSync(dir).filter((name) => name.endsWith('.import')), [])
+})
+
+test('a project that fails to clear for any reason is reported by name, and the rest of the clear goes on', async () => {
+  const dataDir = store()
+  const first = await project(dataDir)
+  const { slug: second } = await importProject(dataDir, 'api', 'api', [round({ session: 's5', id: 'm5' })], 0)
+  const plan = await planClear(dataDir, { before: null })
+  assert.equal(plan.projects.length, 2)
+
+  // A file another program holds open, as Windows reports it, on the first project only.
+  const done = await applyClear(dataDir, plan, (slug, work) =>
+    slug === first.slug
+      ? Promise.reject(Object.assign(new Error(`EBUSY: resource busy or locked, rmdir '${first.dir}'`), { code: 'EBUSY' }))
+      : work(),
+  )
+  assert.deepEqual(done.failed, [{ project: 'app', error: `EBUSY: resource busy or locked, rmdir '${first.dir}'` }])
+  assert.deepEqual(done.locked, [])
+  assert.deepEqual(done.removed, ['api'])
+  assert.equal(done.projects, 1)
+  const left = (await listStored(dataDir)).map((one) => one.slug)
+  assert.deepEqual(left, [first.slug])
+  assert.equal(left.includes(second), false)
 })

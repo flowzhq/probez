@@ -52,6 +52,7 @@ import {
   thresholdsPayload,
   trailsListPayload,
 } from './insights.js'
+import { ProjectLocked } from './store.js'
 
 /**
  * The local profiler's server.
@@ -855,6 +856,9 @@ export async function startServer(options: ServeOptions): Promise<Serving> {
     } catch (error) {
       if (error instanceof NotFound) sendJson(res, 404, { error: error.message })
       else if (error instanceof BadRequest) sendJson(res, 400, { error: error.message })
+      // Another writer still holds the project. Not the caller's mistake and not a crash: the
+      // sentence says who holds it and which file to delete if nobody does.
+      else if (error instanceof ProjectLocked) sendJson(res, 409, { error: error.message })
       else throw error
     }
   }

@@ -137,8 +137,14 @@ function within(rounds: Round[], window: { start: number; end: number } | null):
 
 interface Scoped {
   project: StoredProject
-  /** Every round the project holds, under the agent filter only. What per-project caches key on. */
+  /** Every round the project holds, under the agent and committer filters. */
   all: Round[]
+  /**
+   * What per-project caches key on: the array the rounds cache handed out, which only changes when
+   * the store does, and the filters `all` was cut by. A filter makes `all` a new array every
+   * request, so it cannot be the key itself.
+   */
+  cache: { collected: Round[]; filter: string }
   rounds: Round[]
   previous: Round[]
 }
@@ -162,7 +168,13 @@ async function gather(dataDir: string, scope: Scope): Promise<Scoped[]> {
     const all =
       scope.committer === null ? bySource : bySource.filter((round) => committerOf(round, local) === scope.committer)
     if ((scope.source !== null || scope.committer !== null) && all.length === 0) continue
-    out.push({ project, all, rounds: within(all, window), previous: within(all, before) })
+    out.push({
+      project,
+      all,
+      cache: { collected, filter: `${scope.source ?? ''}\0${scope.committer ?? ''}\0${local}` },
+      rounds: within(all, window),
+      previous: within(all, before),
+    })
   }
   if (scope.project !== null && out.length === 0 && !stored.some((one) => one.slug === scope.project)) {
     throw new NotFound(`no project ${scope.project} in this store`)
@@ -711,32 +723,38 @@ export async function sessionsPayload(dataDir: string, scope: Scope): Promise<Se
 }
 
 /**
- * Questions and trails for a project, read once per version of its rounds.
+ * Questions and trails for a project, read once per version of its rounds and per filter.
  *
  * Both are a pass over every call, and trails a read of result bodies besides, so computing them
  * per request for every project in the store would make each page of the Investigate section cost
  * a full analysis. The rounds array a project's cache hands out only changes when the store does,
- * so it is the key: a sync replaces it, and the entry goes with the array it described.
+ * so it is the key: a sync replaces it, and the entries go with the array they described. Under it,
+ * one entry per agent and committer filter, since each of those is a different cut of the rounds.
  */
-const derived = new WeakMap<Round[], { questions?: Question[]; trails?: Trail[] }>()
+const derived = new WeakMap<Round[], Map<string, { questions?: Question[]; trails?: Trail[] }>>()
 
-function held(all: Round[]): { questions?: Question[]; trails?: Trail[] } {
-  let entry = derived.get(all)
+function held(one: Scoped): { questions?: Question[]; trails?: Trail[] } {
+  let byFilter = derived.get(one.cache.collected)
+  if (byFilter === undefined) {
+    byFilter = new Map()
+    derived.set(one.cache.collected, byFilter)
+  }
+  let entry = byFilter.get(one.cache.filter)
   if (entry === undefined) {
     entry = {}
-    derived.set(all, entry)
+    byFilter.set(one.cache.filter, entry)
   }
   return entry
 }
 
 function questionsFor(one: Scoped): Question[] {
-  const entry = held(one.all)
+  const entry = held(one)
   entry.questions ??= questionsOf(one.all, { root: one.project.path ?? '' })
   return entry.questions
 }
 
 async function trailsFor(one: Scoped): Promise<Trail[]> {
-  const entry = held(one.all)
+  const entry = held(one)
   if (entry.trails === undefined) {
     const results = await readResultsIn(one.project.dir, idsToRead(one.all))
     entry.trails = trailsOf(one.all, { results, root: one.project.path ?? '' })

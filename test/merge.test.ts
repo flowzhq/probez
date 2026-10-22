@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 
-import { applyClear, collectProject, importProject, listStored, MERGED_FILE, planClear, readRoundsIn } from '../src/store.js'
-import { BadRequest, exportProject, forgetRounds, identityPayload, mergeExport, NotFound, searchPayload } from '../src/viewdata.js'
+import { applyClear, collectProject, importProject, listStored, MERGED_FILE, planClear, ProjectLocked, readRoundsIn } from '../src/store.js'
+import { BadRequest, exportProject, forgetRounds, identityPayload, mergeExport, NotFound, renameStored, searchPayload } from '../src/viewdata.js'
+import { SearchIndex } from '../src/searchindex.js'
 import { ROUND_DEFAULTS } from './support.js'
 import type { Project, Round } from '../src/types.js'
 
@@ -206,6 +207,40 @@ test('two merges sent at once both land, because each waits for the one before i
   assert.deepEqual(stored.committers, ['Bob', 'Dana'])
 })
 
+test('a merge that cannot get the project\'s lock says who holds it, and changes nothing', async () => {
+  const dataDir = store()
+  const slug = await mine(dataDir)
+  const stored = (await listStored(dataDir)).find((row) => row.slug === slug)!
+  // Held by a process that is alive — this one — so nothing can take it over as abandoned.
+  const lock = join(stored.dir, 'write.lock')
+  writeFileSync(lock, String(process.pid))
+  const before = readFileSync(join(stored.dir, 'rounds.jsonl'), 'utf8')
+
+  // Each read of the clock is six minutes on from the last, so the five-minute wait for the lock
+  // ends at its first check instead of being sat through.
+  const real = Date.now.bind(Date)
+  let reads = 0
+  const clock = mock.method(Date, 'now', () => real() + ++reads * 6 * 60_000)
+  try {
+    const theirs = lines([round({ session: 's9', id: 'x1', committer: 'Dana' })])
+    await assert.rejects(mergeExport(dataDir, slug, { text: theirs }), (error) => {
+      // Not a refusal of the file but a writer in the way, which the view answers with a 409.
+      assert.ok(error instanceof ProjectLocked)
+      assert.match(error.message, new RegExp(`still being written by process ${process.pid}`))
+      return true
+    })
+  } finally {
+    clock.mock.restore()
+  }
+  assert.equal(readFileSync(join(stored.dir, 'rounds.jsonl'), 'utf8'), before)
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid), 'the lock is still its holder\'s')
+
+  // Let go, the same file merges: a merge that gave up on the lock queued nothing behind it.
+  rmSync(lock)
+  const merged = await mergeExport(dataDir, slug, { text: lines([round({ session: 's9', id: 'x1', committer: 'Dana' })]) })
+  assert.equal(merged.added, 1)
+})
+
 test('a schema rebuild puts merged rounds back, in the current shape', async () => {
   const dataDir = store()
   const work = realpathSync(mkdtempSync(join(tmpdir(), 'probez-merge-work-')))
@@ -246,4 +281,24 @@ test('a schema rebuild puts merged rounds back, in the current shape', async () 
   const copy = JSON.parse(readFileSync(join(dir, MERGED_FILE), 'utf8').trim()) as Round
   assert.ok(Array.isArray(copy.events), 'the copy is rewritten in that shape too')
   assert.equal(rounds.filter((one) => one.id === 't1').length, 1)
+})
+
+test('a merge answers before the search index is rebuilt, and whatever is asked of the project next finds it current', async () => {
+  const dataDir = store()
+  const slug = await mine(dataDir)
+  const dir = (await listStored(dataDir)).find((one) => one.slug === slug)!.dir
+  const theirs = [round({ session: 's9', id: 'x1', committer: 'Dana' }), round({ session: 's9', round: 1, id: 'x2', committer: 'Dana' })]
+
+  const merged = await mergeExport(dataDir, slug, { text: lines(theirs) })
+  assert.equal(merged.rounds, 4)
+  // A search in the meantime still answers, from the rounds file, with what was just merged.
+  const found = await searchPayload(dataDir, { q: 'session:s9', slug })
+  assert.equal(found.totals.rounds, 2)
+
+  // The rebuild is queued behind the merge like any other write on the project, so the next one
+  // waits for it, and by then the index describes all four rounds.
+  await renameStored(dataDir, slug, { name: 'app' })
+  const index = await SearchIndex.read(dir)
+  assert.notEqual(index, null, 'no current index once the queue behind the merge had run')
+  assert.equal(index!.rounds, 4)
 })

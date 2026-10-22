@@ -278,7 +278,7 @@ test('a project with no index answers by reading its rounds', async () => {
   assert.equal(result.totals.rounds, scanned.totals.rounds)
 })
 
-test('the index is written owner-only, and stays that way when it is rewritten', async () => {
+test('the index is written owner-only, and stays that way when it is rewritten', { skip: process.platform === 'win32' }, async () => {
   const dir = store(corpus())
   await buildIndex(dir)
   const file = indexFile(dir)
@@ -393,4 +393,23 @@ test('an index whose mtime is untouched but whose size changed is refused', asyn
   // Put the clock back, so size is the only thing left to notice.
   utimesSync(file, was.atime, was.mtime)
   assert.equal(await SearchIndex.read(dir), null)
+})
+
+test('an index built from rounds a caller already holds is the one built from the file alone', async () => {
+  const rounds = corpus()
+  const dir = store(rounds)
+  // Past the header line, whose `built_at` is the one thing a second build is meant to change.
+  const body = (): string => readFileSync(indexFile(dir), 'utf8').split('\n').slice(1).join('\n')
+  await buildIndex(dir)
+  const alone = body()
+  // Copies, as a caller that read the file itself holds them: equal, and not the same objects.
+  await buildIndex(dir, { known: rounds.map((one) => structuredClone(one)) })
+  assert.equal(body(), alone)
+
+  // What is searched is the line on disk, even when what the caller holds says something else.
+  const held = rounds.map((one) => ({ ...structuredClone(one), user_text: 'nothing anyone typed' }))
+  await buildIndex(dir, { known: held })
+  const result = await search([await fromStore(dir, 'demo')], parse('flaky'), { pricing: PRICING })
+  assert.equal(result.scanned.read, 0, 'the index was not used')
+  assert.ok(result.totals.rounds > 0, 'the prompt on disk was not indexed')
 })

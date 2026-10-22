@@ -817,6 +817,11 @@ export function projectName(project: Project): string {
  */
 export function isEphemeral(project: Project): boolean {
   if (project.path === null) return false
-  const roots = [tmpdir(), '/private' + tmpdir(), '/tmp', '/private/tmp']
-  return roots.some((root) => project.path === root || project.path!.startsWith(root + '/'))
+  // On Windows a path is the same path whichever separator or case it was recorded in, so
+  // `C:\Users\…\Temp`, `c:\users\…\temp` and `C:/Users/…/Temp` all count.
+  const fold = (path: string): string =>
+    process.platform === 'win32' ? path.replaceAll('\\', '/').toLowerCase() : path
+  const path = fold(project.path)
+  const roots = [tmpdir(), '/private' + tmpdir(), '/tmp', '/private/tmp'].map(fold)
+  return roots.some((root) => path === root || path.startsWith(root + '/'))
 }

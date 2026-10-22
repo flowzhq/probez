@@ -248,7 +248,8 @@ test('the config is written owner-only, and a missing timeout is the default', a
   const dir = scratch()
   try {
     await writeReader(dir, { schema_version: 1, command: ['claude', '-p'], timeout_ms: 0 })
-    assert.equal(statSync(readerFile(dir)).mode & 0o077, 0)
+    // Windows has no owner, group and world bits to check.
+    if (process.platform !== 'win32') assert.equal(statSync(readerFile(dir)).mode & 0o077, 0)
     writeFileSync(readerFile(dir), '{"command": ["claude", "-p"]}\n', 'utf8')
     const config = await readReader(dir)
     assert.deepEqual(config?.command, ['claude', '-p'])
@@ -279,7 +280,9 @@ test('a reading is kept, reused without running anything, and re-asked only when
     assert.equal(first.asked, true)
     assert.equal(first.reading.asked, 'run 1')
     assert.equal(first.reading.kind, 'refs')
-    assert.equal(statSync(readingsFile(dir)).mode & 0o077, 0, 'a reading is owner-only')
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(readingsFile(dir)).mode & 0o077, 0, 'a reading is owner-only')
+    }
 
     const again = await explainQuestion(dir, config(reader), question)
     assert.equal(again.asked, false, 'a reading already held runs nothing')

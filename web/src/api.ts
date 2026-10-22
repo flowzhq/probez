@@ -966,6 +966,8 @@ export interface ClearPayload {
     rounds: number
     bytes: number
     removed: string[]
+    locked: string[]
+    failed: Array<{ project: string; error: string }>
   } | null
 }
 

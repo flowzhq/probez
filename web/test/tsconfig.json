@@ -1,0 +1,9 @@
+{
+  // The page's tests, checked with the page's own settings. They also start a real probez server, so
+  // unlike the page itself they may use Node's types; the page never sees these.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": [".", "../src"]
+}

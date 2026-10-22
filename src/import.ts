@@ -288,9 +288,27 @@ export function parseExport(text: string): Parsed {
   const trimmed = text.trimStart()
   if (trimmed === '') throw new ImportError('that file is empty')
 
-  return trimmed.startsWith('{') && !trimmed.slice(1).trimStart().startsWith('"session"')
-    ? parseBundle(trimmed)
-    : parseLines(text)
+  return trimmed.startsWith('{') && !startsWithRound(trimmed) ? parseBundle(trimmed) : parseLines(text)
+}
+
+/**
+ * Whether a file that opens with `{` is rounds a line at a time rather than one bundle.
+ *
+ * Not by which key comes first: a rounds export from the page leads every line with who made it,
+ * and a hand-edited file can put the fields in any order. A first line that is a whole object with
+ * a session in it is a round; a bundle's first line is either all of it, with no session at the
+ * top, or just its opening brace. A first line torn part way still reads as rounds when it opens
+ * with one, as it always has.
+ */
+function startsWithRound(text: string): boolean {
+  if (text.slice(1).trimStart().startsWith('"session"')) return true
+  const end = text.indexOf('\n')
+  try {
+    const first = JSON.parse(end === -1 ? text : text.slice(0, end)) as unknown
+    return typeof first === 'object' && first !== null && !Array.isArray(first) && 'session' in first
+  } catch {
+    return false
+  }
 }
 
 function parseBundle(text: string): Parsed {

@@ -34,6 +34,7 @@ import type {
 } from './inspect.js'
 import {
   collectProject,
+  eachRound,
   findStored,
   importProject,
   listStored,
@@ -90,7 +91,7 @@ import type { SearchResult, Source } from './search.js'
 import { COMMAND_KINDS, commandKindsVersion, subCommands, useCommandKinds } from './bash.js'
 import type { CommandKind } from './bash.js'
 import { commandsFile, readCommandKinds, writeCommandKinds } from './commands.js'
-import { buildIndex, indexFile, isFacet, SearchIndex } from './searchindex.js'
+import { buildIndex, FACETS, indexFile, isFacet, SearchIndex } from './searchindex.js'
 import { applyClear, planClear } from './store.js'
 import type { ClearPlan, ClearResult } from './store.js'
 import { contextShare, resolveModel } from './models.js'
@@ -1273,27 +1274,25 @@ export interface FacetPayload {
 }
 
 /**
- * What one project's index offers for each key asked of it so far.
+ * What one project's index offers for every key.
  *
  * Reading an index means reading and parsing the whole of `search.jsonl`, and the typeahead asks
  * every project each time the word before a colon changes. The values only change when the index
  * or the rounds under it do, so they are kept against both files' size and mtime, the same test
- * the index itself makes. Only the values are kept, never the index, which is mostly postings.
+ * the index itself makes. Every key's values are taken from the one read, so the next key typed
+ * is a lookup rather than another parse. Only the values are kept, never the index, which is
+ * mostly postings.
  */
 interface HeldFacets {
   stamp: string
-  /** No usable index: stale, or never built. */
-  usable: boolean
-  values: Map<string, Array<{ value: string; rounds: number }>>
+  /** Null when there is no usable index: stale, or never built. */
+  values: Map<string, Array<{ value: string; rounds: number }>> | null
 }
 
 const heldFacets = new Map<string, HeldFacets>()
 
-/** This project's values for `key`, or null when it has no usable index. */
-async function facetsOf(
-  dir: string,
-  key: string,
-): Promise<Array<{ value: string; rounds: number }> | null> {
+/** This project's values for every facet, or null when it has no usable index. */
+async function facetsOf(dir: string): Promise<HeldFacets['values']> {
   const [index, rounds] = await Promise.all([
     stat(indexFile(dir)).catch(() => null),
     stat(join(dir, 'rounds.jsonl')).catch(() => null),
@@ -1302,24 +1301,30 @@ async function facetsOf(
     index === null || rounds === null
       ? ''
       : `${index.size}:${index.mtimeMs}:${rounds.size}:${rounds.mtimeMs}`
-  let held = heldFacets.get(dir)
-  if (held !== undefined && held.stamp === stamp) {
-    if (!held.usable) return null
-    const known = held.values.get(key)
-    if (known !== undefined) return known
-  }
+  const held = heldFacets.get(dir)
+  if (held !== undefined && held.stamp === stamp) return held.values
   const read = stamp === '' ? null : await SearchIndex.read(dir)
-  if (held === undefined || held.stamp !== stamp) {
-    held = { stamp, usable: read !== null, values: new Map() }
-    heldFacets.set(dir, held)
-  }
-  if (read === null) {
-    held.usable = false
-    return null
-  }
-  const values = isFacet(key) ? read.facets(key) : []
-  held.values.set(key, values)
+  const values = read === null ? null : new Map(FACETS.map((key) => [key, read.facets(key)] as const))
+  heldFacets.set(dir, { stamp, values })
   return values
+}
+
+/** How many projects' indexes are looked at together: enough to overlap the waiting, few enough
+ * that a cold store does not hold every project's index in memory at once. */
+const FACET_READS = 4
+
+/** `work` for every item, `FACET_READS` at a time, with the answers in the items' own order. */
+async function inTurns<T, R>(items: T[], work: (item: T) => Promise<R>): Promise<R[]> {
+  const found: R[] = new Array(items.length)
+  let next = 0
+  const reader = async (): Promise<void> => {
+    while (next < items.length) {
+      const at = next++
+      found[at] = await work(items[at]!)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(FACET_READS, items.length) }, reader))
+  return found
 }
 
 /**
@@ -1347,26 +1352,33 @@ export async function facetsPayload(
     return { fields, key: null, values: [], scanned: { projects: 0, indexed: 0 } }
   }
 
-  const stored = await listStored(dataDir)
-  const wanted = options.slug === undefined ? stored : stored.filter((row) => row.slug === options.slug)
+  // One project asked about is one manifest read, not every project's.
+  const wanted =
+    options.slug === undefined
+      ? await listStored(dataDir)
+      : await findStored(dataDir, options.slug).then((row) => (row === null ? [] : [row]))
   // A key with no values to offer reads nothing: every keystroke of a field name lands here.
   if (key !== 'project' && !isFacet(key)) {
     return { fields, key, values: [], scanned: { projects: wanted.length, indexed: 0 } }
   }
+  // A few projects at a time rather than one after another, and in the store's order whatever
+  // order they finish in, so the counts tie-break the same way every time.
+  const found = await inTurns(wanted, (row) => facetsOf(row.dir))
+
   const counts = new Map<string, number>()
   let indexed = 0
-  for (const row of wanted) {
-    const values = await facetsOf(row.dir, key)
-    if (values === null) continue
+  wanted.forEach((row, at) => {
+    const held = found[at]
+    if (held === null || held === undefined) return
     indexed += 1
     if (key === 'project') {
       counts.set(row.project, (counts.get(row.project) ?? 0) + row.rounds)
-      continue
+      return
     }
-    for (const one of values) {
+    for (const one of held.get(key) ?? []) {
       counts.set(one.value, (counts.get(one.value) ?? 0) + one.rounds)
     }
-  }
+  })
 
   const values = [...counts.entries()]
     .map(([value, rounds]) => ({ value, rounds }))
@@ -1898,17 +1910,28 @@ export async function mergeExport(
   const rounds = parsed.rounds.map((round) =>
     round.committer === undefined ? { ...round, committer: named! } : round,
   )
-  return exclusive(slug, async () => {
-    const result = await mergeIntoProject(dataDir, slug, rounds, parsed.skipped)
-    if (result === null) throw new NotFound(`no project ${slug} in this store`)
+  let changed: string | null = null
+  const result = await exclusive(slug, async () => {
+    const merged = await mergeIntoProject(dataDir, slug, rounds, parsed.skipped)
+    if (merged === null) throw new NotFound(`no project ${slug} in this store`)
     const stored = await findStored(dataDir, slug)
-    if (stored !== null && result.added + result.updated > 0) {
-      // The rounds cache and the search index are both keyed on a file that just changed.
+    if (stored !== null && merged.added + merged.updated > 0) {
+      // The rounds cache is keyed on a file that just changed.
       cache.delete(stored.dir)
-      await buildIndex(stored.dir).catch(() => null)
+      changed = stored.dir
     }
-    return result
+    return merged
   })
+  // The index is rebuilt after the answer rather than before it. Rebuilding is a pass over the
+  // whole project, not over what arrived, and the answer does not use it; until it is there a
+  // search reads the rounds file instead, and the typeahead leaves this project out. It is queued
+  // behind the merge like any other write, so a sync, rename or delete asked for meanwhile still
+  // waits for it. One that fails leaves no index, which is the state the merge left it in anyway.
+  if (changed !== null) {
+    const dir: string = changed
+    void exclusive(slug, () => buildIndex(dir)).catch(() => null)
+  }
+  return result
 }
 
 /** Who this machine's rounds belong to, and everyone else whose work the store holds. */
@@ -1964,6 +1987,36 @@ export interface PricingPayload {
  * but never priced appears in the list with nothing beside it. A settings screen that only lists
  * what it already knows about cannot tell you what it is missing.
  */
+/** Rounds per model for projects with no usable index, kept against the rounds file's size and mtime. */
+const heldModels = new Map<string, { stamp: string; counts: Map<string, number> }>()
+
+/**
+ * How many rounds each model has in one project, for the rate table.
+ *
+ * The rate table is the first thing Settings shows, and it wants a count, not the rounds. The
+ * index already counts rounds per model, and `facetsOf` keeps that against the files' stamps; a
+ * project with no usable index is streamed once per version of its rounds rather than parsed
+ * whole and held, since nothing else here needs them.
+ */
+async function modelsOf(dir: string): Promise<Map<string, number>> {
+  const facets = await facetsOf(dir)
+  const model = facets?.get('model')
+  if (model !== undefined) return new Map(model.map((one) => [one.value, one.rounds]))
+
+  const info = await stat(join(dir, 'rounds.jsonl')).catch(() => null)
+  if (info === null) return new Map()
+  const stamp = `${info.size}:${info.mtimeMs}`
+  const held = heldModels.get(dir)
+  if (held !== undefined && held.stamp === stamp) return held.counts
+  const counts = new Map<string, number>()
+  await eachRound(join(dir, 'rounds.jsonl'), (round) => {
+    if (typeof round.model !== 'string' || round.model === '') return
+    counts.set(round.model, (counts.get(round.model) ?? 0) + 1)
+  })
+  heldModels.set(dir, { stamp, counts })
+  return counts
+}
+
 export async function pricingPayload(dataDir: string): Promise<PricingPayload> {
   const pricing = await readPricing(dataDir)
   const defaults: Record<string, Rates> = {}
@@ -1972,15 +2025,15 @@ export async function pricingPayload(dataDir: string): Promise<PricingPayload> {
   }
 
   const seen = new Map<string, number>()
-  for (const project of await listStored(dataDir)) {
-    for (const round of await roundsOf(project.dir)) {
-      if (round.model === null) continue
+  const counted = await inTurns(await listStored(dataDir), (project) => modelsOf(project.dir))
+  for (const models of counted) {
+    for (const [model, rounds] of models) {
       // Counted against the id that actually prices the round, so the 6,196 rounds recorded as
       // `claude-haiku-4-5-20251001` land on the `claude-haiku-4-5` row rather than sitting in a row
       // of their own marked "no rate" while being charged perfectly well. A model nothing resolves
       // keeps its own spelling, because that is the one a person has to type a rate against.
-      const id = resolveModel(round.model, (one) => pricing.models[one] != null) ?? round.model
-      seen.set(id, (seen.get(id) ?? 0) + 1)
+      const id = resolveModel(model, (one) => pricing.models[one] != null) ?? model
+      seen.set(id, (seen.get(id) ?? 0) + rounds)
     }
   }
   // Two sources, unioned: models the store has rounds for, and every model the rate table names.

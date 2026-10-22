@@ -7,18 +7,21 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { startServer } from '../src/serve.js'
 import type { Serving } from '../src/serve.js'
-import { forgetRounds, parentIn } from '../src/viewdata.js'
+import { BadRequest, explainOne, forgetRounds, parentIn } from '../src/viewdata.js'
+import { cursorSlugOf, inJson } from './support.js'
 
 /**
  * The local server, exercised the way the browser meets it.
@@ -57,14 +60,14 @@ function makeStore(delegated = false): {
   const session = '11111111-0000-0000-0000-000000000000'
   writeFileSync(
     join(sourceDir, `${session}.jsonl`),
-    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', project),
+    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', inJson(project)),
   )
   if (delegated) {
     const under = join(sourceDir, session, 'subagents')
     mkdirSync(under, { recursive: true })
     writeFileSync(
       join(under, 'agent-a1234567.jsonl'),
-      readFileSync(SUBAGENT_FIXTURE, 'utf8').replaceAll('/tmp/demo', project),
+      readFileSync(SUBAGENT_FIXTURE, 'utf8').replaceAll('/tmp/demo', inJson(project)),
     )
   }
   const cursorDir = join(root, 'cursor')
@@ -717,7 +720,7 @@ test('?source= on a project is a page filter, not a search', async () => {
 
 test('?source=cursor keeps the project payload to Cursor rounds on a mixed store', async () => {
   const { dataDir, claudeDir, cursorDir, slug, project } = makeStore()
-  const cursorSlug = project.replaceAll('/', '-').replace(/^-/, '')
+  const cursorSlug = cursorSlugOf(project)
   const sessionId = 'aaaa1111-0000-0000-0000-000000000000'
   const sessionDir = join(cursorDir, cursorSlug, 'agent-transcripts', sessionId)
   mkdirSync(sessionDir, { recursive: true })
@@ -773,7 +776,7 @@ test('?source=cursor keeps the project payload to Cursor rounds on a mixed store
 
 test('sync collects every agent even when a source: query would hide some of them', async () => {
   const { dataDir, claudeDir, cursorDir, slug, project } = makeStore()
-  const cursorSlug = project.replaceAll('/', '-').replace(/^-/, '')
+  const cursorSlug = cursorSlugOf(project)
   const sessionId = 'aaaa1111-0000-0000-0000-000000000000'
   const sessionDir = join(cursorDir, cursorSlug, 'agent-transcripts', sessionId)
   mkdirSync(sessionDir, { recursive: true })
@@ -1039,6 +1042,405 @@ test('the reader is argv, and setting it is a POST', async () => {
       }),
     )
     assert.deepEqual(cleared.command, [])
+  } finally {
+    await server.close()
+  }
+})
+
+/** A JSON POST with the token, as the Settings screen and the project page send one. */
+const posting = (server: Serving, path: string, sent: unknown): Promise<Response> =>
+  get(server, `${path}${path.includes('?') ? '&' : '?'}t=${server.token}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(sent),
+  })
+
+test('a project that is not in the store is a 404 on every route that names one, read or write', async () => {
+  const { dataDir } = makeStore()
+  const server = await serving(dataDir)
+  const missing = { status: 404, error: 'no project nobody-here in this store' }
+  try {
+    assert.deepEqual(await refusal(withToken(server, '/api/projects/nobody-here/export')), missing)
+    assert.deepEqual(await refusal(withToken(server, '/api/projects/nobody-here/readings')), missing)
+    assert.deepEqual(await refusal(withToken(server, '/api/search?q=read&project=nobody-here')), missing)
+    assert.deepEqual(await refusal(posting(server, '/api/projects/nobody-here/rename', { name: 'x' })), missing)
+    assert.deepEqual(await refusal(posting(server, '/api/projects/nobody-here/sync', {})), missing)
+    // And none of them made one by asking.
+    assert.equal(existsSync(join(dataDir, 'projects', 'nobody-here')), false)
+  } finally {
+    await server.close()
+  }
+})
+
+test('a rename says what was wrong with the name, and a refused one leaves the old name', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const before = (await body(withToken(server, `/api/projects/${slug}`))).project.name
+    assert.deepEqual(await refusal(posting(server, `/api/projects/${slug}/rename`, {})), {
+      status: 400,
+      error: 'expected { name: "<what to call it>" }',
+    })
+    assert.deepEqual(await refusal(posting(server, `/api/projects/${slug}/rename`, { name: 7 })), {
+      status: 400,
+      error: 'expected { name: "<what to call it>" }',
+    })
+    assert.deepEqual(await refusal(posting(server, `/api/projects/${slug}/rename`, { name: 'x'.repeat(400) })), {
+      status: 400,
+      error: 'a name has to fit in 80 characters',
+    })
+    assert.equal((await body(withToken(server, `/api/projects/${slug}`))).project.name, before)
+  } finally {
+    await server.close()
+  }
+})
+
+test('a result the archived log never recorded, and a round the session never had, are each a 404', async () => {
+  const { dataDir, slug, session } = makeStore()
+  const archived = join(dataDir, 'projects', slug, 'sessions', `${session}.jsonl`)
+  // The call stays in the rounds and its result leaves the log, which is a session the agent
+  // wrote before the result came back.
+  const lines = readFileSync(archived, 'utf8').split('\n')
+  writeFileSync(archived, lines.filter((line) => !line.includes('"tool_use_id": "tu_1"')).join('\n'))
+  const server = await serving(dataDir)
+  try {
+    assert.deepEqual(await refusal(withToken(server, `/api/projects/${slug}/sessions/${session}/results/tu_1`)), {
+      status: 404,
+      error: 'the archived session records no result for tu_1',
+    })
+    assert.deepEqual(await refusal(withToken(server, `/api/projects/${slug}/sessions/${session}/rounds/9999`)), {
+      status: 404,
+      error: `no round 9999 in session ${session}`,
+    })
+    // The other calls' results are still in the log and still answer.
+    assert.equal((await body(withToken(server, `/api/projects/${slug}/sessions/${session}/results/tu_2`))).body, 'boom')
+  } finally {
+    await server.close()
+  }
+})
+
+test('each setting says which part of what was sent is wrong, and a refusal saves none of it', async () => {
+  const { dataDir } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    // Who you are is the one setting with no file until it is chosen.
+    const identity = await body(withToken(server, '/api/identity'))
+    assert.equal(identity.chosen, false)
+    assert.deepEqual(await refusal(posting(server, '/api/identity', {})), {
+      status: 400,
+      error: 'expected { name: "<who you are>" }',
+    })
+    assert.equal((await body(withToken(server, '/api/identity'))).chosen, false)
+    const chosen = await body(posting(server, '/api/identity', { name: 'Dana' }))
+    assert.equal(chosen.committer, 'Dana')
+    assert.equal(chosen.chosen, true)
+    assert.equal((await body(withToken(server, '/api/identity'))).committer, 'Dana')
+
+    assert.deepEqual(await refusal(posting(server, '/api/commands', { kinds: { q: 'graph' } })), {
+      status: 400,
+      error: 'expected { commands: { "<name>": "<kind>" } }',
+    })
+
+    const pricing = JSON.stringify((await body(withToken(server, '/api/pricing'))).models)
+    const rates = { in: 1, cache_write_5m: 1, cache_write_1h: 2, cache_read: 0.1, out: 8 }
+    assert.deepEqual(await refusal(posting(server, '/api/pricing', { models: [] })), {
+      status: 400,
+      error: 'expected { models: { "<model>": { in, cache_write_5m, cache_write_1h, cache_read, out } | null } }',
+    })
+    assert.deepEqual(await refusal(posting(server, '/api/pricing', { models: { '': null } })), {
+      status: 400,
+      error: '"" is not a model name',
+    })
+    assert.deepEqual(await refusal(posting(server, '/api/pricing', { models: { 'm-1': 5 } })), {
+      status: 400,
+      error: 'm-1 has no rates',
+    })
+    assert.deepEqual(await refusal(posting(server, '/api/pricing', { models: { 'm-1': { ...rates, out: -1 } } })), {
+      status: 400,
+      error: 'm-1.out must be a number of dollars per million tokens',
+    })
+    // One bad row refuses the lot, so a good row sent beside it is not half-saved.
+    assert.deepEqual(
+      await refusal(posting(server, '/api/pricing', { models: { 'good-1': rates, 'm-1': { ...rates, in: 'one' } } })),
+      { status: 400, error: 'm-1.in must be a number of dollars per million tokens' },
+    )
+    assert.equal(JSON.stringify((await body(withToken(server, '/api/pricing'))).models), pricing)
+
+    assert.deepEqual(await refusal(posting(server, '/api/reader', null)), {
+      status: 400,
+      error: 'that is not a reader',
+    })
+    assert.deepEqual(await refusal(posting(server, '/api/reader', { command: ['claude', 3] })), {
+      status: 400,
+      error: 'a command is a list of strings',
+    })
+    assert.deepEqual((await body(withToken(server, '/api/reader'))).command, [])
+  } finally {
+    await server.close()
+  }
+})
+
+/**
+ * A clock that has run past every deadline by the time anything reads it twice.
+ *
+ * A writer waits five minutes on a held project lock before it gives up and says who holds it.
+ * Each read of this clock is six minutes after the last, so that wait ends at its first check and
+ * the refusal is reached without sitting through it. Only for direct calls: `fetch` keeps its own
+ * timeouts on the same clock.
+ */
+function pastEveryDeadline(): () => void {
+  const real = Date.now.bind(Date)
+  let reads = 0
+  const faked = mock.method(Date, 'now', () => real() + ++reads * 6 * 60_000)
+  return () => faked.mock.restore()
+}
+
+/** The JSON error a refusal carries, beside the status it was sent with. */
+async function refusal(response: Promise<Response>): Promise<{ status: number; error: string }> {
+  const got = await response
+  return { status: got.status, error: String(((await got.json()) as { error?: unknown }).error) }
+}
+
+test('explaining says which part of a request is wrong, and a reader that fails is its own answer', async () => {
+  const { dataDir, slug } = makeStore()
+  writeFileSync(
+    join(dataDir, 'reader.json'),
+    JSON.stringify({
+      command: [process.execPath, '-e', 'process.stderr.write("no model configured\\n"); process.exit(3)'],
+    }) + '\n',
+  )
+  const before = snapshot(dataDir)
+  const server = await serving(dataDir)
+  const explain = (sent: unknown, to = slug): Promise<Response> =>
+    get(server, `/api/projects/${to}/explain?t=${server.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(sent),
+    })
+
+  try {
+    const one = (await body(withToken(server, `/api/projects/${slug}/questions`))).questions[0]
+    assert.ok(one !== undefined, 'the fixture asked nothing')
+    const named = { session: one.session, task: one.task, at: one.at }
+
+    // Each missing part is named, in the order the lookup needs them.
+    assert.deepEqual(await refusal(explain(null)), { status: 400, error: 'that names no question' })
+    assert.deepEqual(await refusal(explain({ task: one.task, at: one.at })), {
+      status: 400,
+      error: 'that names no session',
+    })
+    assert.deepEqual(await refusal(explain({ session: one.session, at: one.at })), {
+      status: 400,
+      error: 'that names no task',
+    })
+    assert.deepEqual(await refusal(explain({ session: one.session, task: one.task })), {
+      status: 400,
+      error: 'that names no question',
+    })
+    assert.deepEqual(await refusal(explain({ ...named, at: -1 })), { status: 400, error: 'that names no question' })
+
+    // A project that is not in the store is a 404, found out before any reader is run.
+    assert.deepEqual(await refusal(explain(named, 'nobody-here')), {
+      status: 404,
+      error: 'no project nobody-here in this store',
+    })
+
+    // The reader ran and failed: the person's setup to fix, so a 400 quoting what it said.
+    const failed = await refusal(explain(named))
+    assert.equal(failed.status, 400)
+    assert.match(failed.error, /exited 3/)
+    assert.match(failed.error, /no model configured/)
+  } finally {
+    await server.close()
+  }
+  assert.deepEqual(snapshot(dataDir), before, 'a refused or failed explain must not have written')
+})
+
+test('a reading that cannot get the project\'s lock says who holds it, and keeps nothing', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  let one
+  try {
+    one = (await body(withToken(server, `/api/projects/${slug}/questions`))).questions[0]
+    assert.ok(one !== undefined, 'the fixture asked nothing')
+  } finally {
+    await server.close()
+  }
+  writeFileSync(
+    join(dataDir, 'reader.json'),
+    JSON.stringify({
+      command: [process.execPath, '-e', 'process.stdout.write(JSON.stringify({asked:"Why?",kind:"refs",why:"x"}))'],
+    }) + '\n',
+  )
+  // Held by a process that is alive — this one — so nothing can take it over as abandoned.
+  const lock = join(dataDir, 'projects', slug, 'write.lock')
+  writeFileSync(lock, String(process.pid))
+
+  const restore = pastEveryDeadline()
+  try {
+    await assert.rejects(explainOne(dataDir, slug, { session: one.session, task: one.task, at: one.at }), (error) => {
+      // A BadRequest, so the page shows the sentence rather than a bare 500.
+      assert.ok(error instanceof BadRequest)
+      assert.match(error.message, new RegExp(`still being written by process ${process.pid}`))
+      assert.ok(error.message.includes('write.lock'), 'it names the file to delete')
+      return true
+    })
+  } finally {
+    restore()
+  }
+  assert.ok(!existsSync(join(dataDir, 'projects', slug, 'readings.json')), 'what the reader said was not kept')
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid), 'the lock is still its holder\'s')
+})
+
+test('the prompt says which part of a request is wrong, and that a project is not here', async () => {
+  const { dataDir, slug } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    const one = (await body(withToken(server, `/api/projects/${slug}/questions`))).questions[0]
+    assert.ok(one !== undefined, 'the fixture asked nothing')
+    const session = encodeURIComponent(String(one.session))
+    const prompt = (query: string, to = slug): Promise<Response> =>
+      withToken(server, `/api/projects/${to}/prompt?${query}`)
+
+    assert.deepEqual(await refusal(prompt(`task=${one.task}&at=${one.at}`)), {
+      status: 400,
+      error: 'that names no session',
+    })
+    assert.deepEqual(await refusal(prompt(`session=${session}&at=${one.at}`)), {
+      status: 400,
+      error: 'that names no task',
+    })
+    assert.deepEqual(await refusal(prompt(`session=${session}&task=${one.task}`)), {
+      status: 400,
+      error: 'that names no question',
+    })
+    assert.deepEqual(await refusal(prompt(`session=${session}&task=${one.task}&at=nope`)), {
+      status: 400,
+      error: 'that names no question',
+    })
+    assert.deepEqual(await refusal(prompt(`session=${session}&task=${one.task}&at=${one.at}`, 'nobody-here')), {
+      status: 404,
+      error: 'no project nobody-here in this store',
+    })
+    assert.deepEqual(await refusal(prompt(`session=${session}&task=${one.task}&at=9999`)), {
+      status: 404,
+      error: `no question at ${one.task}.9999 in that session`,
+    })
+  } finally {
+    await server.close()
+  }
+})
+
+/** A POST through `node:http`, whose timeouts do not read `Date.now`, unlike `fetch`'s. */
+function rawPost(port: number, path: string, headers: Record<string, string>, sent: string): Promise<{ status: number; error: string }> {
+  return new Promise((ok, fail) => {
+    const req = request({ host: '127.0.0.1', port, path, method: 'POST', headers }, (res) => {
+      let text = ''
+      res.setEncoding('utf8')
+      res.on('data', (chunk: string) => (text += chunk))
+      res.on('end', () => ok({ status: res.statusCode ?? 0, error: String((JSON.parse(text) as { error?: unknown }).error) }))
+    })
+    req.on('error', fail)
+    req.end(sent)
+  })
+}
+
+test('a write that finds the project held by another writer answers 409, and says who holds it', async () => {
+  const { dataDir, slug } = makeStore()
+  const theirs = theirRound(dataDir, slug)
+  const lock = join(dataDir, 'projects', slug, 'write.lock')
+  writeFileSync(lock, String(process.pid))
+  const before = readFileSync(join(dataDir, 'projects', slug, 'rounds.jsonl'), 'utf8')
+  const server = await serving(dataDir)
+  const restore = pastEveryDeadline()
+  try {
+    const held = await rawPost(
+      server.port,
+      `/api/projects/${slug}/merge`,
+      { 'x-probez-token': server.token, 'x-probez-committer': 'Dana', host: `127.0.0.1:${server.port}` },
+      theirs,
+    )
+    assert.equal(held.status, 409)
+    assert.match(held.error, new RegExp(`still being written by process ${process.pid}`))
+    assert.ok(held.error.includes('write.lock'), 'it names the file to delete')
+  } finally {
+    restore()
+    await server.close()
+  }
+  assert.equal(readFileSync(join(dataDir, 'projects', slug, 'rounds.jsonl'), 'utf8'), before)
+})
+
+/** One of the store's own rounds, as if another machine had recorded it. */
+function theirRound(dataDir: string, slug: string): string {
+  const first = readFileSync(join(dataDir, 'projects', slug, 'rounds.jsonl'), 'utf8').split('\n')[0]!
+  return JSON.stringify({ ...JSON.parse(first), session: 'theirs-0000', id: 'theirs#r0' }) + '\n'
+}
+
+test('a merge says why it refused a file, and refusing writes nothing', async () => {
+  const { dataDir, slug } = makeStore()
+  const theirs = theirRound(dataDir, slug)
+  const before = snapshot(dataDir)
+  const server = await serving(dataDir)
+  const merge = (text: string, to = slug): Promise<Response> =>
+    get(server, `/api/projects/${to}/merge`, {
+      method: 'POST',
+      headers: { 'x-probez-token': server.token, 'content-type': 'application/x-ndjson' },
+      body: text,
+    })
+
+  try {
+    assert.deepEqual(await refusal(merge('')), { status: 400, error: 'no file contents were sent' })
+    assert.deepEqual(await refusal(merge(theirs, 'nobody-here')), {
+      status: 404,
+      error: 'no project nobody-here in this store',
+    })
+    // A download cut short is the usual way a bundle stops parsing.
+    const torn = await refusal(merge('{"manifest": {}, "rounds": ['))
+    assert.equal(torn.status, 400)
+    assert.match(torn.error, /not valid JSON/)
+    // The rounds name nobody and no header gives a name, so there is nobody to file them under.
+    const unnamed = await refusal(merge(theirs))
+    assert.equal(unnamed.status, 400)
+    assert.match(unnamed.error, /does not say whose work it is/)
+    // Without the token a merge writes nothing, like every other write here.
+    assert.equal((await get(server, `/api/projects/${slug}/merge`, { method: 'POST', body: theirs })).status, 403)
+  } finally {
+    await server.close()
+  }
+  assert.deepEqual(snapshot(dataDir), before, 'a refused merge must not have written')
+})
+
+test('a merge that fails partway answers 500 and leaves the project mergeable', async () => {
+  const { dataDir, slug } = makeStore()
+  const theirs = theirRound(dataDir, slug)
+  const dir = join(dataDir, 'projects', slug)
+  const server = await serving(dataDir)
+  const merge = (): Promise<Response> =>
+    get(server, `/api/projects/${slug}/merge`, {
+      method: 'POST',
+      headers: {
+        'x-probez-token': server.token,
+        'content-type': 'application/x-ndjson',
+        'x-probez-committer': encodeURIComponent('Dana'),
+      },
+      body: theirs,
+    })
+
+  try {
+    // Rounds that cannot be read are not rounds that are not there: merging over them would
+    // replace the project's rounds with only the incoming ones.
+    renameSync(join(dir, 'rounds.jsonl'), join(dir, 'rounds.aside'))
+    mkdirSync(join(dir, 'rounds.jsonl'))
+    assert.deepEqual(await refusal(merge()), { status: 500, error: 'probez view failed to answer' })
+    assert.ok(!existsSync(join(dir, 'merged.jsonl')), 'nothing was copied aside')
+    assert.ok(!existsSync(join(dir, 'write.lock')), 'the lock was let go')
+
+    // Put right, the same file merges, so neither the lock nor the queue was left held.
+    rmSync(join(dir, 'rounds.jsonl'), { recursive: true })
+    renameSync(join(dir, 'rounds.aside'), join(dir, 'rounds.jsonl'))
+    const merged = await body(merge())
+    assert.equal(merged.added, 1)
+    assert.deepEqual(merged.committers, [{ name: 'Dana', rounds: 1 }])
   } finally {
     await server.close()
   }
@@ -1442,4 +1844,40 @@ test('a subagent names the listed session it ran under, whichever way its agent 
   assert.equal(parentIn('bbbb/bbbb', cursor), null)
   // A parent the store does not hold is still named, as the id has it.
   assert.equal(parentIn('dddd/subagents/eeee', new Set()), 'dddd')
+})
+
+test('a result whose session log is not here says why, for a collected project and an imported one', async () => {
+  const { dataDir, slug, session } = makeStore()
+  const server = await serving(dataDir)
+  try {
+    // A collected project whose archived copy has gone: the call is real, the log is not.
+    const sessions = join(dataDir, 'projects', slug, 'sessions')
+    for (const file of readdirSync(sessions)) rmSync(join(sessions, file))
+    const collected = await withToken(server, `/api/projects/${slug}/sessions/${session}/results/tu_1`)
+    assert.equal(collected.status, 404)
+    assert.match(((await collected.json()) as { error: string }).error, new RegExp(`no archived copy of session ${session}`))
+
+    // An imported project never had one: an export carries the rounds, not the logs behind them.
+    // The page's own rounds export, sent back through the page's import, as a colleague would.
+    const exported = await (await withToken(server, `/api/projects/${slug}/export?format=jsonl`)).text()
+    const imported = await body(
+      get(server, '/api/import', {
+        method: 'POST',
+        headers: {
+          'x-probez-token': server.token,
+          'content-type': 'application/x-ndjson',
+          'x-probez-filename': 'from-a-colleague-rounds.jsonl',
+        },
+        body: exported,
+      }),
+    )
+    assert.equal(typeof imported.slug, "string", JSON.stringify(imported))
+    const theirs = imported.slug as string
+    assert.notEqual(theirs, slug)
+    const missing = await withToken(server, `/api/projects/${theirs}/sessions/${session}/results/tu_1`)
+    assert.equal(missing.status, 404)
+    assert.match(((await missing.json()) as { error: string }).error, /an imported project carries its rounds, not the logs behind them/)
+  } finally {
+    await server.close()
+  }
 })

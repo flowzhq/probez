@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import {
   chmodSync,
   cpSync,
@@ -18,6 +18,8 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+
+import { cursorSlugOf, dashFreeDir, inJson } from './support.js'
 
 /**
  * End-to-end tests over the built CLI.
@@ -98,7 +100,7 @@ function makeSource(sessions: number, delegated = false): {
   const template = readFileSync(FIXTURE, 'utf8')
   for (let i = 0; i < sessions; i++) {
     const id = `${String(i).repeat(8)}-0000-0000-0000-000000000000`
-    writeFileSync(join(sourceDir, `${id}.jsonl`), template.replaceAll('/tmp/demo', project))
+    writeFileSync(join(sourceDir, `${id}.jsonl`), template.replaceAll('/tmp/demo', inJson(project)))
   }
   if (delegated && sessions > 0) {
     const id = `${'0'.repeat(8)}-0000-0000-0000-000000000000`
@@ -106,7 +108,7 @@ function makeSource(sessions: number, delegated = false): {
     mkdirSync(under, { recursive: true })
     writeFileSync(
       join(under, 'agent-a1234567.jsonl'),
-      readFileSync(SUBAGENT_FIXTURE, 'utf8').replaceAll('/tmp/demo', project),
+      readFileSync(SUBAGENT_FIXTURE, 'utf8').replaceAll('/tmp/demo', inJson(project)),
     )
   }
   return { claudeDir, cursorDir, codexDir, copilotDir, piDir, opencodeDir, gooseDir, clineDir, dataDir, project }
@@ -179,7 +181,7 @@ function walk(dir: string): string[] {
 
 const SHARED_BITS = 0o077
 
-test('a new store is readable only by its owner', () => {
+test('a new store is readable only by its owner', { skip: process.platform === 'win32' }, () => {
   const env = makeSource(1)
   assert.equal(collect(env).status, 0)
 
@@ -187,7 +189,7 @@ test('a new store is readable only by its owner', () => {
   assert.deepEqual(shared, [], 'no path in the store may be group- or world-accessible')
 })
 
-test('collect repairs a store that was left world-readable', () => {
+test('collect repairs a store that was left world-readable', { skip: process.platform === 'win32' }, () => {
   const env = makeSource(1)
   assert.equal(collect(env).status, 0)
 
@@ -355,7 +357,7 @@ test('a model with no rate is reported rather than priced at nothing', () => {
   writeFileSync(
     join(env.claudeDir, 'encoded-project-name', '11111111-0000-0000-0000-000000000000.jsonl'),
     readFileSync(FIXTURE, 'utf8')
-      .replaceAll('/tmp/demo', env.project)
+      .replaceAll('/tmp/demo', inJson(env.project))
       .replaceAll('claude-opus-5', 'claude-sonnet-5'),
   )
   assert.equal(collect(env).status, 0)
@@ -416,7 +418,8 @@ test('`analyze` writes its cache owner-only, and writing it again changes nothin
 
   const file = walk(env.dataDir).find((path) => path.endsWith('analysis.jsonl'))
   assert.ok(file !== undefined, 'analyze must leave an analysis.jsonl for the next stage')
-  assert.equal(statSync(file).mode & 0o777, 0o600)
+  // Windows has no owner, group and world bits to check.
+  if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600)
 
   const header = JSON.parse(readFileSync(file, 'utf8').split('\n')[0]!) as Record<string, unknown>
   assert.equal(typeof header.analyzer_version, 'number')
@@ -426,6 +429,41 @@ test('`analyze` writes its cache owner-only, and writing it again changes nothin
   const first = readFileSync(file, 'utf8').split('\n').slice(1).join('\n')
   assert.equal(read(env, ['analyze']).status, 0)
   assert.equal(readFileSync(file, 'utf8').split('\n').slice(1).join('\n'), first)
+})
+
+test('`analyze` answers at once while another process is writing the project, and leaves the caches to it', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+  const rounds = walk(env.dataDir).find((path) => path.endsWith('rounds.jsonl'))!
+  const dir = dirname(rounds)
+  rmSync(join(dir, 'analysis.jsonl'), { force: true })
+  rmSync(join(dir, 'search.jsonl'), { force: true })
+  const writer = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' })
+  try {
+    writeFileSync(join(dir, 'write.lock'), String(writer.pid))
+    // Before, the answer waited behind the writer for up to five minutes, and was lost to an error
+    // if the writer took longer.
+    const started = Date.now()
+    const text = read(env, ['analyze'])
+    const json = read(env, ['analyze', '--json'])
+    assert.ok(Date.now() - started < 30_000, 'analyze waited for the writer')
+    assert.equal(text.status, 0, text.stderr)
+    assert.match(text.stdout, /reconstruction/i)
+    assert.equal(json.status, 0, json.stderr)
+    assert.ok(Array.isArray(JSON.parse(json.stdout)))
+
+    assert.equal(existsSync(join(dir, 'analysis.jsonl')), false, 'a cache was written under the writer')
+    assert.equal(existsSync(join(dir, 'search.jsonl')), false, 'an index was written under the writer')
+    assert.equal(readFileSync(join(dir, 'write.lock'), 'utf8'), String(writer.pid))
+  } finally {
+    writer.kill()
+  }
+
+  // With the project free again, the next run writes both.
+  rmSync(join(dir, 'write.lock'))
+  assert.equal(read(env, ['analyze']).status, 0)
+  assert.equal(existsSync(join(dir, 'analysis.jsonl')), true)
+  assert.equal(existsSync(join(dir, 'search.jsonl')), true)
 })
 
 test('`analyze --json` carries the coverage numbers as fields', () => {
@@ -543,7 +581,7 @@ function secondProject(env: ReturnType<typeof makeSource>, name: string): string
   mkdirSync(dir, { recursive: true })
   writeFileSync(
     join(dir, 'bbbbbbbb-0000-0000-0000-000000000000.jsonl'),
-    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', second),
+    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', inJson(second)),
   )
   return second
 }
@@ -949,8 +987,8 @@ function makeCursorSource(): ReturnType<typeof makeSource> & { sessionDir: strin
   const env = makeSource(0)
   // Cursor has no cwd in the file, so discovery infers the path from the folder name. Dashes in
   // a temp directory would decode as extra path segments, so this checkout is dash-free.
-  const project = realpathSync(mkdtempSync(join('/tmp', 'probezwork')))
-  const slug = project.replaceAll('/', '-').replace(/^-/, '')
+  const project = dashFreeDir()
+  const slug = cursorSlugOf(project)
   const sessionId = 'aaaa1111-0000-0000-0000-000000000000'
   const sessionDir = join(env.cursorDir, slug, 'agent-transcripts', sessionId)
   mkdirSync(join(sessionDir, 'subagents'), { recursive: true })
@@ -983,7 +1021,7 @@ test('collect merges Claude and Cursor sessions for the same checkout', () => {
   const sourceDir = join(env.claudeDir, 'encoded-project-name')
   writeFileSync(
     join(sourceDir, '11111111-0000-0000-0000-000000000000.jsonl'),
-    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', env.project),
+    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', inJson(env.project)),
   )
   const both = collect(env, ['--json'])
   assert.equal(both.status, 0, both.stderr)
@@ -1047,10 +1085,10 @@ function makeCodexSource(): ReturnType<typeof makeSource> {
   const day = join(env.codexDir, '2026', '01', '06')
   mkdirSync(day, { recursive: true })
   const name = 'rollout-2026-01-06T00-00-00-cccc3333-0000-0000-0000-000000000000.jsonl'
-  writeFileSync(join(day, name), readFileSync(CODEX_FIXTURE, 'utf8').replaceAll('/tmp/demo', env.project))
+  writeFileSync(join(day, name), readFileSync(CODEX_FIXTURE, 'utf8').replaceAll('/tmp/demo', inJson(env.project)))
   writeFileSync(
     join(day, 'rollout-2026-01-06T00-00-01-dddd4444-0000-0000-0000-000000000000.jsonl'),
-    readFileSync(CODEX_SUB, 'utf8').replaceAll('/tmp/demo', env.project),
+    readFileSync(CODEX_SUB, 'utf8').replaceAll('/tmp/demo', inJson(env.project)),
   )
   return env
 }
@@ -1181,7 +1219,7 @@ test('collect merges Claude and Codex sessions for the same checkout', () => {
   const sourceDir = join(env.claudeDir, 'encoded-project-name')
   writeFileSync(
     join(sourceDir, '11111111-0000-0000-0000-000000000000.jsonl'),
-    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', env.project),
+    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', inJson(env.project)),
   )
   const both = collect(env, ['--json'])
   assert.equal(both.status, 0, both.stderr)
@@ -1234,13 +1272,13 @@ function makeMixedSource(): ReturnType<typeof makeSource> {
   mkdirSync(sourceDir, { recursive: true })
   writeFileSync(
     join(sourceDir, '11111111-0000-0000-0000-000000000000.jsonl'),
-    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', env.project),
+    readFileSync(FIXTURE, 'utf8').replaceAll('/tmp/demo', inJson(env.project)),
   )
   const day = join(env.codexDir, '2026', '01', '06')
   mkdirSync(day, { recursive: true })
   writeFileSync(
     join(day, 'rollout-2026-01-06T00-00-00-cccc3333-0000-0000-0000-000000000000.jsonl'),
-    readFileSync(CODEX_FIXTURE, 'utf8').replaceAll('/tmp/demo', env.project),
+    readFileSync(CODEX_FIXTURE, 'utf8').replaceAll('/tmp/demo', inJson(env.project)),
   )
   return env
 }
@@ -1377,7 +1415,7 @@ function makeWalkSource(): ReturnType<typeof makeSource> {
   mkdirSync(dir, { recursive: true })
   writeFileSync(
     join(dir, 'aaaaaaaa-0000-0000-0000-00000000000a.jsonl'),
-    readFileSync(WALK_FIXTURE, 'utf8').replaceAll('/tmp/demo', env.project),
+    readFileSync(WALK_FIXTURE, 'utf8').replaceAll('/tmp/demo', inJson(env.project)),
   )
   return env
 }
@@ -1914,4 +1952,326 @@ test('import --into merges another machine\'s export into a project, named for w
   assert.deepEqual(result.committers.map((one) => one.name), ['Dana'])
 
   assert.match(run(['import', theirs, '--committer', 'Dana', '--data-dir', store]).stderr, /--into/)
+})
+
+test('a detail command on a machine with no sessions and an empty store says where it looked', () => {
+  const env = makeSource(0)
+  for (const [command, id] of [
+    ['session', '00000000'],
+    ['task', '1'],
+    ['round', '1.0'],
+    ['question', '1.3'],
+    ['trail', '1.0'],
+    ['explain', '1.3'],
+  ] as const) {
+    const empty = read(env, [command, id])
+    assert.equal(empty.status, 1, `${command}: ${empty.stderr}`)
+    assert.match(empty.stderr, /^probez: no agent sessions found in /, command)
+    // Named so the person can see which directories were searched, not merely that nothing was.
+    assert.ok(empty.stderr.includes(basename(env.claudeDir)), `${command} names where it looked`)
+    assert.equal(empty.stdout, '', `${command} printed something besides the error`)
+  }
+})
+
+/**
+ * The command with stderr kept whatever the exit, which `run` drops on success; `node` takes flags
+ * for the Node that runs it, and `input` is what arrives on stdin.
+ */
+function runAll(args: string[], options: { node?: string[]; input?: string } = {}): Run {
+  const done = spawnSync(process.execPath, [...(options.node ?? []), CLI, ...args], {
+    encoding: 'utf8',
+    input: options.input ?? '',
+  })
+  return { status: done.status ?? 1, stdout: done.stdout, stderr: done.stderr }
+}
+
+/** The source flags `read` passes, for a command that takes its project some other way. */
+function sourceFlags(env: ReturnType<typeof makeSource>): string[] {
+  return [
+    '--data-dir', env.dataDir,
+    '--claude-dir', env.claudeDir,
+    '--cursor-dir', env.cursorDir,
+    '--codex-dir', env.codexDir,
+    '--copilot-dir', env.copilotDir,
+    '--pi-dir', env.piDir,
+    '--opencode-dir', env.opencodeDir,
+    '--goose-dir', env.gooseDir,
+    '--cline-dir', env.clineDir,
+  ]
+}
+
+/** OpenCode and Goose each with a database on disk, which this Node is then told it cannot read. */
+function withDatabases(env: ReturnType<typeof makeSource>): void {
+  mkdirSync(env.opencodeDir, { recursive: true })
+  mkdirSync(env.gooseDir, { recursive: true })
+  writeFileSync(join(env.opencodeDir, 'opencode.db'), '')
+  writeFileSync(join(env.gooseDir, 'sessions.db'), '')
+}
+
+/**
+ * How to run a Node that cannot read SQLite, on whichever Node runs these.
+ *
+ * Where it has SQLite it can be told not to; before 22.13 there is no SQLite to turn off and no flag
+ * to do it with, and Node refuses to start when given one, so it runs as it is.
+ */
+const NO_SQLITE = spawnSync(process.execPath, ['--no-experimental-sqlite', '-e', '0']).status === 0
+  ? ['--no-experimental-sqlite']
+  : []
+
+function saysSkipped(stderr: string): void {
+  assert.match(stderr, /OpenCode sessions in .*opencode\.db need Node 22\.13 or later to read \(this is v[\d.]+\); skipped/)
+  assert.match(stderr, /Goose sessions in .*sessions\.db need Node 22\.13 or later to read \(this is v[\d.]+\); skipped/)
+}
+
+test('a Node that cannot read OpenCode or Goose databases says so from every detail command, and still answers', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+  withDatabases(env)
+
+  for (const args of [['session', '00000000'], ['task', '1'], ['round', '1.0'], ['trail', '1.0'], ['question', '1.0'], ['explain', '1.0']]) {
+    const [command, ...rest] = args
+    const done = runAll([command!, env.project, ...rest, ...sourceFlags(env)], { node: NO_SQLITE })
+    saysSkipped(done.stderr)
+    // Said once per run, not once per lookup.
+    assert.equal(done.stderr.match(/OpenCode sessions in/g)?.length, 1, `${command} repeated the notice`)
+  }
+  // The rest of the sources are still read: what was collected is still there to show.
+  const session = runAll(['session', env.project, '00000000', ...sourceFlags(env)], { node: NO_SQLITE })
+  assert.equal(session.status, 0, session.stderr)
+  assert.match(session.stdout, /00000000/)
+})
+
+test('a sync from the viewer on a Node that cannot read OpenCode or Goose databases says so, and syncs the rest', async () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+  withDatabases(env)
+
+  const child = spawn(process.execPath, [...NO_SQLITE, CLI, 'view', ...sourceFlags(env), '--no-open', '--port', '0'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
+  child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
+  try {
+    const url = await new Promise<URL>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`view never printed its URL: ${stdout} ${stderr}`)), 20_000)
+      child.stdout.on('data', () => {
+        const found = stdout.match(/http:\/\/127\.0\.0\.1:\d+\/\S*/)
+        if (found === null) return
+        clearTimeout(timer)
+        resolve(new URL(found[0]))
+      })
+    })
+    const token = url.searchParams.get('t')!
+    const headers = { 'x-probez-token': token }
+    const projects = (await (await fetch(new URL('/api/projects', url), { headers })).json()) as {
+      projects: Array<{ slug: string }>
+    }
+    const slug = projects.projects[0]!.slug
+    const synced = await fetch(new URL(`/api/projects/${slug}/sync`, url), { method: 'POST', headers })
+    assert.equal(synced.status, 200, await synced.clone().text())
+    saysSkipped(stderr)
+  } finally {
+    child.kill()
+  }
+})
+
+test('viewing a project in an empty store says to collect first', () => {
+  const env = makeSource(1)
+  const done = runAll(['view', env.project, '--data-dir', env.dataDir, '--no-open'])
+  assert.equal(done.status, 1)
+  assert.match(done.stderr, /nothing collected yet in .*\. Run `probez collect` first/)
+  assert.equal(existsSync(join(env.dataDir, 'projects')), false, 'a refused view wrote a store')
+})
+
+test('a hook payload probez cannot use is reported, and never blocks the agent', () => {
+  const env = makeSource(0)
+  for (const [payload, reason] of [
+    ['{"hook_event_name":"beforeShellExecution"}', /ignoring hook event beforeShellExecution/],
+    ['[1, 2]', /hook payload must be a JSON object/],
+  ] as const) {
+    const plain = runAll(['hook', '--data-dir', env.dataDir], { input: payload })
+    assert.equal(plain.status, 0, 'a non-zero exit would stop the Cursor agent')
+    assert.match(plain.stderr, new RegExp(`probez hook: ${reason.source}`))
+    assert.equal(plain.stdout, '')
+
+    const json = runAll(['hook', '--data-dir', env.dataDir, '--json'], { input: payload })
+    assert.equal(json.status, 0)
+    const said = JSON.parse(json.stdout) as { ok: boolean; reason: string }
+    assert.equal(said.ok, false)
+    assert.match(said.reason, reason)
+  }
+  assert.equal(existsSync(join(env.dataDir, 'cursor-usage.jsonl')), false, 'an unusable payload was recorded')
+})
+
+test('--version prints the package version, alone or after any command', () => {
+  const version = (JSON.parse(readFileSync(join(here, '..', '..', 'package.json'), 'utf8')) as { version: string }).version
+  for (const args of [['--version'], ['session', '--version'], ['task', '--version'], ['round', '--version'], ['trail', '--version'], ['question', '--version'], ['explain', '--version']]) {
+    const done = runAll(args)
+    assert.equal(done.status, 0, `${args.join(' ')}: ${done.stderr}`)
+    assert.equal(done.stdout.trim(), version, args.join(' '))
+  }
+})
+
+test('projects lists what the agents hold, as a table or as JSON, and says what it hid', () => {
+  const env = makeSource(2)
+  assert.equal(collect(env).status, 0)
+  const flags = sourceFlags(env)
+
+  // The test's project lives in a temp directory, which is what scratch projects look like.
+  const hidden = runAll(['projects', ...flags])
+  assert.equal(hidden.status, 0, hidden.stderr)
+  assert.match(hidden.stdout, /scratch projects? in temp directories hidden\. Use --include-temp to list them/)
+  assert.doesNotMatch(hidden.stdout, /2 sessions/)
+
+  const table = runAll(['projects', '--include-temp', ...flags])
+  assert.equal(table.status, 0, table.stderr)
+  assert.match(table.stdout, new RegExp(`${basename(env.project)}\\s+2 sessions`))
+  assert.match(table.stdout, /\n {2}1 projects\n/)
+  assert.match(table.stdout, /`probez <name>` collects one and shows its summary\./)
+
+  const json = runAll(['projects', '--include-temp', '--json', ...flags])
+  assert.equal(json.status, 0, json.stderr)
+  const listed = JSON.parse(json.stdout) as Array<{ name: string; sessions: number; imported: boolean }>
+  assert.equal(listed.length, 1)
+  assert.equal(listed[0]!.name, basename(env.project))
+  assert.equal(listed[0]!.sessions, 2)
+  assert.equal(listed[0]!.imported, false)
+})
+
+test('export with no --out writes the project to stdout, one round per line', () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+  const done = runAll(['export', basename(env.project), '--data-dir', env.dataDir])
+  assert.equal(done.status, 0, done.stderr)
+  const lines = done.stdout.trim().split('\n')
+  assert.equal(lines.length, 5)
+  for (const line of lines) assert.equal(typeof (JSON.parse(line) as { session: unknown }).session, 'string')
+})
+
+/** A home directory of the test's own, so `hook --install` never touches the real `~/.cursor`. */
+function fakeHome(): NodeJS.ProcessEnv {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'probez-home-')))
+  return { ...process.env, HOME: home, USERPROFILE: home }
+}
+
+test('hook --install writes the Cursor hook once, and says so as text or as JSON', () => {
+  const env = fakeHome()
+  const hooks = join(env.HOME!, '.cursor', 'hooks.json')
+  const install = (json: boolean): Run => {
+    const done = spawnSync(process.execPath, [CLI, 'hook', '--install', ...(json ? ['--json'] : [])], { encoding: 'utf8', env })
+    return { status: done.status ?? 1, stdout: done.stdout, stderr: done.stderr }
+  }
+
+  const first = install(false)
+  assert.equal(first.status, 0, first.stderr)
+  assert.match(first.stdout, /^Wrote .*hooks\.json/)
+  assert.match(first.stdout, /stop → .* hook/)
+  assert.match(first.stdout, /Run a Cursor agent turn, then `probez collect` to attach token usage\./)
+  const written = JSON.parse(readFileSync(hooks, 'utf8')) as { hooks: { stop: Array<{ command: string }> } }
+  assert.equal(written.hooks.stop.length, 1)
+  assert.match(written.hooks.stop[0]!.command, / hook$/)
+
+  const again = install(true)
+  assert.equal(again.status, 0, again.stderr)
+  const said = JSON.parse(again.stdout) as { path: string; command: string; result: string }
+  assert.equal(said.result, 'unchanged')
+  assert.equal(said.path, hooks)
+  assert.equal(said.command, written.hooks.stop[0]!.command)
+  assert.equal((JSON.parse(readFileSync(hooks, 'utf8')) as typeof written).hooks.stop.length, 1, 'installed twice')
+
+  assert.match(install(false).stdout, /Cursor hooks already call probez/)
+})
+
+test('a usable hook payload is recorded for the next collect, and answers Cursor with an empty object', () => {
+  const env = makeSource(0)
+  const payload = (id: string): string =>
+    JSON.stringify({ hook_event_name: 'stop', conversation_id: id, input_tokens: 1200, output_tokens: 80 })
+
+  const plain = runAll(['hook', '--data-dir', env.dataDir], { input: payload('conv-1') })
+  assert.equal(plain.status, 0, plain.stderr)
+  assert.equal(plain.stdout, '{}\n')
+
+  const json = runAll(['hook', '--data-dir', env.dataDir, '--json'], { input: payload('conv-2') })
+  assert.equal(json.status, 0, json.stderr)
+  const said = JSON.parse(json.stdout) as { ok: boolean; file: string; event: { conversation_id: string } }
+  assert.equal(said.ok, true)
+  assert.equal(said.event.conversation_id, 'conv-2')
+  assert.equal(said.file, join(env.dataDir, 'cursor-usage.jsonl'))
+
+  const recorded = readFileSync(join(env.dataDir, 'cursor-usage.jsonl'), 'utf8').trim().split('\n')
+  assert.deepEqual(
+    recorded.map((line) => (JSON.parse(line) as { conversation_id: string }).conversation_id),
+    ['conv-1', 'conv-2'],
+  )
+})
+
+/**
+ * Ctrl-C, as the viewer receives it. A child sent SIGINT on Windows is ended outright, so the
+ * handler would never run there; this preload turns a line on stdin into the event itself.
+ */
+const CTRL_C = `data:text/javascript,${encodeURIComponent(
+  "process.stdin.once('data', () => { process.stdin.destroy(); process.emit('SIGINT') })",
+)}`
+
+test('ctrl-c stops the viewer: the server closes and the process exits cleanly', async () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+  const child = spawn(process.execPath, ['--import', CTRL_C, CLI, 'view', ...sourceFlags(env), '--no-open', '--port', '0'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
+  child.stderr.on('data', () => undefined)
+  const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)))
+  try {
+    // Waited for to the last line it prints, which is the one that says how to stop it.
+    const url = await new Promise<URL>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`view never said it was ready: ${stdout}`)), 20_000)
+      child.stdout.on('data', () => {
+        const found = stdout.match(/http:\/\/127\.0\.0\.1:\d+\/\S*/)
+        if (found === null || !stdout.includes('ctrl-c to stop')) return
+        clearTimeout(timer)
+        resolve(new URL(found[0]))
+      })
+    })
+    const headers = { 'x-probez-token': url.searchParams.get('t')! }
+    assert.equal((await fetch(new URL('/api/projects', url), { headers })).status, 200)
+
+    child.stdin.write('\n')
+    assert.equal(await exited, 0)
+    // Closed, not merely abandoned: nothing answers on that port any more.
+    await assert.rejects(fetch(new URL('/api/projects', url), { headers }))
+  } finally {
+    child.kill()
+  }
+})
+
+test('a clear that cannot remove a project names it and why, keeps it, and exits non-zero', { skip: process.platform !== 'win32' }, async () => {
+  const env = makeSource(1)
+  assert.equal(collect(env).status, 0)
+  const [slug] = readdirSync(join(env.dataDir, 'projects'))
+  const dir = join(env.dataDir, 'projects', slug!)
+  // Windows will not remove a folder another process is working in: a real reason a project
+  // cannot be cleared, and one that waiting on the project's lock would never fix.
+  const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { cwd: dir, stdio: 'ignore' })
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    const plain = runAll(['clear', '--all', '--yes', '--data-dir', env.dataDir])
+    assert.equal(plain.status, 1, 'a clear that left a project behind exited as though it had not')
+    assert.match(plain.stderr, new RegExp(`could not clear ${basename(env.project)}: EBUSY`))
+    assert.match(plain.stdout, /removed 0 sessions · 0 rounds/)
+    assert.ok(existsSync(join(dir, 'manifest.json')), 'the project was not kept')
+
+    const json = runAll(['clear', '--all', '--yes', '--json', '--data-dir', env.dataDir])
+    assert.equal(json.status, 1)
+    const done = JSON.parse(json.stdout) as { failed: Array<{ project: string; error: string }>; removed: string[] }
+    assert.deepEqual(done.removed, [])
+    assert.deepEqual(done.failed.map((one) => one.project), [basename(env.project)])
+    assert.match(done.failed[0]!.error, /^EBUSY/)
+  } finally {
+    holder.kill()
+  }
 })

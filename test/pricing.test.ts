@@ -112,7 +112,7 @@ test('migrating a v1 file keeps the rows it blanked and takes the models it neve
   assert.deepEqual(pricing.models['claude-fable-5-1'], defaultPricing().models['claude-fable-5-1'])
 })
 
-test('rates are written owner-only, like everything else in the store', async () => {
+test('rates are written owner-only, like everything else in the store', { skip: process.platform === 'win32' }, async () => {
   const dir = store()
   await writePricing(dir, defaultPricing())
   assert.equal(statSync(pricingFile(dir)).mode & 0o077, 0, 'no group or world access')

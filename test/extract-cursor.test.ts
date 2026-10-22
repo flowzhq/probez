@@ -9,6 +9,7 @@ import { pathFromCursorSlug, safeSessionFilename, sessionIdFromFilename } from '
 import { classifyCall } from '../src/classify.js'
 import { extractCursorSession } from '../src/extract-cursor.js'
 import { costOf, defaultPricing } from '../src/pricing.js'
+import { cursorSlugOf, dashFreeDir } from './support.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const FIXTURE = join(here, '..', '..', 'test', 'fixtures', 'cursor-session.jsonl')
@@ -127,9 +128,9 @@ test('on Windows a folder whose name has dashes in it, or two together, is found
 })
 
 test('a Cursor slug prefers the path that still exists when a name contains dashes', () => {
-  const root = realpathSync(mkdtempSync(join('/tmp', 'probezwork')))
+  const root = dashFreeDir()
   const project = join(root, 'flowz-agentic-sdlc')
   mkdirSync(project)
-  const slug = project.replaceAll('/', '-').replace(/^-/, '')
+  const slug = cursorSlugOf(project)
   assert.equal(pathFromCursorSlug(slug), project)
 })

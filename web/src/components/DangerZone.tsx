@@ -68,10 +68,19 @@ export function DangerZone({ onCleared }: { onCleared: () => void }): ReactEleme
         setBusy(false)
         setAsked(null)
         const done = found.done
+        const locked =
+          done === null || done.locked.length === 0
+            ? ''
+            : ` · left as they were, still being written: ${done.locked.join(', ')} — clear again once that finishes`
+        const failed =
+          done === null || done.failed.length === 0
+            ? ''
+            : ` · could not clear ${done.failed.map((one) => `${one.project} (${one.error})`).join(', ')}`
         report(
           done === null
             ? 'nothing was removed'
-            : `removed ${count(done.sessions)} sessions · ${count(done.rounds)} rounds · ${bytes(done.bytes)} freed`,
+            : `removed ${count(done.sessions)} sessions · ${count(done.rounds)} rounds · ${bytes(done.bytes)} freed${locked}${failed}`,
+          locked !== '' || failed !== '',
         )
         onCleared()
       })

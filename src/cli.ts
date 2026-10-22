@@ -131,6 +131,7 @@ import {
   importProject,
   listStored,
   planClear,
+  ProjectLocked,
   projectDir,
   readResults,
   readRounds,
@@ -2271,7 +2272,7 @@ async function runClear(
     return
   }
   if (plan.totals.projects === 0) {
-    if (options.json) console.log(JSON.stringify({ projects: 0, whole: 0, sessions: 0, rounds: 0, bytes: 0, removed: [] }, null, 2))
+    if (options.json) console.log(JSON.stringify({ projects: 0, whole: 0, sessions: 0, rounds: 0, bytes: 0, removed: [], locked: [], failed: [] }, null, 2))
     else printPlan(plan, termWidth())
     return
   }
@@ -2290,6 +2291,8 @@ async function runClear(
   }
 
   const done = await applyClear(dataDir, plan)
+  // The rest of the clear went through, but a script running this should still hear that it did not all.
+  if (done.failed.length > 0) process.exitCode = 1
   if (options.json) {
     console.log(JSON.stringify(done, null, 2))
     return
@@ -2306,6 +2309,12 @@ async function runClear(
   if (done.projects > done.whole) {
     console.log(`  ${done.projects - done.whole} trimmed; their analysis and index rebuild on the next \`probez analyze\`.`)
   }
+  if (done.locked.length > 0) {
+    console.log(
+      `  left as they were, still being written by another probez: ${clip(done.locked.join(', '), 68)}. Run the clear again once it finishes.`,
+    )
+  }
+  for (const one of done.failed) console.error(`  could not clear ${one.project}: ${one.error}`)
   console.log('')
 }
 
@@ -2709,7 +2718,7 @@ async function main(): Promise<void> {
       }))
     const listed = [...own, ...imported]
     const named = (project: Project): string =>
-      chosen.get(slugFor(project)) ?? (project.path ? project.path.split('/').pop()! : project.key)
+      chosen.get(slugFor(project)) ?? (project.path ? basename(project.path) : project.key)
     const skippedTemp = projects.length - own.length
     if (values.json) {
       console.log(
@@ -2936,17 +2945,6 @@ async function main(): Promise<void> {
           ]),
         )
 
-        // The cache always describes the whole project, whatever slice was asked to be printed.
-        const whole = values.by === undefined && scope === rounds ? analyses[0]!.analysis : categoryTally(rounds, pricing, axis)
-        await writeAnalysis(
-          analysisFile(dataDir, project),
-          { rounds: rounds.length, toolless: whole.coverage.toolless },
-          analysisRecords(rounds),
-        )
-        // The search index is the same derivation of the same rounds, so it is rebuilt wherever the
-        // labels cache is. `find` never writes one: reading writes nothing, here as everywhere.
-        await buildIndex(projectDir(dataDir, project))
-
         if (values.json) {
           const shaped = analyses.map((entry) => ({
             name: entry.name,
@@ -2959,14 +2957,34 @@ async function main(): Promise<void> {
               ? { project: projectName(project), path: project.path, analysis: shaped }
               : shaped,
           )
-          continue
+        } else {
+          projectHeader(project)
+          for (const entry of analyses) {
+            if (groups.length > 1) console.log(`  ${entry.name}`)
+            if (values.unclassified) printUnclassified(entry.analysis, limit)
+            else printAnalysis(entry.analysis, subLimit, axis, walks.get(entry.name) ?? null)
+          }
         }
 
-        projectHeader(project)
-        for (const entry of analyses) {
-          if (groups.length > 1) console.log(`  ${entry.name}`)
-          if (values.unclassified) printUnclassified(entry.analysis, limit)
-          else printAnalysis(entry.analysis, subLimit, axis, walks.get(entry.name) ?? null)
+        // The caches come after the answer, which never depended on them. The cache always
+        // describes the whole project, whatever slice was asked to be printed. The search index is
+        // the same derivation of the same rounds, so it is rebuilt wherever the labels cache is;
+        // `find` never writes one: reading writes nothing, here as everywhere.
+        //
+        // Neither waits for a project someone else is writing. Whatever they write makes these
+        // stale, both are checked against the rounds before they are used, and the writer or the
+        // next run rebuilds them — so a held project is a cache skipped, not an answer lost.
+        const whole = values.by === undefined && scope === rounds ? analyses[0]!.analysis : categoryTally(rounds, pricing, axis)
+        try {
+          await writeAnalysis(
+            analysisFile(dataDir, project),
+            { rounds: rounds.length, toolless: whole.coverage.toolless },
+            analysisRecords(rounds),
+            0,
+          )
+          await buildIndex(projectDir(dataDir, project), { known: rounds, waitMs: 0 })
+        } catch (error) {
+          if (!(error instanceof ProjectLocked)) throw error
         }
         continue
       }

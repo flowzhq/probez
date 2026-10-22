@@ -86,7 +86,8 @@ test('what is written back is checked, and written owner-only like the rest of t
   const dir = mkdtempSync(join(tmpdir(), 'probez-commands-test-'))
   const saved = await writeCommandKinds(dir, { Check: 'graph', 'npm test': 'test' })
   assert.deepEqual(saved, { check: 'graph', 'npm test': 'test' })
-  assert.equal(statSync(commandsFile(dir)).mode & 0o077, 0)
+  // Windows has no owner, group and world bits to check.
+  if (process.platform !== 'win32') assert.equal(statSync(commandsFile(dir)).mode & 0o077, 0)
   assert.deepEqual(await readCommandKinds(dir), saved)
 
   await assert.rejects(() => writeCommandKinds(dir, { check: 'archaeology' as never }), CommandsError)

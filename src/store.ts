@@ -1,5 +1,6 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
+import type { BigIntStats } from 'node:fs'
 import {
   appendFile,
   chmod,
@@ -325,11 +326,20 @@ export interface AnalysisHeader {
   toolless: number
 }
 
-/** Replace the cached analysis wholesale. Recomputing is cheap, so there is no incremental path. */
+/**
+ * Replace the cached analysis wholesale. Recomputing is cheap, so there is no incremental path.
+ *
+ * Written under the project's lock, and only while the project still has rounds. Every caller
+ * writes this after the collect or merge that produced its rounds has let the lock go, and a
+ * delete or a clear can land in between: writing then would bring back a project folder holding
+ * nothing but this file. A trim landing there is harmless, since the header's count no longer
+ * matches the rounds and readers ignore it.
+ */
 export async function writeAnalysis(
   file: string,
   header: Omit<AnalysisHeader, 'schema_version' | 'analyzer_version' | 'analyzed_at'>,
   records: unknown[],
+  waitMs?: number,
 ): Promise<void> {
   const lines = [
     JSON.stringify({
@@ -340,9 +350,12 @@ export async function writeAnalysis(
     }),
     ...records.map((record) => JSON.stringify(record)),
   ]
-  await mkdir(dirname(file), { recursive: true, mode: DIR_MODE })
-  await writeFile(file, lines.join('\n') + '\n', { encoding: 'utf8', mode: FILE_MODE })
-  await tighten(file, FILE_MODE)
+  const dir = dirname(file)
+  await withProjectLock(dir, async () => {
+    if ((await stat(join(dir, 'rounds.jsonl')).catch(() => null)) === null) return
+    await writeFile(file, lines.join('\n') + '\n', { encoding: 'utf8', mode: FILE_MODE })
+    await tighten(file, FILE_MODE)
+  }, false, waitMs)
 }
 
 /** Owner-only, the mode the agent already uses for the session files probez reads. */
@@ -385,8 +398,19 @@ function asStoredRound(round: Round): Round {
   return isRoundSource(round.source ?? '') ? round : { ...round, source: 'unknown' }
 }
 
-/** Stream rounds.jsonl once, calling back with each parsed round. */
-export async function eachRound(file: string, visit: (round: Round) => void): Promise<void> {
+/**
+ * Stream rounds.jsonl once, calling back with each parsed round.
+ *
+ * A visitor that returns a promise is waited for before the next line is read, which is how a
+ * rewrite keeps its writes in step with its reading: each batch is on disk, or has failed and
+ * stopped the read, before the next is gathered. That failure is the visitor's own, and is thrown
+ * as it is rather than read as anything about the file. A visitor that throws as it is called is
+ * taken, as it always has been, as a line that held no round it could use.
+ */
+export async function eachRound(
+  file: string,
+  visit: (round: Round) => void | Promise<void>,
+): Promise<void> {
   let stream
   try {
     stream = createReadStream(file, { encoding: 'utf8' })
@@ -394,13 +418,23 @@ export async function eachRound(file: string, visit: (round: Round) => void): Pr
     return
   }
   const lines = createInterface({ input: stream, crlfDelay: Infinity })
+  let failed: { error: unknown } | null = null
   try {
     for await (const line of lines) {
       if (line.trim() === '') continue
+      let pending: void | Promise<void>
       try {
-        visit(asStoredRound(JSON.parse(line) as Round))
+        pending = visit(asStoredRound(JSON.parse(line) as Round))
       } catch {
         // a torn line from an interrupted write; skip it
+        continue
+      }
+      if (pending === undefined) continue
+      try {
+        await pending
+      } catch (error) {
+        failed = { error }
+        break
       }
     }
   } catch (error) {
@@ -408,6 +442,7 @@ export async function eachRound(file: string, visit: (round: Round) => void): Pr
     // caller that rewrites the file from what it read would otherwise replace it with nothing.
     if (!isMissing(error)) throw error
   }
+  if (failed !== null) throw failed.error
 }
 
 /** The file is not there, as opposed to there and unreadable. */
@@ -426,7 +461,7 @@ function isMissing(error: unknown): boolean {
  */
 export async function eachRoundLine(
   file: string,
-  visit: (at: number, line: string, offset: number, bytes: number) => void,
+  visit: (at: number, line: string, offset: number, bytes: number) => void | Promise<void>,
 ): Promise<void> {
   let stream
   try {
@@ -440,11 +475,20 @@ export async function eachRoundLine(
   // instead of walking the file again. Counted in bytes rather than characters, because that is
   // what a file position is and a prompt is full of characters that are not one byte.
   let offset = 0
+  let failed: { error: unknown } | null = null
   try {
     for await (const line of lines) {
       const bytes = Buffer.byteLength(line, 'utf8')
       if (line.trim() !== '') {
-        visit(at, line, offset, bytes)
+        const pending = visit(at, line, offset, bytes)
+        if (pending !== undefined) {
+          try {
+            await pending
+          } catch (error) {
+            failed = { error }
+            break
+          }
+        }
         at += 1
       }
       offset += bytes + 1
@@ -453,6 +497,8 @@ export async function eachRoundLine(
     // See `eachRound`: only a missing file reads as an empty one.
     if (!isMissing(error)) throw error
   }
+  // See `eachRound`: the visitor's own failure, waited for in step with the reading.
+  if (failed !== null) throw failed.error
 }
 
 /**
@@ -731,6 +777,12 @@ async function withArchived(
 
 /* One writer per project, across processes. ---------------------------------------------------- */
 
+/**
+ * A writer gave up waiting for the project's lock. Its own class so the view can hand the sentence
+ * to the page — which process, which file to delete — instead of a bare 500.
+ */
+export class ProjectLocked extends Error {}
+
 /** Beside the rounds it guards, so a project removed takes its lock with it. */
 const LOCK_FILE = 'write.lock'
 const LOCK_POLL_MS = 50
@@ -761,20 +813,28 @@ const LOCK_WAIT_MS = 5 * 60_000
  *
  * `create` is for collect, the one writer that makes a project. Every other writer finding no
  * directory runs unlocked, finds nothing to write to, and says so.
+ *
+ * `waitMs` is for a writer with something better to do than wait: a cache that someone else's
+ * write is about to make stale anyway can give up at once, and leave rebuilding it to them.
  */
-export async function withProjectLock<T>(dir: string, work: () => Promise<T>, create = false): Promise<T> {
+export async function withProjectLock<T>(
+  dir: string,
+  work: () => Promise<T>,
+  create = false,
+  waitMs = LOCK_WAIT_MS,
+): Promise<T> {
   const file = join(dir, LOCK_FILE)
-  const deadline = Date.now() + LOCK_WAIT_MS
-  let held = false
+  const deadline = Date.now() + waitMs
+  let held: BigIntStats | null = null
   for (;;) {
     try {
       const handle = await open(file, 'wx', FILE_MODE)
       try {
         await handle.writeFile(String(process.pid), 'utf8')
+        held = await handle.stat({ bigint: true })
       } finally {
         await handle.close()
       }
-      held = true
       break
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
@@ -783,12 +843,16 @@ export async function withProjectLock<T>(dir: string, work: () => Promise<T>, cr
         await mkdir(dir, { recursive: true, mode: DIR_MODE })
         continue
       }
-      if (code !== 'EEXIST') throw error
-      if (await takeOver(file)) continue
-      if (Date.now() > deadline) {
+      // On Windows a lock file another writer has just removed lingers until its last handle
+      // closes, and creating it meanwhile fails with EPERM rather than EEXIST. It is a lock on its
+      // way out, not a fault, so it is waited on like a held one; there is nothing to take over.
+      const leaving = code === 'EPERM' && process.platform === 'win32'
+      if (code !== 'EEXIST' && !leaving) throw error
+      if (!leaving && (await takeOver(file))) continue
+      if (Date.now() >= deadline) {
         const holder = (await readFile(file, 'utf8').catch(() => '')).trim() || 'unknown'
-        throw new Error(
-          `${dir} is still being written by process ${holder} after ${LOCK_WAIT_MS / 60_000} minutes. ` +
+        throw new ProjectLocked(
+          `${dir} is still being written by process ${holder} after ${waitMs / 60_000} minutes. ` +
             `If no probez is running, delete ${file} and try again.`,
         )
       }
@@ -798,8 +862,25 @@ export async function withProjectLock<T>(dir: string, work: () => Promise<T>, cr
   try {
     return await work()
   } finally {
-    if (held) await rm(file, { force: true })
+    if (held !== null) await release(file, held)
   }
+}
+
+/**
+ * Remove the lock this writer made, and only that one.
+ *
+ * Whatever is at the path now may not be it. A delete moves the directory aside with its lock in
+ * it, and a collect waiting on the project makes the folder again and takes a lock of its own there
+ * before the delete returns; removing by path would hand that collect's project to the next writer
+ * while it is still writing. The pid cannot tell the two apart, since one process can be waiting on
+ * its own lock, so the file itself is compared. While the file is this writer's nobody else can
+ * replace it, so nothing can change between the check and the removal.
+ */
+async function release(file: string, mine: BigIntStats): Promise<void> {
+  const now = await stat(file, { bigint: true }).catch(() => null)
+  if (now === null) return
+  if (now.dev !== mine.dev || now.ino !== mine.ino || now.birthtimeNs !== mine.birthtimeNs) return
+  await rm(file, { force: true })
 }
 
 /**
@@ -816,6 +897,9 @@ async function takeOver(file: string): Promise<boolean> {
   try {
     await (await open(guard, 'wx', FILE_MODE)).close()
   } catch (error) {
+    // The project went while this waited, most likely to a delete. Trying again finds that out the
+    // way the first attempt would have.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     // Another waiter is checking. One that died doing it left this behind; it takes milliseconds.
     const info = await stat(guard).catch(() => null)
@@ -1029,17 +1113,14 @@ async function collectUnlocked(
     let toRounds: string[] = []
     let toCopy: string[] = []
     let copied = 0
-    // Chained, for the reason `applyClear` gives: overlapping appends land out of order.
-    let writing: Promise<void> = Promise.resolve()
-    const flush = (): void => {
+    // Waited for in step with the reading, for the reason `clearOne` gives.
+    const flush = async (): Promise<void> => {
       const rounds = toRounds.length === 0 ? null : toRounds.join('\n') + '\n'
       const copies = toCopy.length === 0 ? null : toCopy.join('\n') + '\n'
       toRounds = []
       toCopy = []
-      writing = writing.then(async () => {
-        if (rounds !== null) await appendFile(target, rounds, { encoding: 'utf8', mode: FILE_MODE })
-        if (copies !== null) await appendFile(copyTarget, copies, { encoding: 'utf8', mode: FILE_MODE })
-      })
+      if (rounds !== null) await appendFile(target, rounds, { encoding: 'utf8', mode: FILE_MODE })
+      if (copies !== null) await appendFile(copyTarget, copies, { encoding: 'utf8', mode: FILE_MODE })
     }
     await eachRound(mergedFile, (stored) => {
       const round = normalizeRound(stored)
@@ -1052,10 +1133,9 @@ async function collectUnlocked(
         seenKeys.add(key)
         toRounds.push(line)
       }
-      if (toCopy.length >= 2000) flush()
+      return toCopy.length >= 2000 ? flush() : undefined
     })
-    flush()
-    await writing
+    await flush()
     if (copied > 0) await rename(copyTarget, mergedFile)
     await rename(target, roundsFile)
     // The analysis beside it was computed from rounds that no longer exist in this shape.
@@ -1172,59 +1252,71 @@ export async function importProject(
 ): Promise<ImportResult> {
   const slug = importSlug(name, source)
   const dir = storedDir(dataDir, slug)
+  // Under the project's lock, like every other writer of these files: a re-import replaces the
+  // rounds and the manifest, and a trim, merge or sync working on the same project from another
+  // process would otherwise move its own copy over the import, or rebuild a cache from the rounds
+  // it replaced. `create` because a first import is what makes the project.
+  return withProjectLock(dir, () => importUnlocked(dataDir, dir, slug, name, rounds, skipped), true)
+}
+
+async function importUnlocked(
+  dataDir: string,
+  dir: string,
+  slug: string,
+  name: string,
+  rounds: Round[],
+  skipped: number,
+): Promise<ImportResult> {
   const before = await readJson<Manifest>(join(dir, 'manifest.json'))
   const replaced = before !== null
 
   await mkdir(dir, { recursive: true, mode: DIR_MODE })
   for (const path of [dataDir, join(dataDir, 'projects'), dir]) await tighten(path, DIR_MODE)
 
-  // Written beside and moved over, so an interrupted import cannot leave half a project behind.
-  const target = join(dir, 'rounds.jsonl.import')
-  await rm(target, { force: true })
-  await writeFile(target, rounds.map((round) => JSON.stringify(round)).join('\n') + '\n', {
-    encoding: 'utf8',
-    mode: FILE_MODE,
-  })
-  await rename(target, join(dir, 'rounds.jsonl'))
-  // Any analysis beside it described the rounds this just replaced.
-  await rm(join(dir, 'analysis.jsonl'), { force: true })
-
   const tally = newTally()
   for (const round of rounds) countRound(tally, round)
   const totals = tallied(tally)
-
   const now = new Date().toISOString()
-  await writeFile(
-    join(dir, 'manifest.json'),
-    JSON.stringify(
-      {
-        schema_version: SCHEMA_VERSION,
-        // A newer export of a project you have already renamed is still the project you renamed.
-        // The sender's name goes back in `project`; what you called it here survives the replacement.
-        name: cleanName(before?.name ?? '') || null,
-        project: name,
-        // No path and no source directory: this project was never run on this machine, and
-        // recording the sender's would invite something here to go looking for it.
-        path: null,
-        key: slug,
-        source_dir: null,
-        collected_at: now,
-        imported_at: now,
-        darkened_at: allDarkened(rounds) ? now : null,
-        ...totals,
-        sources: [...tally.sources],
-        // Who recorded it, as its rounds say, so the Committer chip can offer their names.
-        committers: [...tally.committers].sort(),
-      },
-      null,
-      2,
-    ) + '\n',
-    { encoding: 'utf8', mode: FILE_MODE },
-  )
-
-  for (const file of [join(dir, 'rounds.jsonl'), join(dir, 'manifest.json')]) {
-    await tighten(file, FILE_MODE)
+  const manifest = {
+    schema_version: SCHEMA_VERSION,
+    // A newer export of a project you have already renamed is still the project you renamed.
+    // The sender's name goes back in `project`; what you called it here survives the replacement.
+    name: cleanName(before?.name ?? '') || null,
+    project: name,
+    // No path and no source directory: this project was never run on this machine, and
+    // recording the sender's would invite something here to go looking for it.
+    path: null,
+    key: slug,
+    source_dir: null,
+    collected_at: now,
+    imported_at: now,
+    darkened_at: allDarkened(rounds) ? now : null,
+    ...totals,
+    sources: [...tally.sources],
+    // Who recorded it, as its rounds say, so the Committer chip can offer their names.
+    committers: [...tally.committers].sort(),
   }
+
+  // Both files are written whole beside the real ones before either is moved over, so an import
+  // cut short while writing leaves the project as it was. What is left is the moment between the
+  // two renames; the rounds go first, so a project caught there has its new rounds and, at worst,
+  // the manifest of the export they replaced, which the next import of the file puts right.
+  const files = [
+    { real: join(dir, 'rounds.jsonl'), text: rounds.map((round) => JSON.stringify(round)).join('\n') + '\n' },
+    { real: join(dir, 'manifest.json'), text: JSON.stringify(manifest, null, 2) + '\n' },
+  ]
+  for (const { real, text } of files) {
+    const target = `${real}.import`
+    await rm(target, { force: true })
+    await writeFile(target, text, { encoding: 'utf8', mode: FILE_MODE })
+  }
+  for (const { real } of files) {
+    await rename(`${real}.import`, real)
+    await tighten(real, FILE_MODE)
+  }
+  // Any analysis and index beside it described the rounds this just replaced.
+  await rm(join(dir, 'analysis.jsonl'), { force: true })
+  await rm(join(dir, 'search.jsonl'), { force: true })
 
   return {
     slug,
@@ -1294,39 +1386,38 @@ async function rewriteWith(file: string, accepted: Map<string, Round>, visit: (r
   await appendFile(target, '', { encoding: 'utf8', mode: FILE_MODE })
   const placed = new Set<string>()
   let batch: string[] = []
-  // Chained rather than awaited together, for the reason `applyClear` gives: overlapping appends
-  // land in whatever order the filesystem finishes them, and this file is read back in order.
-  let writing: Promise<void> = Promise.resolve()
-  const flush = (): void => {
+  // Waited for in step with the reading, for the reason `clearOne` gives.
+  const flush = async (): Promise<void> => {
     if (batch.length === 0) return
     const text = batch.join('\n') + '\n'
     batch = []
-    writing = writing.then(() => appendFile(target, text, { encoding: 'utf8', mode: FILE_MODE }))
+    await appendFile(target, text, { encoding: 'utf8', mode: FILE_MODE })
   }
-  const put = (round: Round | null, line: string): void => {
+  const put = (round: Round | null, line: string): Promise<void> | undefined => {
     if (round !== null) visit(round)
     batch.push(line)
-    if (batch.length >= 2000) flush()
+    return batch.length >= 2000 ? flush() : undefined
   }
-  await eachRoundLine(file, (_at, line) => {
-    let round: Round
-    try {
-      round = asStoredRound(JSON.parse(line) as Round)
-    } catch {
-      put(null, line)
-      return
-    }
-    const arriving = accepted.get(keyOf(round))
-    if (arriving === undefined) {
-      put(round, line)
-      return
-    }
-    placed.add(keyOf(round))
-    put(arriving, JSON.stringify(arriving))
-  })
-  for (const [key, round] of accepted) if (!placed.has(key)) put(round, JSON.stringify(round))
-  flush()
-  await writing
+  try {
+    await eachRoundLine(file, (_at, line) => {
+      let round: Round
+      try {
+        round = asStoredRound(JSON.parse(line) as Round)
+      } catch {
+        return put(null, line)
+      }
+      const arriving = accepted.get(keyOf(round))
+      if (arriving === undefined) return put(round, line)
+      placed.add(keyOf(round))
+      return put(arriving, JSON.stringify(arriving))
+    })
+    for (const [key, round] of accepted) if (!placed.has(key)) await put(round, JSON.stringify(round))
+    await flush()
+  } catch (error) {
+    // The original is untouched; only the half-written copy beside it needs to go.
+    await rm(target, { force: true }).catch(() => undefined)
+    throw error
+  }
   await rename(target, file)
   await tighten(file, FILE_MODE)
 }
@@ -1620,15 +1711,61 @@ export async function removeProject(
 ): Promise<RemoveResult | null> {
   const dir = ownDir(dataDir, slug)
   if (dir === null) return null
+  await sweepRemovals(dataDir)
   // Locked like any other write, so a collect or a merge underway finishes before the directory
   // goes, rather than recreating part of it afterwards.
   return withProjectLock(dir, () => removeUnlocked(dataDir, slug, dir))
 }
 
+/**
+ * Take a project's directory away in one step, then delete it.
+ *
+ * The lock file lives inside the directory, so deleting in place unlinks it partway through: a
+ * writer in another process polling for the lock takes it there and writes into a folder that is
+ * still going, and either loses its work to the rest of the delete or leaves the delete unable to
+ * finish. Moved aside first, the directory is simply not there to anyone waiting. The new name
+ * starts with a dot, which `isSlug` refuses, so nothing that lists projects ever sees it.
+ *
+ * Once moved, the project is gone as far as anyone can tell, so a delete of the moved copy that
+ * fails or is cut short does not fail the removal. What it left is taken by `sweepRemovals` on
+ * the next removal or clear, since nothing that lists projects would ever find it.
+ */
+async function removeProjectDir(dir: string): Promise<void> {
+  const aside = join(dirname(dir), `${REMOVING}${basename(dir)}-${randomUUID()}`)
+  try {
+    await rename(dir, aside)
+  } catch (error) {
+    if (isMissing(error)) return
+    // Windows refuses to move a folder while another program holds a file in it open. Deleting in
+    // place is what this did before, and is still better than leaving the project behind.
+    await rm(dir, { recursive: true, force: true })
+    return
+  }
+  await rm(aside, { recursive: true, force: true }).catch(() => undefined)
+}
+
+const REMOVING = '.removing-'
+
+/**
+ * Finish removals that did not: a Ctrl-C partway through, or a file another program held open.
+ *
+ * Each one was a project already moved out of the list, so nothing writes to it and nothing
+ * else would remove it. One still being deleted by another process is safe to take as well,
+ * because both deletes skip what is already gone. Whatever still cannot go waits for the next.
+ */
+async function sweepRemovals(dataDir: string): Promise<void> {
+  const root = join(dataDir, 'projects')
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(REMOVING)) continue
+    await rm(join(root, entry.name), { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
 async function removeUnlocked(dataDir: string, slug: string, dir: string): Promise<RemoveResult | null> {
   const stored = await findStored(dataDir, slug)
   if (stored === null) return null
-  await rm(dir, { recursive: true, force: true })
+  await removeProjectDir(dir)
   return {
     slug,
     project: stored.project,
@@ -1866,6 +2003,17 @@ export interface ClearResult {
   bytes: number
   /** What went entirely, by name, so a report can say rather than count. */
   removed: string[]
+  /**
+   * What was left as it was because another writer held it past the wait, by name. The rest of
+   * the clear goes on without it, and a clear run again later takes it.
+   */
+  locked: string[]
+  /**
+   * What could not be cleared for any other reason — a file another program holds open, a full
+   * disk — by name, with what went wrong. Like a locked one it is passed over rather than ending
+   * the clear; unlike one, waiting will not fix it on its own.
+   */
+  failed: Array<{ project: string; error: string }>
 }
 
 /**
@@ -1888,10 +2036,33 @@ export async function applyClear(
   plan: ClearPlan,
   guard: <T>(slug: string, work: () => Promise<T>) => Promise<T> = (_slug, work) => work(),
 ): Promise<ClearResult> {
-  const result: ClearResult = { projects: 0, whole: 0, sessions: 0, rounds: 0, bytes: 0, removed: [] }
+  const result: ClearResult = {
+    projects: 0,
+    whole: 0,
+    sessions: 0,
+    rounds: 0,
+    bytes: 0,
+    removed: [],
+    locked: [],
+    failed: [],
+  }
+  await sweepRemovals(dataDir)
   // Each project in turn, and each through `guard`: the view passes its own per-project queue, so
   // a clear waits for a sync or a merge it started on the same project rather than racing it.
-  for (const one of plan.projects) await guard(one.slug, () => clearOne(dataDir, plan.before, one, result))
+  //
+  // One project that cannot be cleared is passed over rather than ending the clear, whatever the
+  // reason. The projects before it are already gone, with no undo, so stopping there would leave
+  // the rest untouched and the report of what went thrown away with the error. Every project's
+  // trim moves a whole new file over its rounds, so the one that failed is either as it was or
+  // trimmed, and the report says which projects to look at.
+  for (const one of plan.projects) {
+    try {
+      await guard(one.slug, () => clearOne(dataDir, plan.before, one, result))
+    } catch (error) {
+      if (error instanceof ProjectLocked) result.locked.push(one.project)
+      else result.failed.push({ project: one.project, error: error instanceof Error ? error.message : String(error) })
+    }
+  }
   return result
 }
 
@@ -1918,7 +2089,7 @@ async function clearOne(
   // The plan's figures are all there is, and the fence above is the same one it applies.
   if (one.whole && one.unreadable === true) {
     if (!(await stat(dir).then(() => true, () => false))) return
-    await withProjectLock(dir, () => rm(dir, { recursive: true, force: true }))
+    await withProjectLock(dir, () => removeProjectDir(dir))
     removed(one.rounds, one.project)
     return
   }
@@ -1954,29 +2125,33 @@ async function clearOne(
       // Written out in batches rather than held whole: a project's rounds are the one thing here
       // that can be tens of megabytes, and the point of this command is a store that got too big.
       //
-      // Two things about this are load-bearing. The buffer is taken and reset in the same tick, so a
-      // round arriving while a write is in flight cannot be swallowed by the reset. And the writes
-      // are chained rather than awaited together, because appends that overlap land in whatever order
-      // the filesystem finishes them and `rounds.jsonl` is read back in file order.
-      let writing: Promise<void> = Promise.resolve()
-      const flush = (): void => {
+      // Each batch is waited for before the next line is read, and that is load-bearing three ways.
+      // Appends never overlap, so they land in file order, which is the order `rounds.jsonl` is read
+      // back in. A failed one (a full disk, a file another program holds) stops the read and
+      // is thrown from here, rather than left a rejected promise nobody is listening to, which would
+      // take the whole process down. And the read cannot outrun the disk, so no more than one batch
+      // is ever held, however large the project.
+      const flush = async (): Promise<void> => {
         if (kept.length === 0) return
         const batch = kept.join('\n') + '\n'
         kept = []
-        writing = writing.then(() =>
-          appendFile(target, batch, { encoding: 'utf8', mode: FILE_MODE }),
-        )
+        await appendFile(target, batch, { encoding: 'utf8', mode: FILE_MODE })
       }
-      await eachRound(roundsFile, (round) => {
-        if (doomed.has(round.session)) {
-          dropped += 1
-          return
-        }
-        kept.push(JSON.stringify(round))
-        if (kept.length >= 2000) flush()
-      })
-      flush()
-      await writing
+      try {
+        await eachRound(roundsFile, (round) => {
+          if (doomed.has(round.session)) {
+            dropped += 1
+            return
+          }
+          kept.push(JSON.stringify(round))
+          return kept.length >= 2000 ? flush() : undefined
+        })
+        await flush()
+      } catch (error) {
+        // The original is untouched; only the half-written copy beside it needs to go.
+        await rm(target, { force: true }).catch(() => undefined)
+        throw error
+      }
 
       // Nothing left after all: removed rather than left with an empty file.
       const survived = await fileSize(target)
@@ -2038,20 +2213,24 @@ async function dropSessions(file: string, doomed: ReadonlySet<string>): Promise<
   await rm(target, { force: true })
   await appendFile(target, '', { encoding: 'utf8', mode: FILE_MODE })
   let kept: string[] = []
-  let writing: Promise<void> = Promise.resolve()
-  const flush = (): void => {
+  // Waited for in step with the reading, for the reason `clearOne` gives.
+  const flush = async (): Promise<void> => {
     if (kept.length === 0) return
     const batch = kept.join('\n') + '\n'
     kept = []
-    writing = writing.then(() => appendFile(target, batch, { encoding: 'utf8', mode: FILE_MODE }))
+    await appendFile(target, batch, { encoding: 'utf8', mode: FILE_MODE })
   }
-  await eachRound(file, (round) => {
-    if (doomed.has(round.session)) return
-    kept.push(JSON.stringify(round))
-    if (kept.length >= 2000) flush()
-  })
-  flush()
-  await writing
+  try {
+    await eachRound(file, (round) => {
+      if (doomed.has(round.session)) return
+      kept.push(JSON.stringify(round))
+      return kept.length >= 2000 ? flush() : undefined
+    })
+    await flush()
+  } catch (error) {
+    await rm(target, { force: true }).catch(() => undefined)
+    throw error
+  }
   await rename(target, file)
   await tighten(file, FILE_MODE)
 }

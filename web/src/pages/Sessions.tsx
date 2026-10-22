@@ -463,7 +463,7 @@ function SessionDrawer({
 }): ReactElement | null {
   const slug = session?.slug ?? null
   const id = session?.session ?? null
-  const { data } = useData(
+  const { data, error } = useData(
     () => (slug === null || id === null ? Promise.resolve(null) : api.session(slug, id)),
     [slug, id],
   )
@@ -500,7 +500,9 @@ function SessionDrawer({
 
       <div className="drawer-sec">
         <h4>Trace</h4>
-        {trace === null ? (
+        {trace === null && error !== null ? (
+          <Problem message={error} />
+        ) : trace === null ? (
           <Reading />
         ) : (
           <div className="thumb" role="img" aria-label={`${trace.rounds.length} rounds, coloured by the kind of work each was`}>
@@ -547,7 +549,9 @@ function SessionDrawer({
       {!debug ? null : (
       <div className="drawer-sec">
         <h4>Costliest questions</h4>
-        {questions === null ? (
+        {questions === null && error !== null ? (
+          <Problem message={error} />
+        ) : questions === null ? (
           <Reading />
         ) : questions.length === 0 ? (
           <p className="note">This session asked nothing of the code.</p>
